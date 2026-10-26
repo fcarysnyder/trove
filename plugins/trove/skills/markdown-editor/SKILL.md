@@ -20,7 +20,9 @@ reverted. The tool never commits. GitHub Desktop does not show the index: its ch
 own and start all ticked, so committing there takes every changed file, accepted or not. To commit
 only what was accepted, run `git commit` (no `-a`). Nothing is excluded by default; the user sets
 exclude globs in Settings, or pass `--exclude <glob>` (repeatable) to replace that list for this
-run.
+run. The top bar's Current branch menu runs `git switch` in this worktree (refused while you
+are working on a file or when git refuses); a branch checked out in another worktree needs its
+own server there.
 
 ## Start
 

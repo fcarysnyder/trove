@@ -1,6 +1,6 @@
 // The editor's behaviour, ported from the old page's script: polling, opening, stepping, accepting,
 // drafts, edits and sending. Components call these; they read and write the store.
-import type { BlockEdit, CommentKind, Draft, DraftsResponse, FileResponse, FilesResponse, SendBody, Settings, SourceInfo } from '@trove/core/types';
+import type { BlockEdit, CommentKind, Draft, DraftsResponse, FileResponse, FilesResponse, GitInfo, SendBody, Settings, SourceInfo } from '@trove/core/types';
 import { toast } from 'sonner';
 import { api, ApiError, optional } from '@/lib/api';
 import { inFolders, stepFrom } from '@/lib/status';
@@ -259,6 +259,46 @@ export async function saveSettings(patch: Partial<Settings>) {
   await refresh();
 }
 
+let lastGit = '';
+export async function loadGit() {
+  const git = await optional<GitInfo>('git').catch(() => undefined);
+  if (git === undefined || JSON.stringify(git) === lastGit) return;
+  lastGit = JSON.stringify(git);
+  set({ git });
+}
+
+/** Another worktree is another root: a new window on the desktop, else a dialog with the command that serves it. */
+export async function openWorktree(path: string) {
+  if (window.trove) await window.trove.open({ path }).catch((e) => toast(errText(e)));
+  else set({ serveRoot: path });
+}
+
+/** `git switch <branch>` here, then everything on the page follows the new branch. Git's refusal is the toast. */
+export async function switchBranch(branch: string) {
+  let git: GitInfo;
+  try {
+    git = await api<GitInfo>('switch', { branch });
+  } catch (e) {
+    if (e instanceof ApiError && typeof e.data.worktree === 'string') return openWorktree(e.data.worktree);
+    toast(errText(e));
+    return;
+  }
+  lastGit = JSON.stringify(git);
+  const [source, settings] = await Promise.all([optional<SourceInfo>('source').catch(() => null), optional<Settings>('settings').catch(() => null)]);
+  set({ git, ...(source ? { source } : {}), ...(settings ? { settings } : {}) });
+  lastList = '';
+  await refresh();
+  // An open edit keeps its text: its Save is hash-checked against the file on this branch.
+  const s = get();
+  if (!busy(s)) {
+    const keep = s.current && s.files.some((f) => f.path === s.current!.path) ? s.current.path : null;
+    const next = keep ?? s.files.find((f) => f.state === 'queue' || f.state === 'working')?.path;
+    if (next) await open(next);
+    else set({ current: null });
+  }
+  toast(`On ${branch}`);
+}
+
 /** Bring a comment's row into view in Changes and flash it. */
 export function focusComment(n: number) {
   togglePanel('changes', false);
@@ -284,10 +324,10 @@ export async function init() {
   // Show new: what this browser last chose, else the source's default.
   const remembered = localStorageHas('show-new');
   if (settings && !remembered) set({ showNew: settings.showNew });
-  await refresh();
+  await Promise.all([refresh(), loadGit()]);
   const first = get().files.find((f) => f.state === 'queue' || f.state === 'working');
   if (first) await open(first.path);
-  setInterval(refresh, 2000);
+  setInterval(() => { void refresh(); void loadGit(); }, 2000);
 }
 function localStorageHas(key: string) {
   try { return localStorage.getItem(`trove:${key}`) != null; } catch { return false; }

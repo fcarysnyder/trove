@@ -156,10 +156,28 @@ function RepoStep({ repo, onBack }: { repo: { path: string; git: GitProbe }; onB
   const { git } = repo;
   const [scope, setScope] = useState<GitScope>('uncommitted');
   const [base, setBase] = useState(git.defaultBase ?? git.branches[0] ?? '');
-  const bases = git.branches.filter((b) => b !== git.branch);
+  // With worktrees, any branch checked out in one opens that worktree; the others are switched to in the editor.
+  const [branch, setBranch] = useState(git.branch ?? '');
+  const chosen = git.local.find((b) => b.name === branch);
+  const path = chosen?.worktree ?? repo.path;
+  const bases = git.branches.filter((b) => b !== branch);
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2 text-sm"><GitBranch className="size-4 text-muted-foreground" aria-hidden /><span className="font-mono text-foreground">{git.branch ?? 'detached HEAD'}</span></div>
+      {git.worktrees.length > 1 ? (
+        <div className="flex flex-col gap-1">
+          <Select value={branch} onValueChange={setBranch}>
+            <SelectTrigger size="sm" className="w-full font-mono text-xs" aria-label="Branch"><GitBranch className="size-4 text-muted-foreground" aria-hidden /><SelectValue placeholder="detached HEAD" /></SelectTrigger>
+            <SelectContent>
+              {git.local.map((b) => (
+                <SelectItem key={b.name} value={b.name} disabled={!b.current && !b.worktree} className="font-mono text-xs">{b.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {path !== repo.path && <span className="folder w-full text-left font-mono text-xs text-muted-foreground">{`\u200E${path}\u200E`}</span>}
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 text-sm"><GitBranch className="size-4 text-muted-foreground" aria-hidden /><span className="font-mono text-foreground">{git.branch ?? 'detached HEAD'}</span></div>
+      )}
       <RadioGroup value={scope} onValueChange={(v) => setScope(v as GitScope)} className="gap-3">
         <div className="flex items-center gap-2">
           <RadioGroupItem id="scope-uncommitted" value="uncommitted" />
@@ -176,7 +194,7 @@ function RepoStep({ repo, onBack }: { repo: { path: string; git: GitProbe }; onB
       </RadioGroup>
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={onBack}>Back</Button>
-        <Button onClick={() => window.trove!.open({ path: repo.path, scope, base: scope === 'branch' ? base || null : null }).catch((e) => toast(errText(e)))}>Open</Button>
+        <Button onClick={() => window.trove!.open({ path, scope, base: scope === 'branch' ? base || null : null }).catch((e) => toast(errText(e)))}>Open</Button>
       </div>
     </div>
   );

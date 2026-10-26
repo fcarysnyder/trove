@@ -9,7 +9,7 @@ import { basename, dirname, extname, join, relative, resolve, sep } from 'node:p
 import { blocks, splice } from './anchor.js';
 import { included, kindOf, loadSettings, mergeSettings, saveSettings } from './settings.js';
 import { openSource, sha } from './source.js';
-import type { BlockEdit, Draft, FileEntry, GitScope, Question, Settings, SourceInfo } from './types.js';
+import type { BlockEdit, Draft, FileEntry, GitInfo, GitScope, Question, Settings, SourceInfo } from './types.js';
 
 export interface AppOptions {
   root: string; // any path inside a git working tree; anything else throws `not a git repository: <root>`
@@ -29,6 +29,8 @@ export interface App {
   info(): SourceInfo;
   settings(): Settings;
   list(): FileEntry[];
+  /** Branch, worktrees and changed-path count, as GET /api/git answers. */
+  git(): GitInfo;
   /** Run once a second: releases locked files that changed and then stayed quiet. */
   tick(now?: number): void;
   close(): Promise<void>;
@@ -162,6 +164,11 @@ export function createApp(o: AppOptions): App {
     base: current.scope === 'branch' ? source.resolveBase(current) : null,
     scope: current.scope, agent, port: port(), stateDir: dir, eventsLog: files.events, batchesLog: files.batches,
     doneCommand: (o.doneCommand ?? ((p) => `trove done <file> --port ${p}`))(port()),
+  });
+
+  const git = (): GitInfo => ({
+    root: top, branch: source.branch(), head: source.head(), branches: source.branches(), worktrees: source.worktrees(),
+    dirty: source.dirty(current), base: current.scope === 'branch' ? source.resolveBase(current) : null,
   });
 
   const routes: Record<string, (q: URLSearchParams, body: any) => Result> = {
@@ -397,6 +404,24 @@ export function createApp(o: AppOptions): App {
       return [200, { released: release(rel), updated: updated.has(rel) }];
     },
     'GET /api/source': () => [200, info()],
+    'GET /api/git': () => [200, git()],
+    // The same as running `git switch <branch>` by hand, no more: no stash, no discard. Git itself
+    // refuses when uncommitted changes would be overwritten; its message is the answer.
+    'POST /api/switch': (_, { branch }) => {
+      const target = typeof branch === 'string' ? source.branches().find((b) => b.name === branch) : undefined;
+      if (!target) return [404, { error: `no such branch: ${branch}` }];
+      if (target.current) return [200, git()];
+      if (target.worktree) return [409, { error: `${branch} is checked out in ${target.worktree}`, worktree: target.worktree }];
+      if (working.size) return [409, { error: `${agent === 'claude' ? 'Claude' : 'The agent'} is working on a file` }];
+      const failed = source.switchTo(branch);
+      if (failed) return [409, { error: failed }];
+      // What the review listed belongs to the branch it was on: start the committed set over from
+      // what git reports here, so a file committed there does not show as committed here.
+      seen.clear();
+      list();
+      saveState();
+      return [200, git()];
+    },
     'GET /api/settings': () => [200, current],
     // A partial merge. Keys this run got from options (--scope, --exclude) give way to the user's
     // choice. Types, exclude, scope and base apply on the next list(), which every request runs.
@@ -468,7 +493,7 @@ export function createApp(o: AppOptions): App {
   });
 
   return {
-    server, info, list, tick,
+    server, info, list, tick, git,
     settings: () => current,
     close: () => new Promise<void>((ok) => { server.close(() => ok()); server.closeAllConnections(); }),
   };

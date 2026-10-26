@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { enabledTypes, included, kindOf } from './settings.js';
-import type { DocKind, FileEntry, GitProbe, Settings } from './types.js';
+import type { BranchInfo, DocKind, FileEntry, GitProbe, Settings, WorktreeInfo } from './types.js';
 
 export const sha = (text: string) => createHash('sha1').update(text).digest('hex');
 
@@ -19,7 +19,25 @@ function gitAt(cwd: string) {
     if (origin && origin !== 'origin/HEAD') return origin;
     return ['main', 'master'].find((b) => tryGit('rev-parse', '--verify', '--quiet', `refs/heads/${b}`)) ?? null;
   };
-  return { git, tryGit, branch, defaultBase };
+  const real = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+  const head = () => tryGit('rev-parse', '--short', 'HEAD')?.trim() ?? '';
+  // Worktrees from `git worktree list --porcelain`: blocks of `worktree <path>`, `HEAD <sha>`, then
+  // `branch refs/heads/<name>` or `detached`. A bare repository's own entry has no checkout; left out.
+  const worktrees = (top: string): WorktreeInfo[] => (tryGit('worktree', 'list', '--porcelain') ?? '').split('\n\n').flatMap((block) => {
+    const kv = new Map(block.split('\n').filter(Boolean).map((l) => [l.split(' ')[0], l.slice(l.indexOf(' ') + 1)]));
+    if (!kv.has('worktree') || kv.has('bare')) return [];
+    const path = real(kv.get('worktree')!);
+    return [{ path, branch: kv.get('branch')?.replace(/^refs\/heads\//, '') ?? null, head: (kv.get('HEAD') ?? '').slice(0, 7), current: path === top }];
+  });
+  // Local branches; `worktree` is the other worktree a branch is checked out in, if any.
+  const branches = (top: string): BranchInfo[] =>
+    (tryGit('for-each-ref', '--format=%(refname:short)%00%(HEAD)%00%(worktreepath)%00%(upstream:short)%00%(committerdate:iso-strict)', 'refs/heads') ?? '')
+      .split('\n').filter(Boolean).map((l) => {
+        const [name, star, wt, upstream, date] = l.split('\0');
+        const path = wt ? real(wt) : null;
+        return { name, current: star === '*', worktree: path && path !== top ? path : null, ...(upstream ? { upstream } : {}), lastCommit: date };
+      });
+  return { git, tryGit, branch, defaultBase, head, worktrees, branches };
 }
 
 const gitTop = (dir: string) => { try { return realpathSync(gitAt(dir).git('rev-parse', '--show-toplevel').trim()); } catch { return null; } };
@@ -34,14 +52,15 @@ export function probeGit(path: string): GitProbe | null {
   // Local and remote branches, minus symbolic refs such as origin/HEAD.
   const branches = (g.tryGit('for-each-ref', '--format=%(refname:short)%00%(symref)', 'refs/heads', 'refs/remotes') ?? '')
     .split('\n').map((l) => l.split('\0')).filter(([name, sym]) => name && !sym).map(([name]) => name);
-  return { branch: g.branch(), branches, defaultBase: g.defaultBase() };
+  return { branch: g.branch(), branches, defaultBase: g.defaultBase(), local: g.branches(top), worktrees: g.worktrees(top) };
 }
 
 /** The git working tree `root` is in. Throws if `root` does not exist or is not inside one. */
 export function openSource(root: string) {
   const top = gitTop(statSync(root).isDirectory() ? root : dirname(root));
   if (!top) throw new Error(`not a git repository: ${root}`);
-  const { git, tryGit, branch, defaultBase } = gitAt(top);
+  const g = gitAt(top);
+  const { git, tryGit, branch, defaultBase } = g;
   const gitDir = git('rev-parse', '--absolute-git-dir').trim();
   const stateDir = join(gitDir, 'trove');
   // doc-review (the skill this grew from) kept the same files under another name: carry its drafts over.
@@ -53,12 +72,34 @@ export function openSource(root: string) {
   const unstage = (rel: string) => { try { git('restore', '--staged', '--', rel); } catch {} }; // untracked: nothing staged
   const entry = (path: string, kind: DocKind, untracked: boolean, staged: boolean): FileEntry => ({ path, kind, untracked, staged });
 
+  const pathspec = (s: Settings) => {
+    const exts = enabledTypes(s).flatMap((t) => t.extensions.map((e) => `*${e}`));
+    // No enabled type: no pathspec at all, since excludes alone would match everything.
+    return exts.length ? [...exts, ...s.exclude.map((e) => `:(exclude,glob)${e}`)] : null;
+  };
+
   return {
     root: top, // realpath of the toplevel
     stateDir,
     /** The branch scope's base ref: Settings.base, or auto. */
     resolveBase,
     branch,
+    head: g.head,
+    branches: () => g.branches(top),
+    worktrees: () => g.worktrees(top),
+    /** Changed paths of the enabled doc types, staged or not: what a switch carries along or trips on. */
+    dirty(s: Settings) {
+      const spec = pathspec(s);
+      if (!spec) return 0;
+      const parts = git('status', '--porcelain=v1', '-z', '-uall', '--', ...spec).split('\0');
+      let n = 0;
+      for (let k = 0; k < parts.length; k++) if (parts[k]) { n++; if (/^[RC]/.test(parts[k])) k++; } // a rename's old path follows as its own entry
+      return n;
+    },
+    /** `git switch <branch>`; null when done, else git's own message. Never stashes, never discards. */
+    switchTo(name: string): string | null {
+      try { git('switch', '--no-guess', name); return null; } catch (e) { return String((e as { stderr?: string }).stderr || (e as Error).message).trim(); }
+    },
     unstage,
     unaccept: unstage,
     accept: (rel: string) => { git('add', '--', rel); },
@@ -76,9 +117,8 @@ export function openSource(root: string) {
      * reports them, never from `seen` or the branch diff.
      */
     list(s: Settings, seen: Set<string>, hide = new Set<string>()): FileEntry[] {
-      const exts = enabledTypes(s).flatMap((t) => t.extensions.map((e) => `*${e}`));
-      if (!exts.length) return []; // a pathspec of excludes alone would match everything
-      const spec = [...exts, ...s.exclude.map((g) => `:(exclude,glob)${g}`)];
+      const spec = pathspec(s);
+      if (!spec) return [];
       const parts = git('status', '--porcelain=v1', '-z', '-uall', '--', ...spec).split('\0');
       const out: FileEntry[] = [];
       for (let k = 0; k < parts.length; k++) {

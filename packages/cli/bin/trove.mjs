@@ -75,7 +75,8 @@ async function main() {
     });
     const info = app.info();
     const queued = app.list().filter((f) => !f.staged).length;
-    console.log(`reviewing ${queued} files at ${url}; notices in ${info.eventsLog}; after each file run: ${info.doneCommand}`);
+    const git = app.git();
+    console.log(`reviewing ${queued} files on ${git.branch ?? git.head} at ${url}; notices in ${info.eventsLog}; after each file run: ${info.doneCommand}`);
   } catch (/** @type {any} */ error) {
     console.log(error.code === 'EADDRINUSE' ? `port ${port} is busy: another session is probably serving. Stop it, or pass --port.`
       : error.message.startsWith('not a git repository') ? error.message : `server failed: ${error.message}`);

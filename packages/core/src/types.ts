@@ -161,16 +161,39 @@ export interface ReleaseBody { path: string } // POST /api/release -> {released,
 export type SourceResponse = SourceInfo; // GET /api/source
 export type SettingsResponse = Settings; // GET /api/settings; POST /api/settings takes Partial<Settings>, returns Settings
 
+/** A local branch. `worktree`: the absolute path of another worktree it is checked out in, else null. */
+export interface BranchInfo { name: string; current: boolean; worktree: string | null; upstream?: string; lastCommit: string }
+export interface WorktreeInfo { path: string; branch: string | null; head: string; current: boolean }
+/** GET /api/git: where the source stands, for the repository and branch switcher. */
+export interface GitInfo {
+  root: string;
+  branch: string | null; // null when detached
+  head: string; // short sha; '' before the first commit
+  branches: BranchInfo[];
+  worktrees: WorktreeInfo[];
+  dirty: number; // changed paths of the enabled doc types (staged or not)
+  base: string | null; // branch scope: the resolved base ref
+}
+/**
+ * POST /api/switch -> GitInfo. `git switch <branch>` in this worktree, nothing more: never stashes or
+ * discards. 409 when the branch is checked out in another worktree (the body carries `worktree`, the
+ * path to open instead), when the agent is working on a file, or with git's own message when git refuses.
+ */
+export interface SwitchBody { branch: string }
+
 export interface BatchItem { path: string; kind: CommentKind; note: string; anchor: Anchor }
 export interface Batch { id: string; sentAt: string; items: BatchItem[] } // one line of batches.jsonl
 
 // ---- Desktop bridge --------------------------------------------------------------------------
-// Exposed by the Electron preload as `window.trove` on the zero-state page (start.html).
+// Exposed by the Electron preload as `window.trove` on the zero-state page (start.html) and in
+// every repository window, where the switcher opens other worktrees and recents with it.
 
 export interface GitProbe {
   branch: string | null;
-  branches: string[];
+  branches: string[]; // local and remote, for the base
   defaultBase: string | null; // what Settings.base = null would resolve to
+  local: BranchInfo[]; // local branches, with the worktree each is checked out in
+  worktrees: WorktreeInfo[];
 }
 
 export interface Recent {

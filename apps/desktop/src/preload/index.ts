@@ -16,7 +16,7 @@ const trove: TroveBridge = {
 
 contextBridge.exposeInMainWorld('trove', trove);
 
-// A folder dropped anywhere on the zero state opens it if it is a repository; any other folder stays
+// A folder dropped on any window opens it if it is a repository; any other folder stays
 // on the zero state with the reason. The page cannot learn a dropped file's
 // path itself (File.path is gone since Electron 32), so the preload takes the drop.
 window.addEventListener('dragover', (e) => e.preventDefault(), true);
@@ -24,7 +24,8 @@ window.addEventListener(
   'drop',
   (e) => {
     const file = e.dataTransfer?.files[0];
-    const path = file ? webUtils.getPathForFile(file) : '';
+    if (!file) return; // dragged text: the page's own (a comment box in the editor)
+    const path = webUtils.getPathForFile(file);
     e.preventDefault(); // never navigate to the dropped file; the page's own handlers still run
     if (path) void ipcRenderer.invoke('trove:drop', path);
   },

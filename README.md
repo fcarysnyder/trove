@@ -31,6 +31,9 @@ node packages/cli/bin/trove.mjs serve --root <repo>
 The first line it prints gives the URL and the command an agent runs after finishing each file
 (`trove done <file> --port <port>`; `trove ask` and `trove reply` show a notice on the page).
 
+The page's top bar switches branches like GitHub Desktop (a plain `git switch`, never a stash); a
+branch checked out in another worktree opens that worktree instead.
+
 **Desktop app:** `pnpm dev:desktop`. It asks for a git repository and opens a window for each; a folder that is not one cannot be opened.
 
 ## Mental model

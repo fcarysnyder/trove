@@ -1,6 +1,6 @@
 // The page's only network layer. Paths are relative so the page works under any base.
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number, readonly hash?: string) {
+  constructor(message: string, readonly status: number, readonly hash?: string, readonly data: Record<string, unknown> = {}) {
     super(message);
   }
 }
@@ -9,7 +9,7 @@ export async function api<T = Record<string, unknown>>(path: string, body?: unkn
   const init: RequestInit = body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
   const res = await fetch(`api/${path}`, init);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(data.error ?? `HTTP ${res.status}`, res.status, data.hash);
+  if (!res.ok) throw new ApiError(data.error ?? `HTTP ${res.status}`, res.status, data.hash, data);
   return data as T;
 }
 

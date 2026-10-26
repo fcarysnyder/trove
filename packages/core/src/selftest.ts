@@ -4,7 +4,7 @@
 // runs it (`trove --selftest`) with no devDependencies; vitest calls it too.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -40,6 +40,7 @@ export async function selftest(): Promise<void> {
     await pure();
     await gitCase(temps);
     await branchCase(temps);
+    await switchCase(temps);
     notARepo(temps);
   } finally {
     for (const t of temps) rmSync(t, { recursive: true, force: true });
@@ -430,7 +431,9 @@ async function branchCase(temps: string[]) {
   sh('add', '.');
   sh('commit', '-qm', 'branch work');
   writeFileSync(join(root, 'old.md'), '# old.md, uncommitted\n');
-  assert.deepEqual(probeGit(root), { branch: 'feature', branches: ['feature', 'main'], defaultBase: 'main' });
+  const probe = probeGit(root)!;
+  assert.deepEqual([probe.branch, probe.branches, probe.defaultBase, probe.local.map((b) => [b.name, b.current, b.worktree])],
+    ['feature', ['feature', 'main'], 'main', [['feature', true, null], ['main', false, null]]]);
 
   const { app, port } = await listen({ root });
   const rows = async () => Object.fromEntries((await call(port, 'GET', '/api/files')).body.files.map((f: any) => [f.path, f.state]));
@@ -459,6 +462,63 @@ async function branchCase(temps: string[]) {
   assert.equal(cli.app.settings().scope, 'branch');
   assert.equal(JSON.parse(readFileSync(join(cli.app.info().stateDir, 'settings.json'), 'utf8')).scope, 'uncommitted');
   await cli.app.close();
+}
+
+// The switcher: branches and worktrees, a switch that re-lists the queue, and every refusal.
+async function switchCase(temps: string[]) {
+  const { root, sh } = newRepo('trove-switch-');
+  const wtDir = mkdtempSync(join(tmpdir(), 'trove-wt-'));
+  temps.push(root, wtDir);
+  writeFileSync(join(root, 'a.md'), '# A\n');
+  writeFileSync(join(root, 'b.md'), '# B\n');
+  sh('add', '.');
+  sh('commit', '-qm', 'base');
+  sh('branch', 'wt');
+  sh('checkout', '-qb', 'free');
+  writeFileSync(join(root, 'a.md'), '# A on free\n');
+  sh('commit', '-qam', 'free');
+  sh('checkout', '-q', 'main');
+  rmSync(wtDir, { recursive: true });
+  sh('worktree', 'add', '-q', wtDir, 'wt');
+  const wtPath = realpathSync(wtDir);
+  const { app, port } = await listen({ root });
+  const get = async (path: string) => (await call(port, 'GET', path)).body;
+  const sw = (branch: string) => call(port, 'POST', '/api/switch', { branch });
+  const paths = async () => (await get('/api/files')).files.map((f: any) => f.path);
+
+  const info = await get('/api/git');
+  assert.deepEqual([info.branch, info.branches.map((b: any) => [b.name, b.current, b.worktree])],
+    ['main', [['free', false, null], ['main', true, null], ['wt', false, wtPath]]], 'the worktree branch says where it is checked out');
+  assert.deepEqual(info.worktrees.map((w: any) => [w.path, w.branch, w.current]), [[realpathSync(root), 'main', true], [wtPath, 'wt', false]]);
+  assert.equal(info.dirty, 0);
+  assert.equal(probeGit(wtDir)?.branch, 'wt', 'a worktree is a repository of its own');
+
+  writeFileSync(join(root, 'b.md'), '# B, uncommitted\n');
+  writeFileSync(join(root, 'a.md'), '# A, uncommitted\n');
+  assert.equal((await get('/api/git')).dirty, 2);
+  const refused = await sw('free');
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error, /overwritten/, "git's own message");
+  assert.deepEqual([(await get('/api/git')).branch, readFileSync(join(root, 'a.md'), 'utf8')], ['main', '# A, uncommitted\n'], 'nothing changed');
+  sh('checkout', '--', 'a.md');
+
+  const busy = await sw('wt');
+  assert.deepEqual([busy.status, busy.body.worktree], [409, wtPath], 'a branch checked out elsewhere: open that worktree instead');
+  assert.equal((await sw('nope')).status, 404);
+
+  await call(port, 'POST', '/api/drafts', { path: 'b.md', drafts: [{ kind: 'change', note: 'n', anchor: { quote: 'B', prefix: '', suffix: '', path: [], raw: '' } }] });
+  assert.equal((await call(port, 'POST', '/api/send', {})).status, 200);
+  assert.match((await sw('free')).body.error, /working on a file/, 'no switching under the agent');
+  await call(port, 'POST', '/api/release', { path: 'b.md' });
+
+  assert.deepEqual(await paths(), ['b.md']);
+  const done = await sw('free');
+  assert.deepEqual([done.status, done.body.branch, done.body.dirty], [200, 'free', 1]);
+  assert.deepEqual([await paths(), readFileSync(join(root, 'a.md'), 'utf8'), (await get('/api/source')).branch], [['b.md'], '# A on free\n', 'free'],
+    'the queue re-lists on the new branch; uncommitted work comes along, as with git switch');
+  assert.equal((await sw('free')).status, 200, 'the current branch is a no-op');
+  await app.close();
+  sh('worktree', 'remove', '--force', wtDir);
 }
 
 // A folder outside any git repository is refused, and the probe says so.

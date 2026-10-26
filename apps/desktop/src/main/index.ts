@@ -67,6 +67,7 @@ function openSource(req: OpenRequest): Promise<void> {
 
 async function openNow(req: OpenRequest): Promise<void> {
   const path = req.path;
+  // Exact roots only: a worktree is its own toplevel, so it gets its own window beside the main checkout's.
   const open = [...sources].find((s) => s.path === path || s.root === path);
   if (open) {
     open.win.show();
@@ -100,7 +101,8 @@ async function openNow(req: OpenRequest): Promise<void> {
     width: 1440,
     height: 900,
     title: `${info.name} · Trove`,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+    // The bridge here too: the editor's repository and branch menus open other worktrees and recents with it.
+    webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   const source: SourceWindow = { win, core, path, root: info.root };
   sources.add(source);

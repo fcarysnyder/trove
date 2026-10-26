@@ -91,6 +91,21 @@ path resolves under the root and must be in the current set; a throwing route an
 style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'`. The UI uses no
 inline scripts.
 
+### Switcher
+
+The editor's top bar has GitHub Desktop's two menus. Current repository lists the repository's
+worktrees (and, on the desktop, the recents and Open repository…); Current branch filters the
+local branches and switches. `GET /api/git` answers `GitInfo` (branch, short head, local branches
+with the worktree each is checked out in, worktrees, the changed-path count shown beside the
+branch); `POST /api/switch {branch}` runs `git switch <branch>` in this worktree and nothing
+more: no stash, no discard, git's own refusal (uncommitted changes in the way) is the answer, a
+409. Also refused while the agent works on a file, and for a branch checked out in another
+worktree (the 409 carries `worktree`). A worktree is another root, so it is another server: the
+desktop opens it in a new window (windows match on the exact root, and a worktree is its own
+toplevel), the CLI page shows the `trove serve --root <path>` command. After a switch the
+committed-file memory (`seen`) starts over from git status. The start page's branch select opens
+the worktree a branch is checked out in.
+
 ### Agent protocol (unchanged)
 
 A send appends one line to `batches.jsonl` and one notice to `events.log`

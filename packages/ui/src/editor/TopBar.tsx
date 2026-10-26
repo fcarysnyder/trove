@@ -12,6 +12,7 @@ import { dismissQuestion, reveal, step, visible } from './actions';
 import { Count, IconButton } from './bits';
 import { Icon } from './StateIcon';
 import { get, set, useNames, useStore } from './store';
+import { Switcher } from './Switcher';
 
 const SEG: Record<string, string> = {
   accepted: 'bg-good', updated: 'bg-agent', drafts: 'bg-dirty', edited: 'bg-muted-foreground/60', working: 'bg-muted-foreground',
@@ -29,7 +30,7 @@ export function TopBar() {
   const pos = list.findIndex((f) => f.path === current) + 1;
   return (
     <header className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 border-b px-4 py-2 whitespace-nowrap">
-      <strong className="truncate font-semibold text-foreground" title={source?.root}>{source?.name ?? 'Trove'}</strong>
+      <Switcher />
       <div className="flex items-center gap-2">
         <Progress />
         <span className="text-xs text-muted-foreground tabular-nums">{pos || '–'} / {list.length}</span>

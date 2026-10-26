@@ -1,6 +1,6 @@
 // One small store for the editor. Actions (actions.ts) read and write it directly, so the 2s poll
 // always sees the latest state; components subscribe to slices with useStore.
-import type { Anchor, BlockEdit, CommentKind, Draft, FileResponse, FileRow, Question, Settings, SourceInfo } from '@trove/core/types';
+import type { Anchor, BlockEdit, CommentKind, Draft, FileResponse, FileRow, GitInfo, Question, Settings, SourceInfo } from '@trove/core/types';
 import { DEFAULT_SETTINGS } from '@trove/core/types';
 import type { AnchorHit } from '@trove/core/anchor';
 import { useSyncExternalStore } from 'react';
@@ -25,6 +25,8 @@ export interface Pick {
 
 export interface State {
   source: SourceInfo | null; // null: an old server without /api/source
+  git: GitInfo | null; // null: a server without /api/git
+  serveRoot: string | null; // another worktree to serve: the dialog with its `trove serve` command is open
   settings: Settings;
   hasSettings: boolean;
   files: FileRow[];
@@ -52,6 +54,8 @@ export interface State {
 
 let state: State = {
   source: null,
+  git: null,
+  serveRoot: null,
   settings: DEFAULT_SETTINGS,
   hasSettings: false,
   files: [],
