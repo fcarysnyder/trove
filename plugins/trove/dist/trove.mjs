@@ -3,7 +3,7 @@
 
 // bin/trove.mjs
 import { existsSync as existsSync4, realpathSync as realpathSync4 } from "node:fs";
-import { basename as basename4, dirname as dirname3, join as join5, resolve as resolve2 } from "node:path";
+import { basename as basename5, dirname as dirname3, join as join5, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -28,7 +28,7 @@ var AGENT_LABELS = { claude: "Claude", codex: "Codex", other: "the agent" };
 import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, realpathSync as realpathSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { createServer, request } from "node:http";
 import { randomUUID } from "node:crypto";
-import { basename as basename2, dirname as dirname2, extname, join as join3, relative, resolve, sep } from "node:path";
+import { basename as basename3, dirname as dirname2, extname, join as join3, relative, resolve, sep } from "node:path";
 
 // ../core/src/vendor/marked.esm.mjs
 function I() {
@@ -1357,24 +1357,24 @@ var Tn = R.lex;
 var FRONT_MATTER = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
 var CONTEXT = 32;
 function blocks(src) {
-  const out = [];
+  const out2 = [];
   const fm = src.match(FRONT_MATTER);
-  if (fm) out.push({ type: "frontmatter", raw: fm[0], path: [] });
+  if (fm) out2.push({ type: "frontmatter", raw: fm[0], path: [] });
   const tokens = Tn(src.slice(fm ? fm[0].length : 0));
   const path = [];
   for (const token of tokens) {
-    if (token.type === "space" && out.length) {
-      out[out.length - 1].raw += token.raw;
+    if (token.type === "space" && out2.length) {
+      out2[out2.length - 1].raw += token.raw;
       continue;
     }
     if (token.type === "heading") {
       path.length = token.depth - 1;
       path[token.depth - 1] = token.text;
     }
-    out.push({ type: token.type, raw: token.raw, token, path: path.filter((h2) => h2 !== void 0) });
+    out2.push({ type: token.type, raw: token.raw, token, path: path.filter((h2) => h2 !== void 0) });
   }
-  out.links = tokens.links;
-  return out;
+  out2.links = tokens.links;
+  return out2;
 }
 function splice(src, i, raw2) {
   const all = blocks(src);
@@ -1442,10 +1442,10 @@ function matchBlocks(oldRaws, newRaws) {
 function wordDiff(a, b) {
   const split = (s) => s.match(/[\p{L}\p{N}_]+\s*|[^\p{L}\p{N}_\s]+\s*|\s+/gu) ?? [];
   const x2 = split(a), y2 = split(b);
-  const out = [];
+  const out2 = [];
   const push = (op, text, old = "") => {
-    const last = out[out.length - 1];
-    if (last?.op !== op) return out.push(op === "=" ? { op, text, old } : { op, text });
+    const last = out2[out2.length - 1];
+    if (last?.op !== op) return out2.push(op === "=" ? { op, text, old } : { op, text });
     last.text += text;
     if (last.op === "=") last.old += old;
   };
@@ -1456,30 +1456,30 @@ function wordDiff(a, b) {
     while (j2 < pj) push("+", y2[j2++]);
     if (i < x2.length) push("=", y2[j2++], x2[i++]);
   }
-  return out;
+  return out2;
 }
 function addedSpans(ops) {
-  const out = [];
+  const out2 = [];
   let at2 = 0;
   for (const { op, text } of ops) {
     if (op === "-") continue;
     const end = at2 + text.trimEnd().length;
-    if (op === "+" && end > at2) out.push([at2, end]);
+    if (op === "+" && end > at2) out2.push([at2, end]);
     at2 += text.length;
   }
-  return out;
+  return out2;
 }
 function subtractSpans(a, b) {
-  const out = [];
+  const out2 = [];
   for (let [s, e] of a) {
     for (const [bs, be2] of b) {
       if (be2 <= s || bs >= e) continue;
-      if (bs > s) out.push([s, bs]);
+      if (bs > s) out2.push([s, bs]);
       s = Math.max(s, be2);
     }
-    if (s < e) out.push([s, e]);
+    if (s < e) out2.push([s, e]);
   }
-  return out;
+  return out2;
 }
 var similarity = (a, b) => {
   const ops = wordDiff(a, b);
@@ -1490,13 +1490,13 @@ function lcs(a, b) {
   const t = Array.from({ length: a.length + 1 }, () => new Uint32Array(b.length + 1));
   for (let i = a.length - 1; i >= 0; i--)
     for (let j2 = b.length - 1; j2 >= 0; j2--) t[i][j2] = a[i] === b[j2] ? t[i + 1][j2 + 1] + 1 : Math.max(t[i + 1][j2], t[i][j2 + 1]);
-  const out = [];
+  const out2 = [];
   for (let i = 0, j2 = 0; i < a.length && j2 < b.length; ) {
-    if (a[i] === b[j2]) out.push([i++, j2++]);
+    if (a[i] === b[j2]) out2.push([i++, j2++]);
     else if (t[i + 1][j2] >= t[i][j2 + 1]) i++;
     else j2++;
   }
-  return out;
+  return out2;
 }
 function shared(a, b, fromEnd) {
   let n = 0;
@@ -1525,35 +1525,35 @@ var saveSettings = (stateDir, s) => writeFileSync(settingsFile(stateDir), JSON.s
 function mergeSettings(base, patch) {
   if (patch === null || typeof patch !== "object" || Array.isArray(patch)) throw new TypeError("settings must be an object");
   const p = patch;
-  const out = { ...base, types: { ...base.types }, exclude: [...base.exclude] };
+  const out2 = { ...base, types: { ...base.types }, exclude: [...base.exclude] };
   const bad = (key) => {
     throw new TypeError(`bad setting: ${key}`);
   };
   if ("types" in p) {
     if (!p.types || typeof p.types !== "object" || Array.isArray(p.types) || !Object.values(p.types).every((v) => typeof v === "boolean")) bad("types");
-    Object.assign(out.types, p.types);
+    Object.assign(out2.types, p.types);
   }
   if ("exclude" in p) {
     if (!Array.isArray(p.exclude) || !p.exclude.every((g) => typeof g === "string" && g.trim())) bad("exclude");
-    out.exclude = p.exclude.map((g) => g.trim());
+    out2.exclude = p.exclude.map((g) => g.trim());
   }
   if ("theme" in p) {
     if (!["system", "light", "dark"].includes(p.theme)) bad("theme");
-    out.theme = p.theme;
+    out2.theme = p.theme;
   }
   if ("scope" in p) {
     if (!["uncommitted", "branch"].includes(p.scope)) bad("scope");
-    out.scope = p.scope;
+    out2.scope = p.scope;
   }
   if ("base" in p) {
     if (p.base !== null && (typeof p.base !== "string" || !p.base.trim())) bad("base");
-    out.base = p.base === null ? null : p.base.trim();
+    out2.base = p.base === null ? null : p.base.trim();
   }
   if ("showNew" in p) {
     if (typeof p.showNew !== "boolean") bad("showNew");
-    out.showNew = p.showNew;
+    out2.showNew = p.showNew;
   }
-  return out;
+  return out2;
 }
 var enabledTypes = (s) => DEFAULT_DOC_TYPES.filter((t) => s.types[t.id] ?? t.enabled);
 function kindOf(path, s) {
@@ -1564,14 +1564,50 @@ var globRe = (g) => new RegExp("^" + g.replace(/\*\*\/|\/\*\*$|\*\*|\*|\?|[.+^${
 var excluded = (path, s) => s.exclude.some((g) => globRe(g).test(path));
 var included = (path, s) => kindOf(path, s) !== null && !excluded(path, s);
 
-// ../core/src/source.ts
+// ../core/src/presence.ts
 import { execFileSync } from "node:child_process";
+import { basename } from "node:path";
+var out = (cmd, args) => {
+  try {
+    return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3e3 });
+  } catch {
+    return null;
+  }
+};
+function peerOf(port) {
+  const pids = (out("lsof", ["-nP", "-t", `-iTCP:${port}`, "-sTCP:ESTABLISHED"]) ?? "").split("\n").map(Number);
+  return pids.find((p) => p > 0 && p !== process.pid) ?? null;
+}
+function agentAbove(pid, id) {
+  if (id === "other") return null;
+  for (let hops = 0; pid && pid > 1 && hops < 30; hops++) {
+    const line = out("ps", ["-o", "ppid=", "-o", "comm=", "-p", String(pid)])?.trim();
+    if (!line) return null;
+    const [, ppid, comm] = line.match(/^(\d+)\s+(.*)$/) ?? [];
+    const exe = basename(comm ?? "");
+    if (exe === id) return pid;
+    if (exe === "node" && new RegExp(`/${id}(?:-code)?[/\\s]|/${id}$`).test(out("ps", ["-o", "args=", "-p", String(pid)]) ?? "")) return pid;
+    pid = Number(ppid);
+  }
+  return null;
+}
+var alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+
+// ../core/src/source.ts
+import { execFileSync as execFileSync2 } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
-import { basename, dirname, join as join2 } from "node:path";
+import { basename as basename2, dirname, join as join2 } from "node:path";
 var sha = (text) => createHash("sha1").update(text).digest("hex");
 function gitAt(cwd) {
-  const git = (...args) => execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 << 20, stdio: "pipe" });
+  const git = (...args) => execFileSync2("git", args, { cwd, encoding: "utf8", maxBuffer: 64 << 20, stdio: "pipe" });
   const tryGit = (...args) => {
     try {
       return git(...args);
@@ -1598,12 +1634,12 @@ function gitAt(cwd) {
     const main2 = blocks2[0] ? real(blocks2[0].get("worktree")) : top;
     const worktrees = blocks2.filter((kv) => !kv.has("bare")).map((kv) => {
       const path = real(kv.get("worktree"));
-      return { path, name: basename(path), branch: kv.get("branch")?.replace(/^refs\/heads\//, "") ?? null, head: (kv.get("HEAD") ?? "").slice(0, 7), current: path === top, main: path === main2 };
+      return { path, name: basename2(path), branch: kv.get("branch")?.replace(/^refs\/heads\//, "") ?? null, head: (kv.get("HEAD") ?? "").slice(0, 7), current: path === top, main: path === main2 };
     });
     const here2 = worktrees.find((w) => w.current);
     return {
-      repo: { root: main2, name: basename(main2) },
-      worktree: { path: top, name: basename(top), branch: here2 ? here2.branch : branch(), main: top === main2 },
+      repo: { root: main2, name: basename2(main2) },
+      worktree: { path: top, name: basename2(top), branch: here2 ? here2.branch : branch(), main: top === main2 },
       worktrees
     };
   };
@@ -1613,6 +1649,33 @@ function gitAt(cwd) {
     return { name, current: star === "*", worktree: path && path !== top ? path : null, ...upstream ? { upstream } : {}, lastCommit: date };
   });
   return { git, tryGit, branch, defaultBase, head, place, branches };
+}
+var pathspec = (s) => {
+  const exts = enabledTypes(s).flatMap((t) => t.extensions.map((e) => `*${e}`));
+  return exts.length ? [...exts, ...s.exclude.map((e) => `:(exclude,glob)${e}`)] : null;
+};
+function changesIn(git, s) {
+  const spec = pathspec(s);
+  if (!spec) return 0;
+  const parts = git("status", "--porcelain=v1", "-z", "-uall", "--", ...spec).split("\0");
+  let n = 0;
+  for (let k2 = 0; k2 < parts.length; k2++) if (parts[k2]) {
+    n++;
+    if (/^[RC]/.test(parts[k2])) k2++;
+  }
+  return n;
+}
+function withChanges(worktrees) {
+  return worktrees.map((w) => {
+    const g = gitAt(w.path);
+    const dir = g.tryGit("rev-parse", "--absolute-git-dir")?.trim();
+    let changes = 0;
+    try {
+      if (dir) changes = changesIn(g.git, loadSettings(join2(dir, "trove")));
+    } catch {
+    }
+    return { ...w, changes };
+  });
 }
 var gitTop = (dir) => {
   try {
@@ -1632,7 +1695,8 @@ function probeGit(path) {
   if (!top) return null;
   const g = gitAt(top);
   const branches = (g.tryGit("for-each-ref", "--format=%(refname:short)%00%(symref)", "refs/heads", "refs/remotes") ?? "").split("\n").map((l3) => l3.split("\0")).filter(([name, sym]) => name && !sym).map(([name]) => name);
-  return { branch: g.branch(), branches, defaultBase: g.defaultBase(), local: g.branches(top), ...g.place(top) };
+  const place = g.place(top);
+  return { branch: g.branch(), branches, defaultBase: g.defaultBase(), local: g.branches(top), ...place, worktrees: withChanges(place.worktrees) };
 }
 function openSource(root) {
   const top = gitTop(statSync(root).isDirectory() ? root : dirname(root));
@@ -1656,10 +1720,6 @@ function openSource(root) {
     }
   };
   const entry = (path, kind, untracked, staged) => ({ path, kind, untracked, staged });
-  const pathspec = (s) => {
-    const exts = enabledTypes(s).flatMap((t) => t.extensions.map((e) => `*${e}`));
-    return exts.length ? [...exts, ...s.exclude.map((e) => `:(exclude,glob)${e}`)] : null;
-  };
   return {
     root: top,
     // realpath of the toplevel
@@ -1672,17 +1732,7 @@ function openSource(root) {
     /** The repository, this root as a worktree of it, and every worktree (main checkout first). */
     place: () => g.place(top),
     /** Changed paths of the enabled doc types, staged or not: what a switch carries along or trips on. */
-    dirty(s) {
-      const spec = pathspec(s);
-      if (!spec) return 0;
-      const parts = git("status", "--porcelain=v1", "-z", "-uall", "--", ...spec).split("\0");
-      let n = 0;
-      for (let k2 = 0; k2 < parts.length; k2++) if (parts[k2]) {
-        n++;
-        if (/^[RC]/.test(parts[k2])) k2++;
-      }
-      return n;
-    },
+    dirty: (s) => changesIn(git, s),
     /** `git switch <branch>`; null when done, else git's own message. Never stashes, never discards. */
     switchTo(name) {
       try {
@@ -1717,20 +1767,20 @@ function openSource(root) {
       const spec = pathspec(s);
       if (!spec) return [];
       const parts = git("status", "--porcelain=v1", "-z", "-uall", "--", ...spec).split("\0");
-      const out = [];
+      const out2 = [];
       for (let k2 = 0; k2 < parts.length; k2++) {
         const [x2, y2, path] = [parts[k2][0], parts[k2][1], parts[k2].slice(3)];
         if (!path) continue;
         if (x2 === "R" || x2 === "C") k2++;
         if (y2 === "D" || x2 === "D" && y2 === " ") continue;
         const kind = kindOf(path, s);
-        if (kind) out.push(entry(path, kind, x2 === "?", y2 === " "));
+        if (kind) out2.push(entry(path, kind, x2 === "?", y2 === " "));
       }
-      const have = new Set(out.map((f) => f.path));
+      const have = new Set(out2.map((f) => f.path));
       for (const path of seen) {
-        if (!have.has(path) && !hide.has(path) && included(path, s) && existsSync(join2(top, path))) out.push({ ...entry(path, kindOf(path, s), false, true), committed: true });
+        if (!have.has(path) && !hide.has(path) && included(path, s) && existsSync(join2(top, path))) out2.push({ ...entry(path, kindOf(path, s), false, true), committed: true });
       }
-      for (const f of out) {
+      for (const f of out2) {
         seen.add(f.path);
         have.add(f.path);
       }
@@ -1738,10 +1788,10 @@ function openSource(root) {
       if (mb) {
         for (const path of git("diff", "--name-only", "-z", "--diff-filter=d", mb, "HEAD", "--", ...spec).split("\0")) {
           const kind = path && !have.has(path) && !hide.has(path) && existsSync(join2(top, path)) ? kindOf(path, s) : null;
-          if (kind) out.push(entry(path, kind, false, true));
+          if (kind) out2.push(entry(path, kind, false, true));
         }
       }
-      return out;
+      return out2;
     },
     // What `text` is new against, for the page's Show new: the staged copy, or HEAD's once the file
     // is staged as it is (accepted). In branch scope a file committed as it is diffs against the
@@ -1811,10 +1861,11 @@ function createApp(o) {
   const seen = new Set(saved.seen ?? []);
   const skipped = new Set(saved.skipped ?? []);
   const rejected = new Map(Object.entries(saved.rejected ?? {}));
-  const attached = (id, label) => ({ id, label: label || AGENT_LABELS[id], at: (/* @__PURE__ */ new Date()).toISOString() });
+  const attached = (id, label, pid) => ({ id, label: label || AGENT_LABELS[id], at: (/* @__PURE__ */ new Date()).toISOString(), ...pid ? { pid } : {} });
   const serving = o.agent === void 0 ? process.env.CLAUDECODE ? "claude" : null : o.agent;
-  let agent = serving ? attached(serving) : saved.agent ?? null;
-  const agentInfo = () => agent ? { ...agent, connected: true } : { id: "other", label: AGENT_LABELS.other, connected: false, at: null };
+  let agent = serving ? attached(serving, void 0, agentAbove(process.pid, serving)) : saved.agent ?? null;
+  let attachedHere = !!serving;
+  const agentInfo = () => agent ? { id: agent.id, label: agent.label, at: agent.at, connected: agent.pid ? alive(agent.pid) : attachedHere } : { id: "other", label: AGENT_LABELS.other, connected: false, at: null };
   const Who = () => {
     const l3 = agentInfo().label;
     return l3[0].toUpperCase() + l3.slice(1);
@@ -1833,15 +1884,15 @@ function createApp(o) {
   const REJECTED = [409, { error: "Rejected: restore it first" }];
   function list() {
     const before = seen.size;
-    const out = source.list(current, seen, new Set(rejected.keys()));
+    const out2 = source.list(current, seen, new Set(rejected.keys()));
     let dropped = false;
-    for (const f of out) {
+    for (const f of out2) {
       if (rejected.delete(f.path)) dropped = true;
       if (skipped.has(f.path)) f.skipped = true;
     }
-    for (const path of rejected.keys()) if (included(path, current)) out.push({ path, kind: kindOf(path, current), untracked: false, staged: false, rejected: true });
+    for (const path of rejected.keys()) if (included(path, current)) out2.push({ path, kind: kindOf(path, current), untracked: false, staged: false, rejected: true });
     if (seen.size !== before || dropped) saveState();
-    return out.sort((a, b) => a.path < b.path ? -1 : 1);
+    return out2.sort((a, b) => a.path < b.path ? -1 : 1);
   }
   function find(p) {
     if (typeof p !== "string") return null;
@@ -1911,7 +1962,7 @@ function createApp(o) {
   const info = () => ({
     kind: "git",
     root: top,
-    name: basename2(top),
+    name: basename3(top),
     ...pick(source.place()),
     branch: source.branch(),
     base: current.scope === "branch" ? source.resolveBase(current) : null,
@@ -1924,15 +1975,19 @@ function createApp(o) {
     batchesLog: files.batches,
     doneCommand: (o.doneCommand ?? ((p) => `trove done <file> --port ${p}`))(port())
   });
-  const git = () => ({
-    root: top,
-    ...source.place(),
-    branch: source.branch(),
-    head: source.head(),
-    branches: source.branches(),
-    dirty: source.dirty(current),
-    base: current.scope === "branch" ? source.resolveBase(current) : null
-  });
+  const git = () => {
+    const place = source.place();
+    return {
+      root: top,
+      ...place,
+      worktrees: withChanges(place.worktrees),
+      branch: source.branch(),
+      head: source.head(),
+      branches: source.branches(),
+      dirty: source.dirty(current),
+      base: current.scope === "branch" ? source.resolveBase(current) : null
+    };
+  };
   const routes = {
     "GET /api/files": () => {
       const d = drafts();
@@ -2213,10 +2268,11 @@ function createApp(o) {
     },
     "GET /api/source": () => [200, info()],
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
-    "POST /api/agent": (_2, { id, label }) => {
+    "POST /api/agent": (_2, { id, label }, req) => {
       if (id !== null && !Object.hasOwn(AGENT_LABELS, id)) return [400, { error: "id is claude, codex, other or null" }];
       if (label !== void 0 && (typeof label !== "string" || label.length > 40)) return [400, { error: "label is a short string" }];
-      agent = id === null ? null : attached(id, label?.trim());
+      agent = id === null ? null : attached(id, label?.trim(), agentAbove(peerOf(req.socket.remotePort), id));
+      attachedHere = id !== null;
       saveState();
       return [200, agentInfo()];
     },
@@ -2284,7 +2340,7 @@ function createApp(o) {
     if (!route) return reply(404);
     const run = (body) => {
       try {
-        json(route(searchParams, body));
+        json(route(searchParams, body, req));
       } catch (error) {
         json([500, { error: error.message }]);
       }
@@ -2366,11 +2422,11 @@ function call(port, method, path, body, headers = {}) {
 
 // ../core/src/selftest.ts
 import assert from "node:assert/strict";
-import { execFileSync as execFileSync2 } from "node:child_process";
+import { execFileSync as execFileSync3 } from "node:child_process";
 import { existsSync as existsSync3, mkdirSync as mkdirSync3, mkdtempSync, readFileSync as readFileSync3, realpathSync as realpathSync3, rmSync as rmSync2, symlinkSync, writeFileSync as writeFileSync3 } from "node:fs";
 import { request as request2 } from "node:http";
 import { tmpdir } from "node:os";
-import { basename as basename3, join as join4 } from "node:path";
+import { basename as basename4, join as join4 } from "node:path";
 var listen = async (o) => {
   const app = createApp({ log: () => {
   }, agent: "other", ...o });
@@ -2381,7 +2437,7 @@ var raw = (port, path) => new Promise((ok) => request2({ host: "127.0.0.1", port
   let text = "";
   res.setEncoding("utf8").on("data", (c) => text += c).on("end", () => ok({ status: res.statusCode ?? 0, type: String(res.headers["content-type"]), csp: String(res.headers["content-security-policy"]), text }));
 }).end());
-var gitIn = (root) => (...args) => execFileSync2("git", args, { cwd: root, encoding: "utf8" });
+var gitIn = (root) => (...args) => execFileSync3("git", args, { cwd: root, encoding: "utf8" });
 var newRepo = (prefix) => {
   const root = mkdtempSync(join4(tmpdir(), prefix));
   const sh = gitIn(root);
@@ -2468,7 +2524,7 @@ async function gitCase(temps) {
   sh("mv", "r.md", "r \xE9 \xF1.md");
   writeFileSync3(join4(root, "a.md"), doc.replace("Para one.", "Para one, changed."));
   writeFileSync3(join4(root, "b.md"), "# B\n");
-  for (const out of ["x.mdx", "t.txt", "c.html"]) writeFileSync3(join4(root, out), "<h1>C</h1><p>Hi</p>\n");
+  for (const out2 of ["x.mdx", "t.txt", "c.html"]) writeFileSync3(join4(root, out2), "<h1>C</h1><p>Hi</p>\n");
   writeFileSync3(join4(root, "gen/x.md"), "# gen 2\n");
   const gitDir = join4(root, ".git");
   mkdirSync3(join4(gitDir, "doc-review"));
@@ -2809,28 +2865,34 @@ async function switchCase(temps) {
   assert.equal(info.dirty, 0);
   assert.equal(probeGit(wtDir)?.branch, "wt", "a worktree is a repository of its own");
   const main2 = realpathSync3(root);
-  assert.deepEqual([info.repo, info.worktree], [{ root: main2, name: basename3(main2) }, { path: main2, name: basename3(main2), branch: "main", main: true }]);
+  assert.deepEqual([info.repo, info.worktree], [{ root: main2, name: basename4(main2) }, { path: main2, name: basename4(main2), branch: "main", main: true }]);
   sh("worktree", "add", "-q", "-b", "nested", join4(root, ".claude/worktrees/nested"));
   const nested = realpathSync3(join4(root, ".claude/worktrees/nested"));
   mkdirSync3(join4(nested, "docs"));
   const probe = probeGit(join4(nested, "docs"));
-  assert.deepEqual([probe.branch, probe.repo, probe.worktree], ["nested", { root: main2, name: basename3(main2) }, { path: nested, name: "nested", branch: "nested", main: false }]);
+  assert.deepEqual([probe.branch, probe.repo, probe.worktree], ["nested", { root: main2, name: basename4(main2) }, { path: nested, name: "nested", branch: "nested", main: false }]);
   const rows = (list) => list.map((w) => [w.path, w.name, w.branch, w.current, w.main]).sort((a, b) => Number(b[4]) - Number(a[4]) || a[0].localeCompare(b[0]));
   assert.deepEqual(rows(probe.worktrees), rows([
-    { path: main2, name: basename3(main2), branch: "main", current: false, main: true },
-    { path: wtPath, name: basename3(wtPath), branch: "wt", current: false, main: false },
+    { path: main2, name: basename4(main2), branch: "main", current: false, main: true },
+    { path: wtPath, name: basename4(wtPath), branch: "wt", current: false, main: false },
     { path: nested, name: "nested", branch: "nested", current: true, main: false }
   ]));
   assert.equal(probe.worktrees[0].path, main2, "the main checkout first");
   const nestedApp = await listen({ root: join4(nested, "docs") });
   const nestedSource = (await call(nestedApp.port, "GET", "/api/source")).body;
-  assert.deepEqual([nestedSource.root, nestedSource.repo.name, nestedSource.worktree.name, nestedSource.worktree.main], [nested, basename3(main2), "nested", false]);
+  assert.deepEqual([nestedSource.root, nestedSource.repo.name, nestedSource.worktree.name, nestedSource.worktree.main], [nested, basename4(main2), "nested", false]);
   await nestedApp.app.close();
   const again = await get("/api/git");
   assert.deepEqual([again.worktrees.length, again.dirty, again.worktree.main], [3, 0, true]);
   writeFileSync3(join4(root, "b.md"), "# B, uncommitted\n");
   writeFileSync3(join4(root, "a.md"), "# A, uncommitted\n");
   assert.equal((await get("/api/git")).dirty, 2);
+  assert.deepEqual(
+    (await get("/api/git")).worktrees.map((w) => [w.path, w.changes]).filter(([p]) => p !== nested),
+    [[main2, 2], [wtPath, 0]],
+    "each worktree counts its own changes"
+  );
+  assert.equal(probeGit(wtDir).worktrees.find((w) => w.main).changes, 2, "a probe from another worktree sees them too");
   const refused = await sw("free");
   assert.equal(refused.status, 409);
   assert.match(refused.body.error, /overwritten/, "git's own message");
@@ -2860,6 +2922,7 @@ async function agentCase(temps) {
   const { root } = newRepo("trove-agent-");
   temps.push(root);
   writeFileSync3(join4(root, "a.md"), "# A\n\nText.\n");
+  assert.deepEqual([alive(process.pid), alive(2 ** 22 + 7), agentAbove(process.pid, "other")], [true, false, null]);
   const opts = { root, agent: null };
   let { app, port } = await listen(opts);
   const source = async () => (await call(port, "GET", "/api/source")).body;
@@ -2879,7 +2942,11 @@ async function agentCase(temps) {
   const claude = (await call(port, "POST", "/api/agent", { id: "claude" })).body;
   await app.close();
   ({ app, port } = await listen(opts));
-  assert.deepEqual([(await source()).agentInfo, (await source()).agent], [claude, "claude"], "attach survives a restart");
+  assert.deepEqual(
+    [(await source()).agentInfo, (await source()).agent],
+    [{ ...claude, connected: false }, "claude"],
+    "who attached survives a restart; with no process to follow, connected does not"
+  );
   assert.deepEqual((await call(port, "POST", "/api/agent", { id: null })).body, none, "detach");
   assert.equal((await call(port, "POST", "/api/accept", { path: "a.md", hash })).body.error, "The agent is working on this file");
   await app.close();
@@ -2904,7 +2971,7 @@ var USAGE = 'usage: trove serve [--root <path>] [--port 4824] [--exclude <glob>]
 var here = dirname3(fileURLToPath(import.meta.url));
 var invoked = () => {
   const script = process.argv[1] ?? "";
-  if (basename4(script) === "trove") return "trove";
+  if (basename5(script) === "trove") return "trove";
   const path = realpathSync4(script);
   return /[\s'"$`\\]/.test(path) ? `node '${path.replaceAll("'", String.raw`'\''`)}'` : `node ${path}`;
 };

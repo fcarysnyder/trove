@@ -1,6 +1,6 @@
 // The editor's behaviour, ported from the old page's script: polling, opening, stepping, accepting,
 // drafts, edits and sending. Components call these; they read and write the store.
-import type { BlockEdit, CommentKind, Draft, DraftsResponse, FileResponse, FileRow, FilesResponse, GitInfo, SendBody, Settings, SourceInfo } from '@trove/core/types';
+import type { BlockEdit, CommentKind, Draft, DraftsResponse, FileResponse, FileRow, FilesResponse, GitInfo, Recent, SendBody, Settings, SourceInfo } from '@trove/core/types';
 import { toast } from 'sonner';
 import { api, ApiError, optional } from '@/lib/api';
 import { passes, normalizeOff, type FilterKey } from '@/lib/filter';
@@ -292,6 +292,23 @@ export async function loadGit() {
   if (git === undefined || JSON.stringify(git) === lastGit) return;
   lastGit = JSON.stringify(git);
   set({ git });
+}
+
+/** The desktop's recents, each probed for its uncommitted doc changes. */
+export async function loadRecents() {
+  const bridge = window.trove;
+  if (!bridge) return;
+  const list = await bridge.recents().catch(() => []);
+  const probes = await Promise.all(list.map((r) => bridge.probe(r.path).catch(() => null)));
+  set({ recents: list.map((r, k) => {
+    const git = probes[k]?.git;
+    return { ...r, changes: git ? git.worktrees.find((w) => w.current)?.changes ?? 0 : null };
+  }) });
+}
+
+/** A recent repository in its own window, with the scope it was last opened with. */
+export async function openRecent(r: Recent) {
+  await window.trove?.open({ path: r.path, scope: r.scope, base: r.base }).catch((e) => toast(errText(e)));
 }
 
 /** Another worktree is another root: a new window on the desktop, else a dialog with the command that serves it. */

@@ -16,7 +16,7 @@ import { stateInfo } from '@/lib/status';
 import { dirOf, nameOf } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { acceptAll, open, reveal, setFilters, shown, togglePanel, visible } from './actions';
-import { Count, IconButton } from './bits';
+import { Count, IconButton, nothingText } from './bits';
 import { StateIcons } from './StateIcon';
 import { get, set, useNames, useStore } from './store';
 
@@ -31,6 +31,8 @@ export function FilesColumn() {
   const files = useStore((s) => s.files);
   const off = useStore((s) => s.filterOff);
   const query = useStore((s) => s.query);
+  const loaded = useStore((s) => s.loaded);
+  const source = useStore((s) => s.source);
   const committedOpen = useStore((s) => s.committedOpen);
   const rejectedOpen = useStore((s) => s.rejectedOpen);
   const s = get();
@@ -54,9 +56,9 @@ export function FilesColumn() {
     <section aria-label="Files" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-1 border-b pr-2 pl-4">
         <span className="flex-1 font-semibold text-foreground">Files</span>
-        {pending > 0 && <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={() => void acceptAll()}>Accept all</Button>}
+        {pending > 0 && <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void acceptAll()}>Accept all</Button>}
         <Filters off={off} />
-        <IconButton label="Hide files" tip="Hide files ([)" onClick={() => togglePanel('files', true)}><PanelLeftClose /></IconButton>
+        <IconButton side="bottom" label="Hide files" tip="Hide files ([)" onClick={() => togglePanel('files', true)}><PanelLeftClose /></IconButton>
       </div>
       <div className="relative shrink-0 px-2 pt-2">
         <Search className="pointer-events-none absolute top-1/2 left-4.5 mt-1 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
@@ -70,10 +72,11 @@ export function FilesColumn() {
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <nav aria-label="Files" className="p-2">
+          {loaded && !files.length && <p className="px-1 py-1.5 text-[13px] text-muted-foreground">{nothingText(source)}</p>}
           {none ? (
             <p className="flex items-center gap-1 px-1 py-1.5 text-[13px] text-muted-foreground">
               No files match
-              <Button variant="link" size="xs" className="h-auto px-1 text-[13px] text-foreground" onClick={() => { set({ query: '' }); setFilters([]); }}>Clear</Button>
+              <Button variant="link" size="sm" className="h-auto px-1 text-[13px] text-foreground" onClick={() => { set({ query: '' }); setFilters([]); }}>Clear</Button>
             </p>
           ) : (
             <>
@@ -85,7 +88,7 @@ export function FilesColumn() {
         </nav>
       </ScrollArea>
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-t px-4">
-        <Switch id="pending-only" size="sm" checked={isPendingOnly(off)} onCheckedChange={(v) => setFilters(v ? PENDING_OFF : [])} />
+        <Switch id="pending-only" size="default" checked={isPendingOnly(off)} onCheckedChange={(v) => setFilters(v ? PENDING_OFF : [])} />
         <Label htmlFor="pending-only" className="text-xs font-normal text-muted-foreground">Pending only</Label>
       </div>
     </section>
@@ -111,7 +114,7 @@ function Filters({ off }: { off: FilterKey[] }) {
       <Tooltip>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
-            <Button variant="ghost" size={off.length ? 'xs' : 'icon-xs'} aria-label="Filters" className="text-muted-foreground [&_svg]:size-4">
+            <Button variant="ghost" size={off.length ? 'sm' : 'icon-sm'} aria-label="Filters" className="text-muted-foreground [&_svg]:size-4">
               <ListFilter />{off.length > 0 && <Count n={off.length} />}
             </Button>
           </PopoverTrigger>
@@ -122,7 +125,7 @@ function Filters({ off }: { off: FilterKey[] }) {
         {FILTERS.filter((k) => k !== 'committed').map(row)}
         <Separator className="my-1" />
         {row('committed')}
-        <Button variant="ghost" size="sm" disabled={!off.length} className="mt-1 justify-start px-2 font-normal" onClick={() => setFilters([])}>Clear filters</Button>
+        <Button variant="ghost" size="default" disabled={!off.length} className="mt-1 justify-start px-2 font-normal" onClick={() => setFilters([])}>Clear filters</Button>
       </PopoverContent>
     </Popover>
   );

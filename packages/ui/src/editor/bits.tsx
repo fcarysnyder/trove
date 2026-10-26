@@ -1,4 +1,5 @@
 // Small shared pieces: a count badge, an icon button with a tooltip, a folder + name label.
+import type { SourceInfo } from '@trove/core/types';
 import type { ComponentProps, ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,7 +16,7 @@ export function IconButton({ label, tip, children, className, side, ...props }: 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button variant="ghost" size="icon-xs" aria-label={label} className={cn('text-muted-foreground [&_svg]:size-4', className)} {...props}>
+        <Button variant="ghost" size="icon-sm" aria-label={label} className={cn('text-muted-foreground [&_svg]:size-4', className)} {...props}>
           {children}
         </Button>
       </TooltipTrigger>
@@ -34,3 +35,11 @@ export function PathLabel({ path, className, nameClass }: { path: string; classN
     </span>
   );
 }
+
+/** What an empty queue means in this scope. */
+export const nothingText = (source: SourceInfo | null) =>
+  source?.scope === 'branch' ? `No changes since ${source.base ?? 'the base'}` : 'No uncommitted changes';
+
+/** The desktop's title bar on the Mac: an empty strip the window drags by, with the traffic lights in it. */
+export const TitleStrip = () =>
+  window.trove && /Mac/.test(navigator.userAgent) ? <div aria-hidden className="h-8 shrink-0 border-b [-webkit-app-region:drag]" /> : null;

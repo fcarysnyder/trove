@@ -1,5 +1,6 @@
 appId: com.fcarysnyder.trove
 productName: Trove
+copyright: Copyright © 2026 F Cary Snyder
 directories:
   output: release
   buildResources: assets
@@ -9,12 +10,22 @@ files:
   - out/**
   - package.json
   - "!node_modules/**"
-# Use the Electron already installed by pnpm instead of downloading it.
+# Package the Electron binary in node_modules. Electron 45 no longer downloads it on install, so the
+# package and dist scripts run install-electron first (a no-op once it is there).
 electronDist: node_modules/electron/dist
 npmRebuild: false
+afterPack: scripts/adhoc-sign.cjs
 mac:
   target: [dir, dmg]
-  icon: assets/icon.png
+  # icon.icns carries simplified 16/32pt art; regenerate with design/icon/src/export.py
+  icon: assets/icon.icns
   category: public.app-category.developer-tools
+  # No Developer ID yet, so electron-builder does not sign; scripts/adhoc-sign.cjs signs the whole
+  # bundle ad hoc after packing, because Apple silicon will not run it otherwise. Not notarized, so
+  # the first launch needs Open Anyway (see docs/DISTRIBUTION.md).
   identity: null
+  hardenedRuntime: false
   notarize: false
+dmg:
+  # Release asset names follow Installer-<App>-<version>-<arch>.dmg.
+  artifactName: "Installer-${productName}-${version}-${arch}.${ext}"

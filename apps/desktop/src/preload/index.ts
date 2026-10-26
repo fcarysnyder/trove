@@ -13,6 +13,10 @@ const trove: TroveBridge = {
   recents: () => invoke('trove:recents'),
   forget: (path: string) => invoke('trove:forget', path),
   tools: () => invoke('trove:tools'),
+  home: () => invoke('trove:home'),
+  githubRepos: () => invoke('trove:githubRepos'),
+  clone: (url: string, parent: string) => invoke('trove:clone', url, parent),
+  cloneDir: () => invoke('trove:cloneDir'),
 };
 
 contextBridge.exposeInMainWorld('trove', trove);

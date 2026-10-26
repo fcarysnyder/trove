@@ -8,7 +8,8 @@ import { randomUUID } from 'node:crypto';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { blocks, splice } from './anchor.js';
 import { included, kindOf, loadSettings, mergeSettings, saveSettings } from './settings.js';
-import { openSource, sha } from './source.js';
+import { agentAbove, alive, peerOf } from './presence.js';
+import { openSource, sha, withChanges } from './source.js';
 import { AGENT_LABELS, type AgentId, type AgentInfo, type BlockEdit, type Draft, type FileEntry, type GitInfo, type GitScope, type Question, type Settings, type SourceInfo } from './types.js';
 
 export interface AppOptions {
@@ -97,13 +98,18 @@ export function createApp(o: AppOptions): App {
   // Rejected: changes the user took out of the change set, backed up so Restore can put all of it back.
   const rejected = new Map<string, Rejected>(Object.entries(saved.rejected ?? {}));
   // The attached agent, for its colour and the name the page and the errors give it: set by `trove attach`
-  // (POST /api/agent), cleared by `trove detach`. Attached means connected.
-  // ponytail: presence is a flag, no heartbeat; an agent that quits without detaching still shows. Add a ping if that bites.
-  type Agent = { id: AgentId; label: string; at: string };
-  const attached = (id: AgentId, label?: string): Agent => ({ id, label: label || AGENT_LABELS[id], at: new Date().toISOString() });
+  // (POST /api/agent), cleared by `trove detach`. Connected while its process lives (presence.ts); one
+  // whose process could not be found is connected until it detaches or this server stops, so an attach
+  // saved by an earlier run (or an older Trove, which kept no pid) does not show as connected.
+  type Agent = { id: AgentId; label: string; at: string; pid?: number };
+  const attached = (id: AgentId, label: string | undefined, pid: number | null): Agent =>
+    ({ id, label: label || AGENT_LABELS[id], at: new Date().toISOString(), ...(pid ? { pid } : {}) });
   const serving = o.agent === undefined ? (process.env.CLAUDECODE ? 'claude' : null) : o.agent;
-  let agent: Agent | null = serving ? attached(serving) : saved.agent ?? null;
-  const agentInfo = (): AgentInfo => agent ? { ...agent, connected: true } : { id: 'other', label: AGENT_LABELS.other, connected: false, at: null };
+  let agent: Agent | null = serving ? attached(serving, undefined, agentAbove(process.pid, serving)) : saved.agent ?? null;
+  let attachedHere = !!serving;
+  const agentInfo = (): AgentInfo => agent
+    ? { id: agent.id, label: agent.label, at: agent.at, connected: agent.pid ? alive(agent.pid) : attachedHere }
+    : { id: 'other', label: AGENT_LABELS.other, connected: false, at: null };
   const Who = () => { const l = agentInfo().label; return l[0].toUpperCase() + l.slice(1); };
   const BUSY = (): Result => [409, { error: `${Who()} is working on this file` }];
   const saveState = () => writeFileSync(files.state, JSON.stringify({
@@ -176,12 +182,15 @@ export function createApp(o: AppOptions): App {
     doneCommand: (o.doneCommand ?? ((p) => `trove done <file> --port ${p}`))(port()),
   });
 
-  const git = (): GitInfo => ({
-    root: top, ...source.place(), branch: source.branch(), head: source.head(), branches: source.branches(),
+  const git = (): GitInfo => {
+    const place = source.place();
+    return {
+    root: top, ...place, worktrees: withChanges(place.worktrees), branch: source.branch(), head: source.head(), branches: source.branches(),
     dirty: source.dirty(current), base: current.scope === 'branch' ? source.resolveBase(current) : null,
-  });
+    };
+  };
 
-  const routes: Record<string, (q: URLSearchParams, body: any) => Result> = {
+  const routes: Record<string, (q: URLSearchParams, body: any, req?: IncomingMessage) => Result> = {
     'GET /api/files': () => {
       const d = drafts();
       const e = edits();
@@ -425,10 +434,11 @@ export function createApp(o: AppOptions): App {
     },
     'GET /api/source': () => [200, info()],
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
-    'POST /api/agent': (_, { id, label }) => {
+    'POST /api/agent': (_, { id, label }, req) => {
       if (id !== null && !Object.hasOwn(AGENT_LABELS, id)) return [400, { error: 'id is claude, codex, other or null' }];
       if (label !== undefined && (typeof label !== 'string' || label.length > 40)) return [400, { error: 'label is a short string' }];
-      agent = id === null ? null : attached(id, label?.trim());
+      agent = id === null ? null : attached(id, label?.trim(), agentAbove(peerOf(req!.socket.remotePort!), id));
+      attachedHere = id !== null;
       saveState();
       return [200, agentInfo()];
     },
@@ -494,7 +504,7 @@ export function createApp(o: AppOptions): App {
     if (!route) return reply(404);
     // A route that throws (say, a listed file vanished or is a dangling link) answers 500 instead of
     // taking the server down.
-    const run = (body?: unknown) => { try { json(route(searchParams, body)); } catch (error) { json([500, { error: (error as Error).message }]); } };
+    const run = (body?: unknown) => { try { json(route(searchParams, body, req)); } catch (error) { json([500, { error: (error as Error).message }]); } };
     if (req.method === 'GET') return run();
 
     // Mutating routes: same origin only (the CLI sends the origin it was given), JSON only.
