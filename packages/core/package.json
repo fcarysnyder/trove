@@ -5,12 +5,26 @@
   "type": "module",
   "license": "MIT",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./types": { "types": "./dist/types.d.ts", "default": "./dist/types.js" },
-    "./anchor": { "types": "./dist/anchor.d.ts", "default": "./dist/anchor.js" },
-    "./marked": "./vendor/marked.esm.mjs"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
+    },
+    "./anchor": {
+      "types": "./dist/anchor.d.ts",
+      "default": "./dist/anchor.js"
+    },
+    "./marked": {
+      "types": "./dist/vendor/marked.esm.d.mts",
+      "default": "./dist/vendor/marked.esm.mjs"
+    }
   },
-  "files": ["dist", "vendor"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -20,5 +34,6 @@
     "@types/node": "^22.0.0",
     "typescript": "~5.9.3",
     "vitest": "^5.0.5"
-  }
+  },
+  "sideEffects": false
 }
