@@ -3,9 +3,9 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { enabledTypes, included, kindOf } from './settings.js';
-import type { BranchInfo, DocKind, FileEntry, GitProbe, Settings, WorktreeInfo } from './types.js';
+import type { BranchInfo, DocKind, FileEntry, GitProbe, RepoRef, Settings, WorktreeInfo, WorktreeRef } from './types.js';
 
 export const sha = (text: string) => createHash('sha1').update(text).digest('hex');
 
@@ -22,13 +22,24 @@ function gitAt(cwd: string) {
   const real = (p: string) => { try { return realpathSync(p); } catch { return p; } };
   const head = () => tryGit('rev-parse', '--short', 'HEAD')?.trim() ?? '';
   // Worktrees from `git worktree list --porcelain`: blocks of `worktree <path>`, `HEAD <sha>`, then
-  // `branch refs/heads/<name>` or `detached`. A bare repository's own entry has no checkout; left out.
-  const worktrees = (top: string): WorktreeInfo[] => (tryGit('worktree', 'list', '--porcelain') ?? '').split('\n\n').flatMap((block) => {
-    const kv = new Map(block.split('\n').filter(Boolean).map((l) => [l.split(' ')[0], l.slice(l.indexOf(' ') + 1)]));
-    if (!kv.has('worktree') || kv.has('bare')) return [];
-    const path = real(kv.get('worktree')!);
-    return [{ path, branch: kv.get('branch')?.replace(/^refs\/heads\//, '') ?? null, head: (kv.get('HEAD') ?? '').slice(0, 7), current: path === top }];
-  });
+  // `branch refs/heads/<name>` or `detached`. The first block is the main working tree, the same list
+  // from any worktree. A bare repository's own entry has no checkout; left out of the list.
+  const place = (top: string): { repo: RepoRef; worktree: WorktreeRef; worktrees: WorktreeInfo[] } => {
+    const blocks = (tryGit('worktree', 'list', '--porcelain') ?? '').split('\n\n')
+      .map((block) => new Map(block.split('\n').filter(Boolean).map((l) => [l.split(' ')[0], l.slice(l.indexOf(' ') + 1)])))
+      .filter((kv) => kv.has('worktree'));
+    const main = blocks[0] ? real(blocks[0].get('worktree')!) : top;
+    const worktrees = blocks.filter((kv) => !kv.has('bare')).map((kv) => {
+      const path = real(kv.get('worktree')!);
+      return { path, name: basename(path), branch: kv.get('branch')?.replace(/^refs\/heads\//, '') ?? null, head: (kv.get('HEAD') ?? '').slice(0, 7), current: path === top, main: path === main };
+    });
+    const here = worktrees.find((w) => w.current);
+    return {
+      repo: { root: main, name: basename(main) },
+      worktree: { path: top, name: basename(top), branch: here ? here.branch : branch(), main: top === main },
+      worktrees,
+    };
+  };
   // Local branches; `worktree` is the other worktree a branch is checked out in, if any.
   const branches = (top: string): BranchInfo[] =>
     (tryGit('for-each-ref', '--format=%(refname:short)%00%(HEAD)%00%(worktreepath)%00%(upstream:short)%00%(committerdate:iso-strict)', 'refs/heads') ?? '')
@@ -37,7 +48,7 @@ function gitAt(cwd: string) {
         const path = wt ? real(wt) : null;
         return { name, current: star === '*', worktree: path && path !== top ? path : null, ...(upstream ? { upstream } : {}), lastCommit: date };
       });
-  return { git, tryGit, branch, defaultBase, head, worktrees, branches };
+  return { git, tryGit, branch, defaultBase, head, place, branches };
 }
 
 const gitTop = (dir: string) => { try { return realpathSync(gitAt(dir).git('rev-parse', '--show-toplevel').trim()); } catch { return null; } };
@@ -52,7 +63,7 @@ export function probeGit(path: string): GitProbe | null {
   // Local and remote branches, minus symbolic refs such as origin/HEAD.
   const branches = (g.tryGit('for-each-ref', '--format=%(refname:short)%00%(symref)', 'refs/heads', 'refs/remotes') ?? '')
     .split('\n').map((l) => l.split('\0')).filter(([name, sym]) => name && !sym).map(([name]) => name);
-  return { branch: g.branch(), branches, defaultBase: g.defaultBase(), local: g.branches(top), worktrees: g.worktrees(top) };
+  return { branch: g.branch(), branches, defaultBase: g.defaultBase(), local: g.branches(top), ...g.place(top) };
 }
 
 /** The git working tree `root` is in. Throws if `root` does not exist or is not inside one. */
@@ -86,7 +97,8 @@ export function openSource(root: string) {
     branch,
     head: g.head,
     branches: () => g.branches(top),
-    worktrees: () => g.worktrees(top),
+    /** The repository, this root as a worktree of it, and every worktree (main checkout first). */
+    place: () => g.place(top),
     /** Changed paths of the enabled doc types, staged or not: what a switch carries along or trips on. */
     dirty(s: Settings) {
       const spec = pathspec(s);

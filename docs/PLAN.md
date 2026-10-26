@@ -93,18 +93,31 @@ inline scripts.
 
 ### Switcher
 
-The editor's top bar has GitHub Desktop's two menus. Current repository lists the repository's
-worktrees (and, on the desktop, the recents and Open repository…); Current branch filters the
-local branches and switches. `GET /api/git` answers `GitInfo` (branch, short head, local branches
-with the worktree each is checked out in, worktrees, the changed-path count shown beside the
-branch); `POST /api/switch {branch}` runs `git switch <branch>` in this worktree and nothing
+The editor's top bar has GitHub Desktop's menus: Current repository | Current worktree | Current
+branch. Current repository names the repository (its main checkout's folder, whichever worktree is
+served) and, on the desktop, lists the recents and Open repository…; Current worktree names the
+served root (the main checkout shows `main checkout`) and lists every worktree of the repository
+with its branch, the current one checked; choosing another opens it (below). Current branch filters
+the local branches and switches. Values truncate with the full path in a tooltip so the three fit at
+1024px. `GET /api/git` answers `GitInfo` (branch, short head, local branches with the worktree each
+is checked out in, every worktree of the repository main checkout first, `repo: {root, name}` from
+the first entry of `git worktree list`, `worktree: {path, name, branch, main}` for this root, the
+changed-path count shown beside the branch); `SourceInfo` and the desktop's `GitProbe` carry the
+same `repo` and `worktree`; `POST /api/switch {branch}` runs `git switch <branch>` in this worktree and nothing
 more: no stash, no discard, git's own refusal (uncommitted changes in the way) is the answer, a
 409. Also refused while the agent works on a file, and for a branch checked out in another
 worktree (the 409 carries `worktree`). A worktree is another root, so it is another server: the
 desktop opens it in a new window (windows match on the exact root, and a worktree is its own
 toplevel), the CLI page shows the `trove serve --root <path>` command. After a switch the
-committed-file memory (`seen`) starts over from git status. The start page's branch select opens
-the worktree a branch is checked out in.
+committed-file memory (`seen`) starts over from git status. Choosing a branch checked out in
+another worktree goes the same way as choosing that worktree. The start page's step 1, when the
+repository has more than one worktree (a pick or a recent), shows a Worktree select (`<repo> · main
+checkout · <branch>` first, then `<name> · <branch>`, the probed one preselected) above one Branch
+select; a branch checked out in a worktree selects that worktree, and each choice re-probes so the
+scope step reflects it. Recents keep `repo` and, for a linked worktree, `worktree` names and read
+`<repo> / <worktree>` (else `<repo>`; older entries their `name`); window titles are `<worktree> ·
+<repo> · Trove`, or `<repo> · Trove` for the main checkout. The CLI's first line says `on <branch>
+(<worktree>)` when serving a linked worktree.
 
 ### Agent attach
 

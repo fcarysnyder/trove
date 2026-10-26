@@ -23,7 +23,7 @@ export function App() {
   const theme = useStore((s) => s.settings.theme);
   const agent = useStore((s) => s.source?.agentInfo?.id ?? s.source?.agent ?? 'claude');
   const question = useStore((s) => !!s.question);
-  const name = useStore((s) => s.source?.name);
+  const name = useStore((s) => s.source && (s.source.worktree && !s.source.worktree.main ? `${s.source.worktree.name} · ${s.source.repo.name}` : s.source.repo?.name ?? s.source.name));
   useEffect(() => applyTheme(theme), [theme]);
   useEffect(() => { document.documentElement.dataset.agent = agent; }, [agent]);
   useEffect(() => { document.title = `${question ? '(1) ' : ''}${name ? `${name} · ` : ''}Trove`; }, [question, name]);

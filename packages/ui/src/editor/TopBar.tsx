@@ -31,7 +31,7 @@ export function TopBar() {
   const list = visible(get());
   const pos = list.findIndex((f) => f.path === current) + 1;
   return (
-    <header className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 border-b px-4 py-2 whitespace-nowrap">
+    <header className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 border-b px-4 py-2 whitespace-nowrap">
       <Switcher />
       <div className="flex items-center gap-2">
         <Progress />

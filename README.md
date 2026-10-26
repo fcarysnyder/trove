@@ -32,7 +32,9 @@ The first line it prints gives the URL and the command an agent runs after finis
 (`trove done <file> --port <port>`; `trove ask` and `trove reply` show a notice on the page).
 
 The page's top bar switches branches like GitHub Desktop (a plain `git switch`, never a stash); a
-branch checked out in another worktree opens that worktree instead.
+branch checked out in another worktree opens that worktree instead. Each worktree is its own root:
+the top bar reads Current repository | Current worktree | Current branch, and the desktop opens
+each worktree in its own window.
 
 **Desktop app:** `pnpm dev:desktop`. It asks for a git repository and opens a window for each; a folder that is not one cannot be opened. Its second step starts Claude Code or Codex in Terminal, attached to that window's server with `trove attach --port <port>`; any agent can attach the same way (`trove detach` and `trove info` too).
 

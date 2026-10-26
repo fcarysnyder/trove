@@ -168,15 +168,16 @@ export function createApp(o: AppOptions): App {
   }
 
   const port = () => { const a = server.address(); return a && typeof a === 'object' ? a.port : 0; };
+  const pick = ({ repo, worktree }: ReturnType<typeof source.place>) => ({ repo, worktree });
   const info = (): SourceInfo => ({
-    kind: 'git', root: top, name: basename(top), branch: source.branch(),
+    kind: 'git', root: top, name: basename(top), ...pick(source.place()), branch: source.branch(),
     base: current.scope === 'branch' ? source.resolveBase(current) : null,
     scope: current.scope, agent: agent?.id === 'claude' ? 'claude' : 'other', agentInfo: agentInfo(), port: port(), stateDir: dir, eventsLog: files.events, batchesLog: files.batches,
     doneCommand: (o.doneCommand ?? ((p) => `trove done <file> --port ${p}`))(port()),
   });
 
   const git = (): GitInfo => ({
-    root: top, branch: source.branch(), head: source.head(), branches: source.branches(), worktrees: source.worktrees(),
+    root: top, ...source.place(), branch: source.branch(), head: source.head(), branches: source.branches(),
     dirty: source.dirty(current), base: current.scope === 'branch' ? source.resolveBase(current) : null,
   });
 

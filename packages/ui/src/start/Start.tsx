@@ -2,8 +2,8 @@
 // recent one; a folder that is not a repository stays here with the reason), 2 Agent (start Claude Code
 // or Codex in Terminal, attached to the repository's server), 3 Editor (the repository's own window).
 // In a plain browser there is no bridge, so it says how to run the server instead.
-import { attachCommand, type AgentTool, type GitProbe, type GitScope, type Recent } from '@trove/core/types';
-import { Copy, GitBranch, X } from 'lucide-react';
+import { attachCommand, recentName, type AgentTool, type GitProbe, type GitScope, type Recent } from '@trove/core/types';
+import { Copy, FolderTree, GitBranch, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -54,7 +54,8 @@ function NoBridge() {
 }
 
 const NOT_A_REPO = 'Not a git repository. Try again.';
-type Picked = { path: string; git: GitProbe | null };
+/** A probed path; `last`: the recent it came from, whose scope step 1 starts with. */
+type Picked = { path: string; git: GitProbe | null; last?: Recent };
 /** What step 1 chose: the window to open, and the agent the repository had last time. */
 type Target = { path: string; scope?: GitScope; base?: string | null; agent?: AgentTool | null };
 const nameOf = (path: string) => path.split('/').at(-1);
@@ -72,14 +73,14 @@ function Steps({ current }: { current: 1 | 2 }) {
 function Picker() {
   const bridge = window.trove!;
   const [recents, setRecents] = useState<Recent[]>([]);
-  const [notRepos, setNotRepos] = useState<Set<string>>(new Set());
+  const [probes, setProbes] = useState<Map<string, GitProbe | null>>(new Map());
   const [picked, setPicked] = useState<Picked | null>(null);
   const [target, setTarget] = useState<Target | null>(null);
   const [dragging, setDragging] = useState(false);
   const reload = async () => {
     const list = await bridge.recents().catch(() => []);
     const probes = await Promise.all(list.map((r) => bridge.probe(r.path).catch(() => null)));
-    setNotRepos(new Set(list.filter((_, k) => !probes[k]?.git).map((r) => r.path)));
+    setProbes(new Map(list.map((r, k) => [r.path, probes[k]?.git ?? null])));
     setRecents(list);
   };
   useEffect(() => { void reload(); }, []);
@@ -102,7 +103,7 @@ function Picker() {
       toast(errText(e));
     }
   };
-  const repo = picked?.git ? { path: picked.path, git: picked.git } : null;
+  const repo = picked?.git ? { path: picked.path, git: picked.git, last: picked.last } : null;
   const next = (t: Target) => setTarget({ agent: recents.find((r) => r.path === t.path)?.agent, ...t });
   return (
     <div
@@ -119,7 +120,7 @@ function Picker() {
         </CardHeader>
         <CardContent>
           {target ? <AgentStep key={target.path} target={target} onBack={() => setTarget(null)} />
-            : repo ? <RepoStep repo={repo} onBack={() => setPicked(null)} onNext={next} /> : (
+            : repo ? <RepoStep key={repo.path} repo={repo} onBack={() => setPicked(null)} onNext={next} /> : (
             <div className="flex flex-col items-start gap-3">
               {picked && (
                 <div className="flex w-full min-w-0 flex-col gap-1">
@@ -137,11 +138,13 @@ function Picker() {
           <CardHeader className="px-4 py-2"><CardTitle className="text-sm text-foreground">Recent</CardTitle></CardHeader>
           <ul>
             {recents.map((r, k) => {
-              const bad = notRepos.has(r.path);
+              const git = probes.get(r.path);
+              const bad = git === null;
               const body = (
                 <>
                   <span className="flex w-full items-center gap-2">
-                    <span className="truncate font-medium text-foreground">{r.name}</span>
+                    <span className="truncate font-medium text-foreground">{recentName(r)}</span>
+                    {git?.branch && <span className="truncate font-mono text-xs text-muted-foreground">{git.branch}</span>}
                     {bad ? <span className="text-xs text-destructive">{NOT_A_REPO}</span>
                       : r.scope === 'branch' && <span className="text-xs text-muted-foreground">{`branch vs ${r.base ?? 'base'}`}</span>}
                     <span className="ml-auto shrink-0 text-xs text-muted-foreground">{ago(r.openedAt)}</span>
@@ -156,11 +159,12 @@ function Picker() {
                   <div className="group flex items-center gap-2 px-2">
                     {bad ? <div className={cn(row, 'opacity-60')} aria-disabled>{body}</div> : (
                       <button className={cn(row, 'outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring')}
-                        onClick={() => setTarget({ path: r.path, scope: r.scope, base: r.base, agent: r.agent })}>
+                        // A repository with worktrees goes through step 1, so the worktree can be picked.
+                        onClick={() => git && git.worktrees.length > 1 ? setPicked({ path: r.path, git, last: r }) : setTarget({ path: r.path, scope: r.scope, base: r.base, agent: r.agent })}>
                         {body}
                       </button>
                     )}
-                    <IconButton label={`Remove ${r.name} from recents`} tip="Remove" onClick={() => bridge.forget(r.path).then(reload)}><X /></IconButton>
+                    <IconButton label={`Remove ${recentName(r)} from recents`} tip="Remove" onClick={() => bridge.forget(r.path).then(reload)}><X /></IconButton>
                   </div>
                 </li>
               );
@@ -172,20 +176,37 @@ function Picker() {
   );
 }
 
-function RepoStep({ repo, onBack, onNext }: { repo: { path: string; git: GitProbe }; onBack: () => void; onNext: (t: Target) => void }) {
-  const { git } = repo;
-  const [scope, setScope] = useState<GitScope>('uncommitted');
-  const [base, setBase] = useState(git.defaultBase ?? git.branches[0] ?? '');
-  // With worktrees, any branch checked out in one opens that worktree; the others are switched to in the editor.
-  const [branch, setBranch] = useState(git.branch ?? '');
-  const chosen = git.local.find((b) => b.name === branch);
-  const path = chosen?.worktree ?? repo.path;
-  const bases = git.branches.filter((b) => b !== branch);
+function RepoStep({ repo, onBack, onNext }: { repo: { path: string; git: GitProbe; last?: Recent }; onBack: () => void; onNext: (t: Target) => void }) {
+  const bridge = window.trove!;
+  // The worktree to open; another one is probed again, so the branch and the bases are its own.
+  const [cur, setCur] = useState({ path: repo.path, git: repo.git });
+  const { git } = cur;
+  const defaultBase = (g: GitProbe) => g.defaultBase ?? g.branches.find((b) => b !== g.branch) ?? '';
+  const [scope, setScope] = useState<GitScope>(repo.last?.scope ?? 'uncommitted');
+  const [base, setBase] = useState(repo.last?.base ?? defaultBase(git));
+  const here = git.worktree.path;
+  const toWorktree = (path: string) => {
+    if (path === here) return;
+    bridge.probe(path).then((res) => {
+      if (!res?.git) return void toast(NOT_A_REPO);
+      setCur({ path: res.path, git: res.git });
+      setBase(defaultBase(res.git));
+    }, (e) => toast(errText(e)));
+  };
+  const bases = git.branches.filter((b) => b !== git.branch);
+  const label = (w: GitProbe['worktrees'][number]) => (w.main ? `${git.repo.name} · main checkout · ${w.branch ?? w.head}` : `${w.name} · ${w.branch ?? w.head}`);
   return (
     <div className="flex flex-col gap-4">
       {git.worktrees.length > 1 ? (
-        <div className="flex flex-col gap-1">
-          <Select value={branch} onValueChange={setBranch}>
+        <div className="flex flex-col gap-2">
+          <Select value={here} onValueChange={toWorktree}>
+            <SelectTrigger size="sm" className="w-full text-xs" aria-label="Worktree" title={here}><FolderTree className="size-4 text-muted-foreground" aria-hidden /><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {git.worktrees.map((w) => <SelectItem key={w.path} value={w.path} title={w.path} className="text-xs">{label(w)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          {/* A branch checked out in a worktree picks that worktree; the others are switched to in the editor. */}
+          <Select value={git.branch ?? ''} onValueChange={(name) => { const b = git.local.find((l) => l.name === name); if (b?.worktree) toWorktree(b.worktree); }}>
             <SelectTrigger size="sm" className="w-full font-mono text-xs" aria-label="Branch"><GitBranch className="size-4 text-muted-foreground" aria-hidden /><SelectValue placeholder="detached HEAD" /></SelectTrigger>
             <SelectContent>
               {git.local.map((b) => (
@@ -193,7 +214,6 @@ function RepoStep({ repo, onBack, onNext }: { repo: { path: string; git: GitProb
               ))}
             </SelectContent>
           </Select>
-          {path !== repo.path && <span className="folder w-full text-left font-mono text-xs text-muted-foreground">{`\u200E${path}\u200E`}</span>}
         </div>
       ) : (
         <div className="flex items-center gap-2 text-sm"><GitBranch className="size-4 text-muted-foreground" aria-hidden /><span className="font-mono text-foreground">{git.branch ?? 'detached HEAD'}</span></div>
@@ -214,7 +234,7 @@ function RepoStep({ repo, onBack, onNext }: { repo: { path: string; git: GitProb
       </RadioGroup>
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={onBack}>Back</Button>
-        <Button onClick={() => onNext({ path, scope, base: scope === 'branch' ? base || null : null })}>Next</Button>
+        <Button onClick={() => onNext({ path: cur.path, scope, base: scope === 'branch' ? base || null : null })}>Next</Button>
       </div>
     </div>
   );

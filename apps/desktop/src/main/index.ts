@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'nod
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { attachCommand, probeGit, serve, type AgentTool, type App, type GitScope, type OpenRequest, type Recent } from '@trove/core';
+import { attachCommand, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type OpenRequest, type Recent } from '@trove/core';
 
 const uiDir = join(import.meta.dirname, '../ui'); // out/main -> out/ui, however Electron was launched
 const startHtml = join(uiDir, 'start.html');
@@ -98,6 +98,8 @@ async function openNow(req: OpenRequest): Promise<void> {
     {
       path: info.root,
       name: info.name,
+      repo: info.repo.name,
+      ...(info.worktree.main ? {} : { worktree: info.worktree.name }),
       kind: info.kind,
       openedAt: new Date().toISOString(),
       scope: info.scope,
@@ -110,7 +112,7 @@ async function openNow(req: OpenRequest): Promise<void> {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
-    title: `${info.name} · Trove`,
+    title: info.worktree.main ? `${info.repo.name} · Trove` : `${info.worktree.name} · ${info.repo.name} · Trove`,
     // The bridge here too: the editor's repository and branch menus open other worktrees and recents with it.
     webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
@@ -230,7 +232,7 @@ function buildMenu(): void {
           label: 'Open Recent',
           submenu: recents.length
             ? [
-                ...recents.map((r) => ({ label: r.path, click: () => openOrReport(() => reopen(r.path)) })),
+                ...recents.map((r) => ({ label: recentName(r), toolTip: r.path, click: () => openOrReport(() => reopen(r.path)) })),
                 { type: 'separator' as const },
                 { label: 'Clear Menu', click: () => writeRecents([]) },
               ]

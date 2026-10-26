@@ -1,7 +1,7 @@
-// GitHub Desktop's two top-left menus: Current repository (its worktrees, and on the desktop the
-// recents and Open repository…) and Current branch (switch here, or open the worktree a branch is
-// checked out in). A server serves one root, so another worktree opens elsewhere.
-import type { BranchInfo, Recent } from '@trove/core/types';
+// GitHub Desktop's top-left menus: Current repository (on the desktop the recents and Open
+// repository…), Current worktree (the repository's worktrees) and Current branch (switch here, or open
+// the worktree a branch is checked out in). A server serves one root, so another worktree opens elsewhere.
+import { recentName, type BranchInfo, type Recent } from '@trove/core/types';
 import { BookMarked, Check, ChevronDown, Copy, FolderTree, GitBranch } from 'lucide-react';
 import { useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
@@ -29,6 +29,8 @@ export function Switcher() {
     <div className="flex min-w-0 items-center -ml-2">
       <RepoMenu />
       <span className="mx-1 h-6 w-px shrink-0 bg-border" aria-hidden />
+      <WorktreeMenu />
+      <span className="mx-1 h-6 w-px shrink-0 bg-border" aria-hidden />
       <BranchMenu />
       <ServeDialog />
     </div>
@@ -38,12 +40,12 @@ export function Switcher() {
 function Segment({ icon, label, value, extra, title }: { icon: ReactNode; label: string; value: string; extra?: ReactNode; title?: string }) {
   return (
     <DropdownMenuTrigger asChild>
-      <Button variant="ghost" title={title} aria-label={`${label}: ${value}`} className="-my-1 h-auto min-w-0 justify-start gap-2 px-2 py-0 text-left [&>svg]:text-muted-foreground">
+      <Button variant="ghost" title={title} aria-label={`${label}: ${value}`} className="-my-1 h-auto min-w-0 shrink justify-start gap-2 px-2 py-0 text-left [&>svg]:text-muted-foreground">
         {icon}
         <span className="flex min-w-0 flex-col">
-          <span className="text-[11px] leading-3 font-normal text-muted-foreground">{label}</span>
+          <span className="truncate text-[11px] leading-3 font-normal text-muted-foreground">{label}</span>
           <span className="flex min-w-0 items-center gap-1.5 text-[13px] leading-4 font-semibold text-foreground">
-            <span className="max-w-[220px] truncate">{value}</span>
+            <span className="max-w-[200px] truncate">{value}</span>
             {extra}
           </span>
         </span>
@@ -55,13 +57,12 @@ function Segment({ icon, label, value, extra, title }: { icon: ReactNode; label:
 
 // The serve dialog opens as the menu closes: focus going back to the trigger would close it again.
 const keepDialog = (e: Event) => { if (get().serveRoot) e.preventDefault(); };
-const name = (path: string) => path.split('/').filter(Boolean).at(-1) ?? path;
 
 function RepoMenu() {
   const git = useStore((s) => s.git)!;
   const [recents, setRecents] = useState<Recent[]>([]);
   const bridge = window.trove;
-  const others = new Set(git.worktrees.map((w) => w.path));
+  const ours = new Set([git.root, ...git.worktrees.map((w) => w.path)]); // the worktree menu's
   const onOpen = (open: boolean) => {
     if (!open) return;
     void loadGit();
@@ -77,21 +78,18 @@ function RepoMenu() {
       toast(errText(e));
     }
   };
-  const recent = recents.filter((r) => r.path !== git.root && !others.has(r.path));
+  const recent = recents.filter((r) => !ours.has(r.path));
   return (
     <DropdownMenu onOpenChange={onOpen}>
-      <Segment icon={<BookMarked />} label="Current repository" value={name(git.root)} title={git.root} />
+      <Segment icon={<BookMarked />} label="Current repository" value={git.repo.name} title={git.repo.root} />
       <DropdownMenuContent align="start" className="w-80" onCloseAutoFocus={keepDialog}>
-        {git.worktrees.length > 1 && <DropdownMenuLabel>Worktrees</DropdownMenuLabel>}
-        {git.worktrees.map((w) => (
-          <DropdownMenuItem key={w.path} onSelect={() => { if (!w.current) void openWorktree(w.path); }} className="items-start">
-            <Check className={cn('mt-0.5', !w.current && 'invisible')} />
-            <span className="flex min-w-0 flex-col">
-              <span className="truncate text-foreground" title={w.path}>{tilde(w.path)}</span>
-              <span className="truncate font-mono text-xs text-muted-foreground">{w.branch ?? w.head}</span>
-            </span>
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuItem className="items-start">
+          <Check className="mt-0.5" />
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate text-foreground">{git.repo.name}</span>
+            <span className="truncate text-xs text-muted-foreground" title={git.repo.root}>{tilde(git.repo.root)}</span>
+          </span>
+        </DropdownMenuItem>
         {bridge && recent.length > 0 && (
           <>
             <DropdownMenuSeparator />
@@ -100,7 +98,7 @@ function RepoMenu() {
               <DropdownMenuItem key={r.path} onSelect={() => void bridge.open({ path: r.path, scope: r.scope, base: r.base }).catch((e) => toast(errText(e)))} className="items-start">
                 <Check className="invisible mt-0.5" />
                 <span className="flex min-w-0 flex-col">
-                  <span className="truncate text-foreground">{r.name}</span>
+                  <span className="truncate text-foreground">{recentName(r)}</span>
                   <span className="truncate text-xs text-muted-foreground" title={r.path}>{tilde(r.path)}</span>
                 </span>
               </DropdownMenuItem>
@@ -113,6 +111,28 @@ function RepoMenu() {
             <DropdownMenuItem onSelect={() => void openRepo()}><Check className="invisible" />Open repository…</DropdownMenuItem>
           </>
         )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+const MAIN = 'main checkout';
+
+function WorktreeMenu() {
+  const git = useStore((s) => s.git)!;
+  return (
+    <DropdownMenu onOpenChange={(open) => { if (open) void loadGit(); }}>
+      <Segment icon={<FolderTree />} label="Current worktree" value={git.worktree.main ? MAIN : git.worktree.name} title={git.root} />
+      <DropdownMenuContent align="start" className="w-80" onCloseAutoFocus={keepDialog}>
+        {git.worktrees.map((w) => (
+          <DropdownMenuItem key={w.path} onSelect={() => { if (!w.current) void openWorktree(w.path); }} className="items-start">
+            <Check className={cn('mt-0.5', !w.current && 'invisible')} />
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate text-foreground" title={w.path}>{w.main ? MAIN : w.name}</span>
+              <span className="truncate font-mono text-xs text-muted-foreground">{w.branch ?? w.head}</span>
+            </span>
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );

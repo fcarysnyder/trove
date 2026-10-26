@@ -38,7 +38,7 @@ async function firstLine(/** @type {number} */ port) {
   const [source, files, git] = await Promise.all(['/api/source', '/api/files', '/api/git'].map((p) => call(port, 'GET', p)));
   if ([source, files, git].some((r) => r.status !== 200) || !source.body?.eventsLog) throw new Error(`port ${port} is not a Trove server`);
   const queued = files.body.files.filter((/** @type {{staged: boolean}} */ f) => !f.staged).length;
-  return `reviewing ${queued} files on ${git.body.branch ?? git.body.head} at http://127.0.0.1:${port}; notices in ${source.body.eventsLog}; after each file run: ${invoked()} done <file> --port ${port}`;
+  return `reviewing ${queued} files on ${git.body.branch ?? git.body.head}${git.body.worktree && !git.body.worktree.main ? ` (${git.body.worktree.name})` : ''} at http://127.0.0.1:${port}; notices in ${source.body.eventsLog}; after each file run: ${invoked()} done <file> --port ${port}`;
 }
 
 async function main() {

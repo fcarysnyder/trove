@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { addedSpans, blocks, countStates, findAnchor, makeAnchor, matchBlocks, splice, subtractSpans, wordDiff } from './anchor.js';
 import { call, createApp, type AppOptions } from './app.js';
 import { probeGit, sha } from './source.js';
@@ -493,6 +493,29 @@ async function switchCase(temps: string[]) {
   assert.deepEqual(info.worktrees.map((w: any) => [w.path, w.branch, w.current]), [[realpathSync(root), 'main', true], [wtPath, 'wt', false]]);
   assert.equal(info.dirty, 0);
   assert.equal(probeGit(wtDir)?.branch, 'wt', 'a worktree is a repository of its own');
+  const main = realpathSync(root);
+  assert.deepEqual([info.repo, info.worktree], [{ root: main, name: basename(main) }, { path: main, name: basename(main), branch: 'main', main: true }]);
+
+  // A worktree inside the repository, where Claude Code puts them: probed from a folder in it, it names the
+  // repository and itself, and lists every worktree; the main checkout's queue and count ignore it.
+  sh('worktree', 'add', '-q', '-b', 'nested', join(root, '.claude/worktrees/nested'));
+  const nested = realpathSync(join(root, '.claude/worktrees/nested'));
+  mkdirSync(join(nested, 'docs'));
+  const probe = probeGit(join(nested, 'docs'))!;
+  assert.deepEqual([probe.branch, probe.repo, probe.worktree], ['nested', { root: main, name: basename(main) }, { path: nested, name: 'nested', branch: 'nested', main: false }]);
+  const rows = (list: any[]) => list.map((w) => [w.path, w.name, w.branch, w.current, w.main]).sort((a, b) => Number(b[4]) - Number(a[4]) || a[0].localeCompare(b[0]));
+  assert.deepEqual(rows(probe.worktrees), rows([
+    { path: main, name: basename(main), branch: 'main', current: false, main: true },
+    { path: wtPath, name: basename(wtPath), branch: 'wt', current: false, main: false },
+    { path: nested, name: 'nested', branch: 'nested', current: true, main: false },
+  ]));
+  assert.equal(probe.worktrees[0].path, main, 'the main checkout first');
+  const nestedApp = await listen({ root: join(nested, 'docs') });
+  const nestedSource = (await call(nestedApp.port, 'GET', '/api/source')).body;
+  assert.deepEqual([nestedSource.root, nestedSource.repo.name, nestedSource.worktree.name, nestedSource.worktree.main], [nested, basename(main), 'nested', false]);
+  await nestedApp.app.close();
+  const again = await get('/api/git');
+  assert.deepEqual([again.worktrees.length, again.dirty, again.worktree.main], [3, 0, true]);
 
   writeFileSync(join(root, 'b.md'), '# B, uncommitted\n');
   writeFileSync(join(root, 'a.md'), '# A, uncommitted\n');
@@ -520,6 +543,7 @@ async function switchCase(temps: string[]) {
   assert.equal((await sw('free')).status, 200, 'the current branch is a no-op');
   await app.close();
   sh('worktree', 'remove', '--force', wtDir);
+  sh('worktree', 'remove', '--force', nested);
 }
 
 // The attached agent: attach names it and picks its colour id, the errors use its label, detach

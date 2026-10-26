@@ -129,10 +129,17 @@ export const attachPrompt = (port: number | string) =>
 export const attachCommand = (tool: AgentTool, root: string, port: number | string, exec = false) =>
   `cd '${root.replaceAll("'", "'\\''")}' && ${exec ? 'exec ' : ''}${tool} "${attachPrompt(port)}"`;
 
+/** A repository's main working tree: the first entry of `git worktree list`. */
+export interface RepoRef { root: string; name: string }
+/** The worktree a root is: its folder's basename, its branch (null when detached), and whether it is the main checkout. */
+export interface WorktreeRef { path: string; name: string; branch: string | null; main: boolean }
+
 export interface SourceInfo {
   kind: 'git';
   root: string; // absolute path of the git toplevel
   name: string; // last path segment, for titles
+  repo: RepoRef; // the repository this root belongs to (its main checkout)
+  worktree: WorktreeRef; // this root as a worktree of that repository
   branch: string | null; // current branch (null when detached)
   base: string | null; // branch scope: the resolved base ref
   scope: GitScope;
@@ -184,10 +191,13 @@ export type SettingsResponse = Settings; // GET /api/settings; POST /api/setting
 
 /** A local branch. `worktree`: the absolute path of another worktree it is checked out in, else null. */
 export interface BranchInfo { name: string; current: boolean; worktree: string | null; upstream?: string; lastCommit: string }
-export interface WorktreeInfo { path: string; branch: string | null; head: string; current: boolean }
+/** One worktree of the repository, main checkout first. `name`: the folder's basename. */
+export interface WorktreeInfo { path: string; name: string; branch: string | null; head: string; current: boolean; main: boolean }
 /** GET /api/git: where the source stands, for the repository and branch switcher. */
 export interface GitInfo {
   root: string;
+  repo: RepoRef;
+  worktree: WorktreeRef;
   branch: string | null; // null when detached
   head: string; // short sha; '' before the first commit
   branches: BranchInfo[];
@@ -214,7 +224,9 @@ export interface GitProbe {
   branches: string[]; // local and remote, for the base
   defaultBase: string | null; // what Settings.base = null would resolve to
   local: BranchInfo[]; // local branches, with the worktree each is checked out in
-  worktrees: WorktreeInfo[];
+  worktrees: WorktreeInfo[]; // every worktree of the repository, main checkout first
+  repo: RepoRef;
+  worktree: WorktreeRef; // the probed path's own worktree
 }
 
 export interface Recent {
@@ -225,7 +237,12 @@ export interface Recent {
   scope?: GitScope;
   base?: string | null;
   agent?: AgentTool | null; // the last agent choice on the start page's Agent step
+  repo?: string; // the repository's name (RepoRef.name)
+  worktree?: string; // a linked worktree's name; absent for the main checkout
 }
+
+/** How a recent reads: `<repo> / <worktree>` for a linked worktree, `<repo>` for the main checkout, `name` for older entries. */
+export const recentName = (r: Pick<Recent, 'name' | 'repo' | 'worktree'>) => (r.repo ? (r.worktree ? `${r.repo} / ${r.worktree}` : r.repo) : r.name);
 
 /** `agent`: start the server, then a Terminal session of that tool attached to it, then the window. */
 export interface OpenRequest { path: string; scope?: GitScope; base?: string | null; agent?: AgentTool | null }

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// trove 0.3.0: bundled CLI and engine (@trove/core, marked). Node 22+, no dependencies.
+// trove 0.4.0: bundled CLI and engine (@trove/core, marked). Node 22+, no dependencies.
 
 // bin/trove.mjs
 import { existsSync as existsSync4, realpathSync as realpathSync4 } from "node:fs";
-import { basename as basename2, dirname as dirname3, join as join5, resolve as resolve2 } from "node:path";
+import { basename as basename4, dirname as dirname3, join as join5, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -28,7 +28,7 @@ var AGENT_LABELS = { claude: "Claude", codex: "Codex", other: "the agent" };
 import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, realpathSync as realpathSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { createServer, request } from "node:http";
 import { randomUUID } from "node:crypto";
-import { basename, dirname as dirname2, extname, join as join3, relative, resolve, sep } from "node:path";
+import { basename as basename2, dirname as dirname2, extname, join as join3, relative, resolve, sep } from "node:path";
 
 // ../core/src/vendor/marked.esm.mjs
 function I() {
@@ -1568,7 +1568,7 @@ var included = (path, s) => kindOf(path, s) !== null && !excluded(path, s);
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
-import { dirname, join as join2 } from "node:path";
+import { basename, dirname, join as join2 } from "node:path";
 var sha = (text) => createHash("sha1").update(text).digest("hex");
 function gitAt(cwd) {
   const git = (...args) => execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 << 20, stdio: "pipe" });
@@ -1593,18 +1593,26 @@ function gitAt(cwd) {
     }
   };
   const head = () => tryGit("rev-parse", "--short", "HEAD")?.trim() ?? "";
-  const worktrees = (top) => (tryGit("worktree", "list", "--porcelain") ?? "").split("\n\n").flatMap((block) => {
-    const kv = new Map(block.split("\n").filter(Boolean).map((l3) => [l3.split(" ")[0], l3.slice(l3.indexOf(" ") + 1)]));
-    if (!kv.has("worktree") || kv.has("bare")) return [];
-    const path = real(kv.get("worktree"));
-    return [{ path, branch: kv.get("branch")?.replace(/^refs\/heads\//, "") ?? null, head: (kv.get("HEAD") ?? "").slice(0, 7), current: path === top }];
-  });
+  const place = (top) => {
+    const blocks2 = (tryGit("worktree", "list", "--porcelain") ?? "").split("\n\n").map((block) => new Map(block.split("\n").filter(Boolean).map((l3) => [l3.split(" ")[0], l3.slice(l3.indexOf(" ") + 1)]))).filter((kv) => kv.has("worktree"));
+    const main2 = blocks2[0] ? real(blocks2[0].get("worktree")) : top;
+    const worktrees = blocks2.filter((kv) => !kv.has("bare")).map((kv) => {
+      const path = real(kv.get("worktree"));
+      return { path, name: basename(path), branch: kv.get("branch")?.replace(/^refs\/heads\//, "") ?? null, head: (kv.get("HEAD") ?? "").slice(0, 7), current: path === top, main: path === main2 };
+    });
+    const here2 = worktrees.find((w) => w.current);
+    return {
+      repo: { root: main2, name: basename(main2) },
+      worktree: { path: top, name: basename(top), branch: here2 ? here2.branch : branch(), main: top === main2 },
+      worktrees
+    };
+  };
   const branches = (top) => (tryGit("for-each-ref", "--format=%(refname:short)%00%(HEAD)%00%(worktreepath)%00%(upstream:short)%00%(committerdate:iso-strict)", "refs/heads") ?? "").split("\n").filter(Boolean).map((l3) => {
     const [name, star, wt2, upstream, date] = l3.split("\0");
     const path = wt2 ? real(wt2) : null;
     return { name, current: star === "*", worktree: path && path !== top ? path : null, ...upstream ? { upstream } : {}, lastCommit: date };
   });
-  return { git, tryGit, branch, defaultBase, head, worktrees, branches };
+  return { git, tryGit, branch, defaultBase, head, place, branches };
 }
 var gitTop = (dir) => {
   try {
@@ -1624,7 +1632,7 @@ function probeGit(path) {
   if (!top) return null;
   const g = gitAt(top);
   const branches = (g.tryGit("for-each-ref", "--format=%(refname:short)%00%(symref)", "refs/heads", "refs/remotes") ?? "").split("\n").map((l3) => l3.split("\0")).filter(([name, sym]) => name && !sym).map(([name]) => name);
-  return { branch: g.branch(), branches, defaultBase: g.defaultBase(), local: g.branches(top), worktrees: g.worktrees(top) };
+  return { branch: g.branch(), branches, defaultBase: g.defaultBase(), local: g.branches(top), ...g.place(top) };
 }
 function openSource(root) {
   const top = gitTop(statSync(root).isDirectory() ? root : dirname(root));
@@ -1661,7 +1669,8 @@ function openSource(root) {
     branch,
     head: g.head,
     branches: () => g.branches(top),
-    worktrees: () => g.worktrees(top),
+    /** The repository, this root as a worktree of it, and every worktree (main checkout first). */
+    place: () => g.place(top),
     /** Changed paths of the enabled doc types, staged or not: what a switch carries along or trips on. */
     dirty(s) {
       const spec = pathspec(s);
@@ -1898,10 +1907,12 @@ function createApp(o) {
     const a = server.address();
     return a && typeof a === "object" ? a.port : 0;
   };
+  const pick = ({ repo, worktree }) => ({ repo, worktree });
   const info = () => ({
     kind: "git",
     root: top,
-    name: basename(top),
+    name: basename2(top),
+    ...pick(source.place()),
     branch: source.branch(),
     base: current.scope === "branch" ? source.resolveBase(current) : null,
     scope: current.scope,
@@ -1915,10 +1926,10 @@ function createApp(o) {
   });
   const git = () => ({
     root: top,
+    ...source.place(),
     branch: source.branch(),
     head: source.head(),
     branches: source.branches(),
-    worktrees: source.worktrees(),
     dirty: source.dirty(current),
     base: current.scope === "branch" ? source.resolveBase(current) : null
   });
@@ -2345,7 +2356,7 @@ import { execFileSync as execFileSync2 } from "node:child_process";
 import { existsSync as existsSync3, mkdirSync as mkdirSync3, mkdtempSync, readFileSync as readFileSync3, realpathSync as realpathSync3, rmSync as rmSync2, symlinkSync, writeFileSync as writeFileSync3 } from "node:fs";
 import { request as request2 } from "node:http";
 import { tmpdir } from "node:os";
-import { join as join4 } from "node:path";
+import { basename as basename3, join as join4 } from "node:path";
 var listen = async (o) => {
   const app = createApp({ log: () => {
   }, agent: "other", ...o });
@@ -2778,6 +2789,26 @@ async function switchCase(temps) {
   assert.deepEqual(info.worktrees.map((w) => [w.path, w.branch, w.current]), [[realpathSync3(root), "main", true], [wtPath, "wt", false]]);
   assert.equal(info.dirty, 0);
   assert.equal(probeGit(wtDir)?.branch, "wt", "a worktree is a repository of its own");
+  const main2 = realpathSync3(root);
+  assert.deepEqual([info.repo, info.worktree], [{ root: main2, name: basename3(main2) }, { path: main2, name: basename3(main2), branch: "main", main: true }]);
+  sh("worktree", "add", "-q", "-b", "nested", join4(root, ".claude/worktrees/nested"));
+  const nested = realpathSync3(join4(root, ".claude/worktrees/nested"));
+  mkdirSync3(join4(nested, "docs"));
+  const probe = probeGit(join4(nested, "docs"));
+  assert.deepEqual([probe.branch, probe.repo, probe.worktree], ["nested", { root: main2, name: basename3(main2) }, { path: nested, name: "nested", branch: "nested", main: false }]);
+  const rows = (list) => list.map((w) => [w.path, w.name, w.branch, w.current, w.main]).sort((a, b) => Number(b[4]) - Number(a[4]) || a[0].localeCompare(b[0]));
+  assert.deepEqual(rows(probe.worktrees), rows([
+    { path: main2, name: basename3(main2), branch: "main", current: false, main: true },
+    { path: wtPath, name: basename3(wtPath), branch: "wt", current: false, main: false },
+    { path: nested, name: "nested", branch: "nested", current: true, main: false }
+  ]));
+  assert.equal(probe.worktrees[0].path, main2, "the main checkout first");
+  const nestedApp = await listen({ root: join4(nested, "docs") });
+  const nestedSource = (await call(nestedApp.port, "GET", "/api/source")).body;
+  assert.deepEqual([nestedSource.root, nestedSource.repo.name, nestedSource.worktree.name, nestedSource.worktree.main], [nested, basename3(main2), "nested", false]);
+  await nestedApp.app.close();
+  const again = await get("/api/git");
+  assert.deepEqual([again.worktrees.length, again.dirty, again.worktree.main], [3, 0, true]);
   writeFileSync3(join4(root, "b.md"), "# B, uncommitted\n");
   writeFileSync3(join4(root, "a.md"), "# A, uncommitted\n");
   assert.equal((await get("/api/git")).dirty, 2);
@@ -2804,6 +2835,7 @@ async function switchCase(temps) {
   assert.equal((await sw("free")).status, 200, "the current branch is a no-op");
   await app.close();
   sh("worktree", "remove", "--force", wtDir);
+  sh("worktree", "remove", "--force", nested);
 }
 async function agentCase(temps) {
   const { root } = newRepo("trove-agent-");
@@ -2853,7 +2885,7 @@ var USAGE = 'usage: trove serve [--root <path>] [--port 4824] [--exclude <glob>]
 var here = dirname3(fileURLToPath(import.meta.url));
 var invoked = () => {
   const script = process.argv[1] ?? "";
-  if (basename2(script) === "trove") return "trove";
+  if (basename4(script) === "trove") return "trove";
   const path = realpathSync4(script);
   return /[\s'"$`\\]/.test(path) ? `node '${path.replaceAll("'", String.raw`'\''`)}'` : `node ${path}`;
 };
@@ -2862,7 +2894,7 @@ async function firstLine(port) {
   const [source, files, git] = await Promise.all(["/api/source", "/api/files", "/api/git"].map((p) => call(port, "GET", p)));
   if ([source, files, git].some((r) => r.status !== 200) || !source.body?.eventsLog) throw new Error(`port ${port} is not a Trove server`);
   const queued = files.body.files.filter((f) => !f.staged).length;
-  return `reviewing ${queued} files on ${git.body.branch ?? git.body.head} at http://127.0.0.1:${port}; notices in ${source.body.eventsLog}; after each file run: ${invoked()} done <file> --port ${port}`;
+  return `reviewing ${queued} files on ${git.body.branch ?? git.body.head}${git.body.worktree && !git.body.worktree.main ? ` (${git.body.worktree.name})` : ""} at http://127.0.0.1:${port}; notices in ${source.body.eventsLog}; after each file run: ${invoked()} done <file> --port ${port}`;
 }
 async function main() {
   const [command, ...args] = process.argv.slice(2);

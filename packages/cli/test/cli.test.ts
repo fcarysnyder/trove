@@ -55,3 +55,20 @@ test('serve refuses a folder that is not a git repository', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('serving a linked worktree names it after the branch', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'trove-wt-'));
+  const git = (...a: string[]) => execFileSync('git', a, { cwd: root });
+  git('init', '-q', '-b', 'main');
+  writeFileSync(join(root, 'a.md'), '# A\n');
+  git('add', '.');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'a');
+  git('worktree', 'add', '-q', '-b', 'side', join(root, '.claude/worktrees/side'));
+  const { line, kill } = await firstLine(['serve', '--root', join(root, '.claude/worktrees/side'), '--port', '0']);
+  try {
+    expect(line).toMatch(/^reviewing 0 files on side \(side\) at http:\/\/127\.0\.0\.1:\d+; /);
+  } finally {
+    kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);
