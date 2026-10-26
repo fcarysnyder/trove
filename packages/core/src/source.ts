@@ -3,7 +3,7 @@
 // path -> hash at accept stands in for the index, so a later change puts the file back in the queue.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { enabledTypes, included, kindOf } from './settings.js';
@@ -13,11 +13,19 @@ export interface Source {
   kind: 'git' | 'folder';
   root: string; // realpath of the git toplevel or the folder
   stateDir: string;
-  /** The queue. Git adds what it lists to `seen` and keeps listing seen files (as committed) after git stops reporting them. */
-  list(s: Settings, seen: Set<string>): FileEntry[];
+  /**
+   * The queue. Git adds what it lists to `seen` and keeps listing seen files (as committed) after git
+   * stops reporting them. Paths in `hide` (rejected ones) are listed only when git status or the walk
+   * reports them, never from `seen` or the branch diff.
+   */
+  list(s: Settings, seen: Set<string>, hide?: Set<string>): FileEntry[];
   accept(rel: string): void;
   unaccept(rel: string): void;
   unstage(rel: string): void;
+  /** The index copy (git `:path`), or null: untracked, or a folder. */
+  indexed(rel: string): string | null;
+  /** Take the file out of the change set. Git: back to HEAD in index and worktree, or, if HEAD lacks it, out of the index and off disk. Folder: deleted and unmarked. */
+  reject(rel: string): void;
   /** What Show new marks against: the staged copy, else HEAD (else the merge-base in branch scope). */
   baseOf(rel: string, text: string, s: Settings): string | null;
   branch(): string | null;
@@ -81,7 +89,13 @@ function gitSource(top: string): Source {
     kind: 'git', root: top, stateDir, branch, resolveBase, unstage,
     unaccept: unstage,
     accept: (rel) => { git('add', '--', rel); },
-    list(s, seen) {
+    indexed: (rel) => show(`:${rel}`),
+    reject(rel) {
+      if (show(`HEAD:${rel}`) !== null) return void git('restore', '--source=HEAD', '--staged', '--worktree', '--', rel);
+      try { git('rm', '--cached', '-q', '--', rel); } catch {} // untracked: nothing in the index
+      rmSync(join(top, rel), { force: true });
+    },
+    list(s, seen, hide = new Set()) {
       const exts = enabledTypes(s).flatMap((t) => t.extensions.map((e) => `*${e}`));
       if (!exts.length) return []; // a pathspec of excludes alone would match everything
       const spec = [...exts, ...s.exclude.map((g) => `:(exclude,glob)${g}`)];
@@ -100,7 +114,7 @@ function gitSource(top: string): Source {
       // Filtered by the current settings, so turning a type off or excluding a folder drops its files.
       const have = new Set(out.map((f) => f.path));
       for (const path of seen) {
-        if (!have.has(path) && included(path, s) && existsSync(join(top, path))) out.push({ ...entry(path, kindOf(path, s)!, false, true), committed: true });
+        if (!have.has(path) && !hide.has(path) && included(path, s) && existsSync(join(top, path))) out.push({ ...entry(path, kindOf(path, s)!, false, true), committed: true });
       }
       for (const f of out) { seen.add(f.path); have.add(f.path); }
       // Branch scope: also every file the branch changed since its merge-base. Committed and unmodified,
@@ -108,7 +122,7 @@ function gitSource(top: string): Source {
       const mb = s.scope === 'branch' ? mergeBase(s) : null;
       if (mb) {
         for (const path of git('diff', '--name-only', '-z', '--diff-filter=d', mb, 'HEAD', '--', ...spec).split('\0')) {
-          const kind = path && !have.has(path) && existsSync(join(top, path)) ? kindOf(path, s) : null;
+          const kind = path && !have.has(path) && !hide.has(path) && existsSync(join(top, path)) ? kindOf(path, s) : null;
           if (kind) out.push(entry(path, kind, false, true));
         }
       }
@@ -149,6 +163,8 @@ function folderSource(root: string): Source {
     kind: 'folder', root, stateDir, unstage,
     unaccept: unstage,
     accept: (rel) => writeFileSync(file, JSON.stringify({ ...reviewed(), [rel]: hashOf(rel) })),
+    indexed: () => null,
+    reject(rel) { unstage(rel); rmSync(join(root, rel), { force: true }); },
     list(s) {
       const r = reviewed();
       return (walk(root, '', s, []) ?? []).map((path) => ({ path, kind: kindOf(path, s)!, untracked: false, staged: path in r && r[path] === hashOf(path) }));

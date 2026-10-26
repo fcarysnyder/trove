@@ -15,7 +15,7 @@ export function FilesColumn() {
   const files = useStore((s) => s.files);
   const pendingOnly = useStore((s) => s.pendingOnly);
   const committedOpen = useStore((s) => s.committedOpen);
-  const done = files.filter((f) => f.committed);
+  const rejectedOpen = useStore((s) => s.rejectedOpen);
   return (
     <section aria-label="Files" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">
@@ -25,16 +25,8 @@ export function FilesColumn() {
       <ScrollArea className="min-h-0 flex-1">
         <nav aria-label="Files" className="p-2">
           <Folders list={visible(get())} />
-          {done.length > 0 && (
-            <Collapsible open={committedOpen} onOpenChange={(o) => set({ committedOpen: o })} className="mt-3">
-              <CollapsibleTrigger className="group flex w-full items-center gap-1.5 rounded-sm px-1 py-1.5 text-[13px] text-body outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
-                <ChevronRight className="size-3.5 transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none" aria-hidden />
-                <span>Committed</span>
-                <Count n={done.length} />
-              </CollapsibleTrigger>
-              <CollapsibleContent><Folders list={done} /></CollapsibleContent>
-            </Collapsible>
-          )}
+          <Section label="Committed" list={files.filter((f) => f.committed)} open={committedOpen} onOpenChange={(o) => set({ committedOpen: o })} />
+          <Section label="Rejected" list={files.filter((f) => f.state === 'rejected')} open={rejectedOpen} onOpenChange={(o) => set({ rejectedOpen: o })} />
         </nav>
       </ScrollArea>
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-t px-4">
@@ -42,6 +34,21 @@ export function FilesColumn() {
         <Label htmlFor="pending-only" className="text-xs font-normal text-muted-foreground">Pending only</Label>
       </div>
     </section>
+  );
+}
+
+/** A closed-by-default section at the end of the tree, shown only when it has files. */
+function Section({ label, list, open, onOpenChange }: { label: string; list: FileRow[]; open: boolean; onOpenChange: (o: boolean) => void }) {
+  if (!list.length) return null;
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange} className="mt-3">
+      <CollapsibleTrigger className="group flex w-full items-center gap-1.5 rounded-sm px-1 py-1.5 text-[13px] text-body outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        <ChevronRight className="size-3.5 transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none" aria-hidden />
+        <span>{label}</span>
+        <Count n={list.length} />
+      </CollapsibleTrigger>
+      <CollapsibleContent><Folders list={list} /></CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -63,7 +70,7 @@ function Folders({ list }: { list: FileRow[] }) {
             className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-card hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
               f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
             <StateIcons file={f} names={n} />
-            <span className={cn('flex-1 truncate', f.state === 'accepted' && f.path !== current && 'text-muted-foreground')}>{nameOf(f.path)}</span>
+            <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}>{nameOf(f.path)}</span>
             {f.drafts > 0 && <Count n={f.drafts} />}
           </button>
         ))}

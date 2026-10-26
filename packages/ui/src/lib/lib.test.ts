@@ -1,7 +1,7 @@
 import { DEFAULT_SETTINGS, type FileRow } from '@trove/core/types';
 import { describe, expect, it } from 'vitest';
 import { diffSettings, parseExclude } from './settings';
-import { names, status } from './status';
+import { inFolders, names, PROGRESS, status, stepFrom } from './status';
 import { resolveTheme } from './theme';
 
 const row = (o: Partial<FileRow>): FileRow => ({ path: 'a.md', kind: 'markdown', untracked: false, staged: false, state: 'queue', updated: false, edited: false, drafts: 0, ...o });
@@ -16,10 +16,36 @@ describe('status', () => {
     expect(status(row({ drafts: 1 }), claude)).toMatchObject({ icon: 'message-square', label: 'Has comments', tone: 'drafts' });
     expect(status(row({}), claude)).toMatchObject({ icon: 'circle', label: 'Pending', tone: '' });
     expect(status(row({ untracked: true }), claude)).toMatchObject({ icon: 'file-plus', label: 'Newly added' });
+    expect(status(row({ state: 'rejected', untracked: true }), claude)).toMatchObject({ icon: 'circle-x', label: 'Rejected', tone: 'rejected' });
+    expect(status(row({ state: 'skipped', updated: true, drafts: 1 }), claude)).toMatchObject({ icon: 'circle-dashed', label: 'Skipped', tone: 'skipped' });
+  });
+  it('orders the pill with skipped before pending and rejected last', () => {
+    expect(PROGRESS).toEqual(['accepted', 'updated', 'edited', 'drafts', 'working', 'skipped', 'pending', 'rejected']);
   });
   it('names another agent generically', () => {
     expect(status(row({ state: 'working' }), names('other')).label).toBe('The agent is working');
     expect(status(row({ updated: true }), names('other')).label).toBe('Updated by the agent');
+  });
+});
+
+describe('stepping', () => {
+  const files = [
+    row({ path: 'a.md', state: 'accepted' }),
+    row({ path: 'b.md', state: 'skipped' }),
+    row({ path: 'c.md', state: 'rejected' }),
+    row({ path: 'd.md' }),
+    row({ path: 'e.md', state: 'accepted', committed: true }),
+  ];
+  it('keeps skipped files in the folders unless Pending only, and files rejected and committed ones apart', () => {
+    expect(files.filter((f) => inFolders(f, false)).map((f) => f.path)).toEqual(['a.md', 'b.md', 'd.md']);
+    expect(files.filter((f) => inFolders(f, true)).map((f) => f.path)).toEqual(['d.md']);
+  });
+  it('passes over skipped and rejected files, from any file', () => {
+    expect(stepFrom(files, 'a.md', 1, false)?.path).toBe('d.md');
+    expect(stepFrom(files, 'd.md', -1, false)?.path).toBe('a.md');
+    expect(stepFrom(files, 'c.md', 1, false)?.path).toBe('d.md');
+    expect(stepFrom(files, 'd.md', 1, false)).toBeUndefined();
+    expect(stepFrom(files, 'd.md', -1, true)).toBeUndefined();
   });
 });
 

@@ -4,12 +4,13 @@ import { MessageSquare, PanelLeft, PanelRight, Pencil, Undo2 } from 'lucide-reac
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { status } from '@/lib/status';
-import { plural } from '@/lib/text';
+import { nameOf, plural } from '@/lib/text';
 import { cn } from '@/lib/utils';
-import { accept, entry, focusComment, nextPending, post, revertAll, setShowNew, togglePanel } from './actions';
+import { accept, entry, focusComment, nextPending, post, reject, restore, revertAll, setShowNew, skip, togglePanel } from './actions';
 import { IconButton, PathLabel } from './bits';
 import { StateIcons } from './StateIcon';
 import { get, set, useNames, useStore } from './store';
@@ -282,13 +283,19 @@ function DocFooter() {
   const busy = !!editing;
   const next = nextPending();
   return (
-    <div className="flex min-h-11 shrink-0 items-center gap-2 border-t pr-4 pl-4">
-      <span className="flex min-w-0 flex-1 cursor-default items-center gap-1.5 overflow-hidden text-xs whitespace-nowrap text-muted-foreground select-none">
+    <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 border-t px-4 py-1.5">
+      <span className="flex min-w-0 flex-[1_1_auto] cursor-default items-center gap-1.5 overflow-hidden text-xs whitespace-nowrap text-muted-foreground select-none">
         <StateIcons file={f} names={n} className="size-3.5" />{s.label}
       </span>
       {f.state === 'working' ? <Button variant="ghost" size="sm" disabled={busy} onClick={act(() => post('release'))}>Unlock</Button>
         : f.state === 'accepted' ? <Button variant="ghost" size="sm" disabled={busy} onClick={act(() => post('unaccept'))}>Undo accept</Button>
-        : (
+        : f.state === 'rejected' ? <Button variant="ghost" size="sm" onClick={act(restore)}>Restore</Button>
+        : f.state === 'skipped' ? (
+          <>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={act(() => skip(false))}>Unskip</Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={act(() => accept(false))}>Accept</Button>
+          </>
+        ) : (
           <>
             {f.edited && (
               <Tooltip>
@@ -300,10 +307,35 @@ function DocFooter() {
                 <TooltipContent>{current.revertable ? 'Back to the text before your first edit' : 'The file changed since your edit'}</TooltipContent>
               </Tooltip>
             )}
+            <RejectButton path={current.path} untracked={f.untracked} disabled={busy} />
+            <Button variant="ghost" size="sm" disabled={busy} onClick={act(() => skip(true))}>Skip</Button>
             <Button variant="ghost" size="sm" disabled={busy} onClick={act(() => accept(false))}>Accept</Button>
             {next && <Button size="sm" disabled={busy} onClick={act(() => accept(true))}>Accept and next</Button>}
           </>
         )}
     </div>
+  );
+}
+
+/** Reject, behind a confirm that says what happens to the file. X opens it too. */
+function RejectButton({ path, untracked, disabled }: { path: string; untracked: boolean; disabled: boolean }) {
+  const open = useStore((s) => s.rejecting);
+  const folder = useStore((s) => s.source?.kind === 'folder');
+  const what = untracked || folder ? `Deletes ${nameOf(path)}.` : `Undoes every uncommitted change to ${nameOf(path)}.`;
+  return (
+    <Popover open={open} onOpenChange={(o) => set({ rejecting: o })}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="sm" disabled={disabled} className="text-destructive hover:text-destructive aria-expanded:text-destructive">Reject</Button>
+      </PopoverTrigger>
+      <PopoverContent side="top" align="end" className="w-72 gap-3"
+        onOpenAutoFocus={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).querySelector<HTMLElement>('[data-confirm]')?.focus(); }}
+        onCloseAutoFocus={(e) => e.preventDefault()}>
+        <p className="text-[13px] text-body">{what} Restore brings it back.</p>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={() => set({ rejecting: false })}>Cancel</Button>
+          <Button size="sm" data-confirm onClick={() => { set({ rejecting: false }); void reject(); }}>Reject</Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

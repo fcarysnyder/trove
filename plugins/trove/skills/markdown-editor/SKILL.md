@@ -47,7 +47,9 @@ index, and loses Show new and the committed section.
    Selecting text shows a toolbar: C comments, E asks for an explanation, plus edit-block and
    copy. `Accept and next` (or Enter) stages the file and opens the next pending one; `Accept`
    stages and stays; `Undo accept` unstages; the user can revert each of their own saved edits,
-   or all of them; edits are never sent to you.
+   or all of them; edits are never sent to you. `Skip` (S) sets a file aside for later and
+   touches nothing in git. `Reject` (X) takes the change out: a tracked file goes back to HEAD,
+   a new one is deleted, and the file's text and comments are kept so `Restore` can undo it.
    Send all's menu can send only the open file, only change comments or only explain comments,
    so a batch may cover part of the drafts; the rest arrive in a later batch.
    The page's Settings dialog holds the theme, the Show new default, which doc types are in the
@@ -80,7 +82,8 @@ modal.
 1. **Start your reply with the comments as sent**: a numbered list grouped by file, each with its
    quote and the note word for word. A batch reaches you as an event, not a chat message, and the
    page has already cleared its drafts.
-2. Per file: apply its `change` comments to that file only. Answer `explain` comments in chat,
+2. Per file: apply its `change` comments to that file only. A rejected file's comments are
+   never sent. Answer `explain` comments in chat,
    quoting the passage; they edit nothing.
 3. **After each file with change comments**, in the same step as its one-line summary, run the
    `done` command copied from the server's first line:

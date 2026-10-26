@@ -55,6 +55,8 @@ files already committed.
 | `Enter` | Accept and next (only from the page itself or a tree row) |
 | `[` / `]` | hide or show Files / Changes |
 | `N` | Show new on or off |
+| `S` | skip the open file, or unskip it |
+| `X` | reject the open file (asks first) |
 | `C` / `E` | with text selected: comment / explain |
 | `Esc` | dismiss the selection toolbar; cancel an edit, a composer or the modal |
 | `Cmd/Ctrl+Enter` | save an edit, add a comment, save the modal |

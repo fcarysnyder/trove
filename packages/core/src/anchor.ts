@@ -82,18 +82,19 @@ export function findAnchor(items: { text: string; path: string[] }[], anchor: An
   return null;
 }
 
-export type ReviewState = 'working' | 'accepted' | 'updated' | 'edited' | 'drafts' | 'pending';
+export type ReviewState = 'working' | 'rejected' | 'accepted' | 'skipped' | 'updated' | 'edited' | 'drafts' | 'pending';
 export type StateCounts = Record<ReviewState, number>;
 
 /**
- * Review state of a file, first match wins: working, accepted, updated by the agent, edited, has
- * comments, pending. The tree icons, footer and progress pill all use it.
+ * Review state of a file, first match wins: the server's state (working, rejected, accepted,
+ * skipped), then updated by the agent, edited, has comments, pending. The tree icons, footer and
+ * progress pill all use it.
  */
 export const stateOf = (f: Pick<FileRow, 'state' | 'updated' | 'edited' | 'drafts'>): ReviewState =>
-  f.state === 'working' ? 'working' : f.state === 'accepted' ? 'accepted' : f.updated ? 'updated'
-  : f.edited ? 'edited' : f.drafts ? 'drafts' : 'pending';
+  f.state !== 'queue' ? f.state : f.updated ? 'updated' : f.edited ? 'edited' : f.drafts ? 'drafts' : 'pending';
 export const countStates = (files: Pick<FileRow, 'state' | 'updated' | 'edited' | 'drafts'>[]): StateCounts =>
-  files.reduce((c, f) => (c[stateOf(f)]++, c), { accepted: 0, updated: 0, edited: 0, drafts: 0, working: 0, pending: 0 } as StateCounts);
+  files.reduce((c, f) => (c[stateOf(f)]++, c),
+    { accepted: 0, rejected: 0, skipped: 0, updated: 0, edited: 0, drafts: 0, working: 0, pending: 0 } as StateCounts);
 
 export interface BlockMatch {
   /** new block index -> the old raw it replaced, or null for an added block */

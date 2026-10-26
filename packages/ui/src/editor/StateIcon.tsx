@@ -1,4 +1,4 @@
-import { Circle, CircleCheck, FilePen, FilePlus, LoaderCircle, Lock, MessageSquare, Sparkles, type LucideIcon } from 'lucide-react';
+import { Circle, CircleCheck, CircleDashed, CircleX, FilePen, FilePlus, LoaderCircle, Lock, MessageSquare, Sparkles, type LucideIcon } from 'lucide-react';
 import type { FileRow } from '@trove/core/types';
 import { cn } from '@/lib/utils';
 import { status, type IconName, type Names } from '@/lib/status';
@@ -11,8 +11,10 @@ export const ICONS: Record<IconName, LucideIcon> = {
   'loader-circle': LoaderCircle,
   circle: Circle,
   'file-plus': FilePlus,
+  'circle-dashed': CircleDashed,
+  'circle-x': CircleX,
 };
-export const TONE: Record<string, string> = { accepted: 'text-good', updated: 'text-agent', drafts: 'text-dirty' };
+export const TONE: Record<string, string> = { accepted: 'text-good', updated: 'text-agent', drafts: 'text-dirty', rejected: 'text-destructive' };
 
 export function Icon({ name, tone = '', label, className }: { name: IconName; tone?: string; label?: string; className?: string }) {
   const I = ICONS[name];

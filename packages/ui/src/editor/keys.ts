@@ -1,6 +1,7 @@
-// The page's keys (README's table). Ignored while typing, in menus and dialogs, and on controls that
-// own their arrows; j/k/arrows/Enter are ignored while an edit is open.
-import { accept, entry, step, togglePanel } from './actions';
+// The page's keys (README's table; S skips or unskips the open file, X asks to reject it). Ignored
+// while typing, in menus and dialogs, and on controls that own their arrows; j/k/arrows/Enter/S/X are
+// ignored while an edit is open.
+import { accept, entry, skip, step, togglePanel } from './actions';
 import { get, set } from './store';
 import { pickAction, toggleNew } from './doc/commands';
 
@@ -28,6 +29,9 @@ export function onKey(e: KeyboardEvent) {
   else if (e.key === ']') togglePanel('changes');
   else if (e.key.toLowerCase() === 'n') toggleNew();
   if (s.editing) return; // stepping away would drop the open edit
+  const f = entry();
+  if (e.key.toLowerCase() === 's' && (f?.state === 'queue' || f?.state === 'skipped')) void skip(f.state === 'queue');
+  if (e.key.toLowerCase() === 'x' && f?.state === 'queue') { e.preventDefault(); set({ rejecting: true }); }
   if (e.key === 'ArrowRight' || e.key === 'j') step(1);
   if (e.key === 'ArrowLeft' || e.key === 'k') step(-1);
 }

@@ -17,7 +17,7 @@ import { showBlock, showPassage } from './doc/commands';
 
 export function ChangesColumn() {
   const current = useStore((s) => s.current);
-  const files = useStore((s) => s.files);
+  const files = useStore((s) => s.files).filter((f) => f.state !== 'rejected'); // a rejected file's comments are backed up, not shown
   const scope = useStore((s) => s.scope);
   const allDrafts = useStore((s) => s.allDrafts);
   const allEdits = useStore((s) => s.allEdits);
@@ -221,7 +221,7 @@ function SendButton() {
   const n = useNames();
   const [comments, withComments] = sendable();
   const anyDrafts = files.some((f) => f.drafts);
-  const live = files.filter((f) => f.state !== 'working');
+  const live = files.filter((f) => f.state !== 'working' && f.state !== 'rejected');
   const all = live.flatMap((f) => (f.path === current?.path ? current.drafts : allDrafts[f.path] ?? []));
   const lockedCurrent = files.find((f) => f.path === current?.path)?.state === 'working';
   const items = [

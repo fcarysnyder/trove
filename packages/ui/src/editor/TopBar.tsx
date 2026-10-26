@@ -14,7 +14,8 @@ import { Icon } from './StateIcon';
 import { get, set, useNames, useStore } from './store';
 
 const SEG: Record<string, string> = {
-  accepted: 'bg-good', updated: 'bg-agent', drafts: 'bg-dirty', edited: 'bg-muted-foreground/60', working: 'bg-muted-foreground', pending: 'bg-border',
+  accepted: 'bg-good', updated: 'bg-agent', drafts: 'bg-dirty', edited: 'bg-muted-foreground/60', working: 'bg-muted-foreground',
+  skipped: 'bg-muted-foreground/30', pending: 'bg-border', rejected: 'bg-destructive',
 };
 
 export function TopBar() {

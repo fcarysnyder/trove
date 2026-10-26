@@ -2,7 +2,7 @@
 import { stateOf, type ReviewState } from '@trove/core/anchor';
 import type { FileRow } from '@trove/core/types';
 
-export type IconName = 'circle-check' | 'sparkles' | 'file-pen' | 'message-square' | 'loader-circle' | 'circle' | 'file-plus';
+export type IconName = 'circle-check' | 'sparkles' | 'file-pen' | 'message-square' | 'loader-circle' | 'circle' | 'file-plus' | 'circle-dashed' | 'circle-x';
 
 /** The agent serving the page, as said mid-sentence (agent), to start one (Agent), and as a sender (who). */
 export const names = (agent: 'claude' | 'other') =>
@@ -10,7 +10,7 @@ export const names = (agent: 'claude' | 'other') =>
 export type Names = ReturnType<typeof names>;
 
 /** The pill's order. Only Accepted names its git state: Accept is the one action that stages. */
-export const PROGRESS: ReviewState[] = ['accepted', 'updated', 'edited', 'drafts', 'working', 'pending'];
+export const PROGRESS: ReviewState[] = ['accepted', 'updated', 'edited', 'drafts', 'working', 'skipped', 'pending', 'rejected'];
 
 export function stateInfo(s: ReviewState, n: Names): { label: string; icon: IconName; words: string } {
   switch (s) {
@@ -19,7 +19,9 @@ export function stateInfo(s: ReviewState, n: Names): { label: string; icon: Icon
     case 'edited': return { label: 'Edited', icon: 'file-pen', words: 'edited' };
     case 'drafts': return { label: 'Has comments', icon: 'message-square', words: 'with comments' };
     case 'working': return { label: `${n.Agent} is working`, icon: 'loader-circle', words: `with ${n.agent}` };
+    case 'skipped': return { label: 'Skipped', icon: 'circle-dashed', words: 'skipped' };
     case 'pending': return { label: 'Pending', icon: 'circle', words: 'pending' };
+    case 'rejected': return { label: 'Rejected', icon: 'circle-x', words: 'rejected' };
   }
 }
 
@@ -29,4 +31,17 @@ export function status(f: Pick<FileRow, 'state' | 'updated' | 'edited' | 'drafts
   if (s === 'pending' && f.untracked) return { state: s, label: 'Newly added', icon: 'file-plus' as IconName, tone: '' };
   const { label, icon } = stateInfo(s, n);
   return { state: s, label, icon, tone: s === 'pending' || s === 'working' ? '' : s };
+}
+
+type Listed = Pick<FileRow, 'path' | 'state' | 'committed'>;
+
+/** In the tree's folders: committed and rejected files have sections of their own; Pending only also hides accepted and skipped ones. */
+export const inFolders = (f: Listed, pendingOnly: boolean) =>
+  !f.committed && f.state !== 'rejected' && !(pendingOnly && (f.state === 'accepted' || f.state === 'skipped'));
+
+/** j/k: the next or previous file in the folders, by position in the full list (so it works from a file outside them), passing over skipped ones. */
+export function stepFrom<T extends Listed>(files: T[], current: string | undefined, dir: 1 | -1, pendingOnly: boolean): T | undefined {
+  const at = files.findIndex((f) => f.path === current);
+  const list = files.filter((f, i) => inFolders(f, pendingOnly) && f.state !== 'skipped' && (dir > 0 ? i > at : i < at));
+  return dir > 0 ? list[0] : list.at(-1);
 }

@@ -53,8 +53,11 @@ export const DEFAULT_SETTINGS: Settings = {
   showNew: true,
 };
 
-/** The server's review state of a file. The UI derives finer labels from the row (see anchor stateOf). */
-export type FileState = 'working' | 'accepted' | 'queue';
+/**
+ * The server's review state of a file, first match wins: working, rejected, accepted, skipped, queue.
+ * The UI derives finer labels from the row (see anchor stateOf).
+ */
+export type FileState = 'working' | 'rejected' | 'accepted' | 'skipped' | 'queue';
 
 export interface FileEntry {
   path: string; // relative to the source root, forward slashes
@@ -62,6 +65,8 @@ export interface FileEntry {
   untracked: boolean; // git: `??`; folder: always false
   staged: boolean; // git: index matches the working copy; folder: marked reviewed
   committed?: boolean; // git: staged copy got committed while the review was open
+  skipped?: boolean; // the user will come back to it; the editor's mark only, no git effect
+  rejected?: boolean; // taken out of the change set (back to HEAD, or deleted); listed from its backup until restored
 }
 
 export interface FileRow extends FileEntry {
@@ -139,10 +144,14 @@ export interface FileResponse { // GET /api/file?path=
   edited: boolean;
   revertable: boolean; // the file is still exactly what the user's last Save wrote
   edits: BlockEdit[];
+  rejected?: boolean; // the backed-up text of a rejected file, read-only (locked); base is the file on disk now
 }
 export interface SaveDraftsBody { path: string; drafts: Draft[] } // POST /api/drafts -> {ok}
 export interface AcceptBody { path: string; hash: string } // POST /api/accept -> {ok}
 export interface UnacceptBody { path: string } // POST /api/unaccept -> {ok}
+export interface SkipBody { path: string; on: boolean } // POST /api/skip -> {ok}; no git write
+export interface RejectBody { path: string; hash: string } // POST /api/reject -> {ok}; tracked: back to HEAD, new: deleted; backed up first
+export interface RestoreBody { path: string } // POST /api/restore -> {ok}; the index copy, the working text and the drafts come back
 export interface SaveBody { path: string; hash: string; index?: number; raw: string } // POST /api/save -> {hash}
 export interface RevertBody { path: string; edit?: string; hash?: string } // POST /api/revert -> {hash}
 export interface SendBody { paths?: string[]; kind?: CommentKind } // POST /api/send

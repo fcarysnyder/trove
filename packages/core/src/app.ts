@@ -1,13 +1,13 @@
 // The review server: a queue over a Source, comment drafts, the user's block edits, batches for the
 // agent, locks while it works, and the HTTP API the page talks to. Ported from the markdown-editor
 // skill's doc-review.mjs; every route behaves as it did there. Node built-ins only.
-import { appendFileSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { basename, extname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { blocks, splice } from './anchor.js';
-import { loadSettings, mergeSettings, saveSettings } from './settings.js';
+import { included, kindOf, loadSettings, mergeSettings, saveSettings } from './settings.js';
 import { openSource, sha } from './source.js';
 import type { BlockEdit, Draft, FileEntry, GitScope, Question, Settings, SourceInfo } from './types.js';
 
@@ -55,6 +55,8 @@ function locate(text: string, needle: string, hint: number) {
 }
 
 interface EditRecord { before: string; saved?: string; blocks: BlockEdit[] }
+/** A rejected file's backup: the working text, the index copy (null: none) and its comment drafts. */
+interface Rejected { text: string; staged: string | null; drafts: Draft[]; at: string }
 type Result = [number, unknown];
 
 export function createApp(o: AppOptions): App {
@@ -78,7 +80,7 @@ export function createApp(o: AppOptions): App {
   let current = mergeSettings(stored, overrides);
 
   // Locks, the agent's snapshots and its waiting question live on disk too, so a restart keeps them:
-  // {working: {path: {hash, text}}, updated: {path: text}, question, seen}.
+  // {working: {path: {hash, text}}, updated: {path: text}, question, seen, skipped, rejected}.
   let saved: any = {};
   try { saved = JSON.parse(readFileSync(files.state, 'utf8')); } catch {}
   // path -> {hash and text at send, last hash seen, when it was first seen}
@@ -90,14 +92,28 @@ export function createApp(o: AppOptions): App {
   const updated = new Map<string, string>(Object.entries(saved.updated ?? {}));
   // Every path the review has listed, kept on disk so a committed file still shows (as committed) after a restart.
   const seen = new Set<string>(saved.seen ?? []);
+  // Skipped: files the user will come back to; the editor's own mark, no git effect. Accept and Reject clear it.
+  const skipped = new Set<string>(saved.skipped ?? []);
+  // Rejected: changes the user took out of the change set, backed up so Restore can put all of it back.
+  const rejected = new Map<string, Rejected>(Object.entries(saved.rejected ?? {}));
   const saveState = () => writeFileSync(files.state, JSON.stringify({
-    working: Object.fromEntries([...working].map(([p, w]) => [p, { hash: w.hash, text: w.text }])), updated: Object.fromEntries(updated), question, seen: [...seen] }));
+    working: Object.fromEntries([...working].map(([p, w]) => [p, { hash: w.hash, text: w.text }])), updated: Object.fromEntries(updated), question,
+    seen: [...seen], skipped: [...skipped], rejected: Object.fromEntries(rejected) }));
+  const REJECTED: Result = [409, { error: 'Rejected: restore it first' }];
 
   function list(): FileEntry[] {
     const before = seen.size;
-    const out = source.list(current, seen).sort((a, b) => (a.path < b.path ? -1 : 1));
-    if (seen.size !== before) saveState();
-    return out;
+    const out = source.list(current, seen, new Set(rejected.keys()));
+    // A rejected path the source reports again has new content (say, regenerated): it is live again.
+    let dropped = false;
+    for (const f of out) {
+      if (rejected.delete(f.path)) dropped = true;
+      if (skipped.has(f.path)) f.skipped = true;
+    }
+    // The rest stay listed from their backup, so the page can show them and Restore them.
+    for (const path of rejected.keys()) if (included(path, current)) out.push({ path, kind: kindOf(path, current)!, untracked: false, staged: false, rejected: true });
+    if (seen.size !== before || dropped) saveState();
+    return out.sort((a, b) => (a.path < b.path ? -1 : 1));
   }
   // Every path a request names must resolve inside the root and be in the current set.
   function find(p: unknown): FileEntry | null {
@@ -154,7 +170,7 @@ export function createApp(o: AppOptions): App {
       const e = edits();
       const all = list().map((f) => ({
         ...f,
-        state: working.has(f.path) ? 'working' : f.staged ? 'accepted' : 'queue',
+        state: working.has(f.path) ? 'working' : f.rejected ? 'rejected' : f.staged ? 'accepted' : f.skipped ? 'skipped' : 'queue',
         updated: updated.has(f.path),
         edited: !!e[f.path],
         drafts: d[f.path]?.length ?? 0,
@@ -174,6 +190,10 @@ export function createApp(o: AppOptions): App {
       const f = find(q.get('path'));
       if (!f) return [404, { error: 'not in the review set' }];
       const rel = f.path;
+      // A rejected file shows what was rejected, read-only, against what is on disk now.
+      const gone = rejected.get(rel);
+      if (gone) return [200, { path: rel, kind: f.kind, text: gone.text, base: existsSync(join(top, rel)) ? read(rel) : null, since: null, hash: sha(gone.text),
+        locked: true, rejected: true, drafts: [], edited: false, revertable: false, edits: [] }];
       const text = read(rel);
       const edit = edits()[rel];
       // revertable: the file is still exactly what the user's last Save wrote.
@@ -184,6 +204,7 @@ export function createApp(o: AppOptions): App {
     'POST /api/drafts': (_, { path, drafts: list }) => {
       const rel = listed(path);
       if (!rel || !Array.isArray(list)) return [400, { error: 'path and drafts[] required' }];
+      if (rejected.has(rel)) return REJECTED;
       const d = drafts();
       if (list.length) d[rel] = list;
       else delete d[rel];
@@ -195,17 +216,68 @@ export function createApp(o: AppOptions): App {
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       if (working.has(rel)) return [409, { error: BUSY }];
+      if (rejected.has(rel)) return REJECTED;
       const now = hashOf(rel);
       if (now !== hash) return [409, { error: 'The file changed; read it again before accepting', hash: now }];
       source.accept(rel);
-      if (updated.delete(rel)) saveState();
+      updated.delete(rel);
+      skipped.delete(rel);
+      saveState();
       dropEdit(rel);
+      return [200, { ok: true }];
+    },
+    // Skip: come back to it later. Only the editor's mark; git is untouched.
+    'POST /api/skip': (_, { path, on }) => {
+      const rel = listed(path);
+      if (!rel || typeof on !== 'boolean') return [400, { error: 'path and on required' }];
+      if (working.has(rel)) return [409, { error: BUSY }];
+      if (rejected.has(rel)) return REJECTED;
+      if (on) skipped.add(rel);
+      else skipped.delete(rel);
+      saveState();
+      return [200, { ok: true }];
+    },
+    // Reject: take the change out of the change set (see Source.reject). The working text, the index
+    // copy and the file's drafts are saved first, so Restore can put them back. Refused on a version
+    // the user did not see. Its edits are dropped.
+    'POST /api/reject': (_, { path, hash }) => {
+      const rel = listed(path);
+      if (!rel) return [404, { error: 'not in the review set' }];
+      if (working.has(rel)) return [409, { error: BUSY }];
+      if (rejected.has(rel)) return [409, { error: 'Already rejected' }];
+      const text = read(rel);
+      if (sha(text) !== hash) return [409, { error: 'The file changed; read it again before rejecting', hash: sha(text) }];
+      const d = drafts();
+      rejected.set(rel, { text, staged: source.indexed(rel), drafts: d[rel] ?? [], at: new Date().toISOString() });
+      updated.delete(rel);
+      skipped.delete(rel);
+      saveState(); // the backup is on disk before the file changes
+      source.reject(rel);
+      if (d[rel]) { delete d[rel]; saveDrafts(d); }
+      dropEdit(rel);
+      return [200, { ok: true }];
+    },
+    // Restore a rejected file: the index copy (staged), then the working text, then its drafts.
+    'POST /api/restore': (_, { path }) => {
+      const rel = listed(path);
+      const gone = rel && rejected.get(rel);
+      if (!rel || !gone) return [404, { error: 'not rejected' }];
+      mkdirSync(dirname(join(top, rel)), { recursive: true });
+      if (gone.staged !== null) {
+        write(rel, gone.staged);
+        source.accept(rel);
+      }
+      write(rel, gone.text);
+      if (gone.drafts.length) saveDrafts({ ...drafts(), [rel]: gone.drafts });
+      rejected.delete(rel);
+      saveState();
       return [200, { ok: true }];
     },
     'POST /api/unaccept': (_, { path }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       if (working.has(rel)) return [409, { error: BUSY }];
+      if (rejected.has(rel)) return REJECTED;
       source.unaccept(rel);
       return [200, { ok: true }];
     },
@@ -214,6 +286,7 @@ export function createApp(o: AppOptions): App {
       if (!f || typeof raw !== 'string') return [400, { error: 'path and raw required' }];
       const rel = f.path;
       if (working.has(rel)) return [409, { error: BUSY }];
+      if (rejected.has(rel)) return REJECTED;
       const text = read(rel);
       if (sha(text) !== hash) return [409, { error: 'The file changed since you started editing', hash: sha(text) }];
       let next = raw; // HTML and text are edited as one whole file; markdown one block at a time
@@ -247,6 +320,7 @@ export function createApp(o: AppOptions): App {
     // is given. Never accepts.
     'POST /api/revert': (_, { path, edit: id, hash }) => {
       const rel = listed(path);
+      if (rel && rejected.has(rel)) return REJECTED;
       const e = edits();
       const edit = rel && e[rel];
       if (!rel || !edit) return [404, { error: 'no edits to revert' }];
@@ -272,7 +346,7 @@ export function createApp(o: AppOptions): App {
       } else dropEdit(rel);
       return [200, { hash: sha(next) }];
     },
-    // Sends drafts, skipping files the agent is working on. Optional filters: `paths` (only these
+    // Sends drafts, skipping files the agent is working on and rejected ones. Optional filters: `paths` (only these
     // files, each checked like any other path) and `kind` ('change' or 'explain'). What is not
     // sent stays a draft.
     'POST /api/send': (_, { paths, kind }) => {
@@ -284,7 +358,7 @@ export function createApp(o: AppOptions): App {
       const keep: Record<string, Draft[]> = {};
       for (const [path, list] of Object.entries(d)) {
         const rel = listed(path);
-        const take = rel && !working.has(rel) && (!only || only.has(rel)) ? list.filter((c) => !kind || c.kind === kind) : [];
+        const take = rel && !working.has(rel) && !rejected.has(rel) && (!only || only.has(rel)) ? list.filter((c) => !kind || c.kind === kind) : [];
         items.push(...take.map((c) => ({ path: rel, kind: c.kind, note: c.note, anchor: c.anchor })));
         const rest = list.filter((c) => !take.includes(c));
         if (rest.length) keep[path] = rest;

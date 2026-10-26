@@ -3,18 +3,19 @@
 import type { BlockEdit, CommentKind, Draft, DraftsResponse, FileResponse, FilesResponse, SendBody, Settings, SourceInfo } from '@trove/core/types';
 import { toast } from 'sonner';
 import { api, ApiError, optional } from '@/lib/api';
+import { inFolders, stepFrom } from '@/lib/status';
 import { save } from '@/lib/storage';
 import { kindOf } from '@/lib/text';
 import { get, set, type State } from './store';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The tree, the count and the stepper follow this list: committed files and, with Pending only, accepted ones are left out. */
-export const visible = (s: State = get()) => s.files.filter((f) => !f.committed && !(s.pendingOnly && f.state === 'accepted'));
+/** The tree's folders and the count follow this list: committed and rejected files have their own sections; Pending only leaves out accepted and skipped ones. */
+export const visible = (s: State = get()) => s.files.filter((f) => inFolders(f, s.pendingOnly));
 export const entry = (s: State = get()) => s.files.find((f) => f.path === s.current?.path);
 /** What Send all posts: every file's drafts except files the agent is working on. */
 export function sendable(s: State = get()): [comments: number, files: number] {
-  const live = s.files.filter((f) => f.drafts && f.state !== 'working');
+  const live = s.files.filter((f) => f.drafts && f.state !== 'working' && f.state !== 'rejected');
   return [live.reduce((n, f) => n + f.drafts, 0), live.length];
 }
 /** An open editor, composer or note edit is never replaced under the user. */
@@ -76,6 +77,7 @@ export function show(file: FileResponse) {
     // A composer belongs to the file it was opened on.
     composer: same ? s.composer : null,
     noteEdit: same ? s.noteEdit : null,
+    rejecting: same && s.rejecting,
   });
 }
 
@@ -87,12 +89,10 @@ export async function reveal(path: string) {
   requestAnimationFrame(() => document.querySelector('[data-tree-row][aria-current]')?.scrollIntoView({ block: 'nearest' }));
 }
 
-/** Next or previous in the visible list, by position in the full list, so it works when the open file just left the view. */
+/** Next or previous in the visible list, skipped files passed over; works when the open file just left the view. */
 export function step(dir: 1 | -1) {
   const s = get();
-  const at = s.files.findIndex((f) => f.path === s.current?.path);
-  const list = visible(s).filter((f) => (dir > 0 ? s.files.indexOf(f) > at : s.files.indexOf(f) < at));
-  const next = dir > 0 ? list[0] : list.at(-1);
+  const next = stepFrom(s.files, s.current?.path, dir, s.pendingOnly);
   if (next) void open(next.path);
 }
 
@@ -117,6 +117,39 @@ export async function accept(andNext: boolean) {
   }
   if (next) await open(next.path);
   else await refresh();
+}
+
+/** Skip: come back to it later, moving on to the next pending file. Unskip stays. No git effect. */
+export async function skip(on: boolean) {
+  const { current } = get();
+  if (!current) return;
+  const next = on && nextPending();
+  await api('skip', { path: current.path, on }).catch((e) => toast(errText(e)));
+  if (next) await open(next.path);
+  else await refresh();
+}
+
+/** Reject the version on screen: out of the change set, backed up for Restore. Moves on to the next pending file. */
+export async function reject() {
+  const { current } = get();
+  if (!current) return;
+  const next = nextPending();
+  try {
+    await api('reject', { path: current.path, hash: current.hash });
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) await open(current.path);
+    toast(errText(e));
+    return;
+  }
+  toast('Rejected');
+  await open(next ? next.path : current.path);
+}
+
+export async function restore() {
+  const { current } = get();
+  if (!current) return;
+  await api('restore', { path: current.path }).catch((e) => toast(errText(e)));
+  await open(current.path);
 }
 
 export async function post(route: 'unaccept' | 'release') {
@@ -252,7 +285,7 @@ export async function init() {
   const remembered = localStorageHas('show-new');
   if (settings && !remembered) set({ showNew: settings.showNew });
   await refresh();
-  const first = get().files.find((f) => f.state !== 'accepted' && !f.committed);
+  const first = get().files.find((f) => f.state === 'queue' || f.state === 'working');
   if (first) await open(first.path);
   setInterval(refresh, 2000);
 }

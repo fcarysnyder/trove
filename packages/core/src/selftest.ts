@@ -50,12 +50,14 @@ async function pure() {
   // Status counts: one state per file, by priority.
   assert.deepEqual(countStates([
     { state: 'working', drafts: 2, updated: true, edited: true },
+    { state: 'rejected', updated: false, edited: false, drafts: 0 },
+    { state: 'skipped', updated: true, edited: false, drafts: 1 },
     { state: 'accepted', updated: true, edited: true, drafts: 0 },
     { state: 'queue', updated: true, edited: true, drafts: 1 },
     { state: 'queue', updated: false, edited: true, drafts: 1 },
     { state: 'queue', updated: false, edited: false, drafts: 1 },
     { state: 'queue', updated: false, edited: false, drafts: 0 },
-  ]), { working: 1, accepted: 1, updated: 1, edited: 1, drafts: 1, pending: 1 });
+  ]), { working: 1, rejected: 1, skipped: 1, accepted: 1, updated: 1, edited: 1, drafts: 1, pending: 1 });
 
   // Anchoring: survives an edit before it, prefers its own section, breaks ties on context, and
   // reports a vanished quote as unanchored rather than guessing.
@@ -372,6 +374,45 @@ async function gitCase(temps: string[]) {
   await relaunched.app.close();
   assert.deepEqual((await post('/api/release', { path: 'b.md' })).body, { released: true, updated: false });
 
+  // Skip: the editor's mark only. Reject: a tracked file back to HEAD, a new one deleted, each saved
+  // first so Restore puts the text, the index and the drafts back; a stale hash is refused.
+  const indexed = (p: string) => sh('diff', '--cached', '--name-only', '--', p).trim();
+  assert.equal((await post('/api/skip', { path: 'b.md', on: true })).status, 200);
+  assert.deepEqual([(await states())['b.md'], indexed('b.md')], ['skipped', ''], 'skipping touches no git state');
+  await post('/api/skip', { path: 'b.md', on: false });
+  assert.equal((await states())['b.md'], 'queue');
+  writeFileSync(join(root, 'a.md'), doc.replace('Para one.', 'Para, to reject.'));
+  const aText = readFileSync(join(root, 'a.md'), 'utf8');
+  await post('/api/skip', { path: 'a.md', on: true });
+  assert.equal((await post('/api/reject', { path: 'a.md', hash: 'stale' })).status, 409);
+  assert.equal((await post('/api/reject', { path: 'a.md', hash: sha(aText) })).status, 200);
+  assert.equal(readFileSync(join(root, 'a.md'), 'utf8'), sh('show', 'HEAD:a.md'), 'a tracked file goes back to HEAD');
+  assert.deepEqual([(await states())['a.md'], indexed('a.md')], ['rejected', '']);
+  const shownGone = (await get('/api/file?path=a.md')).body;
+  assert.deepEqual([shownGone.text, shownGone.locked, shownGone.rejected, shownGone.base], [aText, true, true, sh('show', 'HEAD:a.md')], 'a rejected file shows what was rejected, read-only, against the file now');
+  assert.deepEqual((await post('/api/accept', { path: 'a.md', hash: sha(aText) })).body, { error: 'Rejected: restore it first' }, 'no accepting a rejected file');
+  assert.equal((await post('/api/save', { path: 'a.md', hash: sha(aText), index: 2, raw: 'X' })).status, 409, 'no editing a rejected file');
+  assert.equal((await post('/api/reject', { path: 'a.md', hash: sha(aText) })).status, 409, 'already rejected');
+  assert.equal((await post('/api/restore', { path: 'a.md' })).status, 200);
+  assert.deepEqual([readFileSync(join(root, 'a.md'), 'utf8'), (await states())['a.md']], [aText, 'queue'], 'restore puts it back, no longer skipped');
+  await post('/api/drafts', { path: 'b.md', drafts: [{ kind: 'change', note: 'keep me', anchor }] });
+  const bText = readFileSync(join(root, 'b.md'), 'utf8');
+  assert.equal((await post('/api/reject', { path: 'b.md', hash: sha(bText) })).status, 200);
+  assert.equal(existsSync(join(root, 'b.md')), false, 'a new file is deleted');
+  assert.equal((await get('/api/drafts')).body.drafts['b.md'], undefined, 'its drafts go with it');
+  assert.equal((await post('/api/send', { paths: ['b.md'] })).status, 400, 'nothing of a rejected file is sent');
+  const afterRestart = await restart();
+  assert.equal((await get('/api/files', afterRestart.port)).body.files.find((f: any) => f.path === 'b.md')?.state, 'rejected', 'the backup survives a restart');
+  await afterRestart.app.close();
+  assert.equal((await post('/api/restore', { path: 'b.md' })).status, 200);
+  assert.equal(readFileSync(join(root, 'b.md'), 'utf8'), bText);
+  assert.equal((await get('/api/drafts')).body.drafts['b.md'][0].note, 'keep me', 'and its drafts come back');
+  // Regenerated: a rejected path git reports again with new content is live again, its backup gone.
+  assert.equal((await post('/api/reject', { path: 'b.md', hash: sha(bText) })).status, 200);
+  writeFileSync(join(root, 'b.md'), '# B, regenerated\n');
+  assert.equal((await states())['b.md'], 'queue');
+  assert.equal((await post('/api/restore', { path: 'b.md' })).status, 404);
+
   await app.close();
   rmSync(join(tmpdir(), 'trove-outside.txt'), { force: true });
 }
@@ -454,5 +495,11 @@ async function folderCase(temps: string[]) {
   await post('/api/accept', { path: 't.txt', hash: sha('whole\n') });
   assert.equal((await post('/api/unaccept', { path: 't.txt' })).status, 200);
   assert.equal((await rows())['t.txt'], 'queue');
+  // Reject deletes the file and unmarks it, keeping a backup; Restore writes it back.
+  await post('/api/accept', { path: 't.txt', hash: sha('whole\n') });
+  assert.equal((await post('/api/reject', { path: 't.txt', hash: sha('whole\n') })).status, 200);
+  assert.deepEqual([existsSync(join(root, 't.txt')), (await rows())['t.txt'], (await get('/api/file?path=t.txt')).body.text], [false, 'rejected', 'whole\n']);
+  assert.equal((await post('/api/restore', { path: 't.txt' })).status, 200);
+  assert.deepEqual([readFileSync(join(root, 't.txt'), 'utf8'), (await rows())['t.txt']], ['whole\n', 'queue'], 'back, and no longer reviewed');
   await app.close();
 }
