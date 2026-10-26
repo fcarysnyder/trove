@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { addedSpans, blocks, countStates, findAnchor, makeAnchor, matchBlocks, splice, subtractSpans, wordDiff } from './anchor.js';
 import { call, createApp, type AppOptions } from './app.js';
+import { agentAbove, alive } from './presence.js';
 import { probeGit, sha } from './source.js';
 
 const listen = async (o: AppOptions) => {
@@ -525,6 +526,9 @@ async function switchCase(temps: string[]) {
   writeFileSync(join(root, 'b.md'), '# B, uncommitted\n');
   writeFileSync(join(root, 'a.md'), '# A, uncommitted\n');
   assert.equal((await get('/api/git')).dirty, 2);
+  assert.deepEqual((await get('/api/git')).worktrees.map((w: any) => [w.path, w.changes]).filter(([p]: string[]) => p !== nested),
+    [[main, 2], [wtPath, 0]], 'each worktree counts its own changes');
+  assert.equal(probeGit(wtDir)!.worktrees.find((w) => w.main)!.changes, 2, 'a probe from another worktree sees them too');
   const refused = await sw('free');
   assert.equal(refused.status, 409);
   assert.match(refused.body.error, /overwritten/, "git's own message");
@@ -557,6 +561,8 @@ async function agentCase(temps: string[]) {
   const { root } = newRepo('trove-agent-');
   temps.push(root);
   writeFileSync(join(root, 'a.md'), '# A\n\nText.\n');
+  // Presence: a dead pid is gone, a live one is here, and only claude and codex are looked for.
+  assert.deepEqual([alive(process.pid), alive(2 ** 22 + 7), agentAbove(process.pid, 'other')], [true, false, null]);
   const opts = { root, agent: null };
   let { app, port } = await listen(opts);
   const source = async () => (await call(port, 'GET', '/api/source')).body;
@@ -576,7 +582,8 @@ async function agentCase(temps: string[]) {
   const claude = (await call(port, 'POST', '/api/agent', { id: 'claude' })).body;
   await app.close();
   ({ app, port } = await listen(opts));
-  assert.deepEqual([(await source()).agentInfo, (await source()).agent], [claude, 'claude'], 'attach survives a restart');
+  assert.deepEqual([(await source()).agentInfo, (await source()).agent], [{ ...claude, connected: false }, 'claude'],
+    'who attached survives a restart; with no process to follow, connected does not');
   assert.deepEqual((await call(port, 'POST', '/api/agent', { id: null })).body, none, 'detach');
   assert.equal((await call(port, 'POST', '/api/accept', { path: 'a.md', hash })).body.error, 'The agent is working on this file');
   await app.close();

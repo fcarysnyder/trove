@@ -192,8 +192,8 @@ export type SettingsResponse = Settings; // GET /api/settings; POST /api/setting
 
 /** A local branch. `worktree`: the absolute path of another worktree it is checked out in, else null. */
 export interface BranchInfo { name: string; current: boolean; worktree: string | null; upstream?: string; lastCommit: string }
-/** One worktree of the repository, main checkout first. `name`: the folder's basename. */
-export interface WorktreeInfo { path: string; name: string; branch: string | null; head: string; current: boolean; main: boolean }
+/** One worktree of the repository, main checkout first. `name`: the folder's basename. `changes`: its uncommitted doc paths, by its own settings (GitInfo and GitProbe only). */
+export interface WorktreeInfo { path: string; name: string; branch: string | null; head: string; current: boolean; main: boolean; changes?: number }
 /** GET /api/git: where the source stands, for the repository and branch switcher. */
 export interface GitInfo {
   root: string;
@@ -259,6 +259,14 @@ export interface TroveBridge {
   forget(path: string): Promise<void>;
   /** Which agent CLIs are on the user's login-shell PATH. */
   tools(): Promise<Record<AgentTool, boolean>>;
+  /** Back to the start page: it opens (fresh) and the calling repository window closes. */
+  home(): Promise<void>;
+  /** Your GitHub repositories, most recently pushed first, from the gh CLI; empty without it. */
+  githubRepos(): Promise<{ name: string; url: string; description: string }[]>;
+  /** Clone `url` (a URL, or owner/repo) into `<parent>/<its name>` with gh when installed, else git; then that folder, probed. Rejects with the tool's message. */
+  clone(url: string, parent: string): Promise<{ path: string; git: GitProbe | null }>;
+  /** Where a clone goes when the user has not picked: ~/code when it exists, else home. */
+  cloneDir(): Promise<string>;
 }
 
 declare global {

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type MenuItemConstructorOptions } from 'electron';
 import { execFile } from 'node:child_process';
-import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
@@ -11,6 +12,8 @@ const startHtml = join(uiDir, 'start.html');
 const preload = join(import.meta.dirname, '../preload/index.cjs');
 const recentsFile = () => join(app.getPath('userData'), 'recents.json');
 const MAX_RECENTS = 20;
+// On the Mac the page draws its own title strip (TitleStrip in the UI) with the traffic lights in it.
+const frame = process.platform === 'darwin' ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 14, y: 10 } } : {};
 
 interface SourceWindow { win: BrowserWindow; core: App; path: string; root: string; port: number }
 const sources = new Set<SourceWindow>();
@@ -113,6 +116,7 @@ async function openNow(req: OpenRequest): Promise<void> {
     width: 1440,
     height: 900,
     title: info.worktree.main ? `${info.repo.name} · Trove` : `${info.worktree.name} · ${info.repo.name} · Trove`,
+    ...frame,
     // The bridge here too: the editor's repository and branch menus open other worktrees and recents with it.
     webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
@@ -165,6 +169,48 @@ async function launchAgent(tool: AgentTool, root: string, port: number): Promise
   });
 }
 
+// ---- cloning ---------------------------------------------------------------------------------
+
+// The login shell's PATH: an app started from the Dock has a bare one, and gh usually lives in Homebrew.
+// The marker skips whatever an interactive shell prints first.
+let pathOnce: Promise<string> | null = null;
+const loginPath = () => (pathOnce ??= run(process.env.SHELL || '/bin/zsh', ['-ilc', 'printf "@@PATH@@%s" "$PATH"'], { timeout: 5000 })
+  .then((r) => r.stdout.split('@@PATH@@').at(-1)!.trim() || process.env.PATH || '', () => process.env.PATH || ''));
+const toolEnv = async () => ({ ...process.env, PATH: await loginPath(), GIT_TERMINAL_PROMPT: '0' });
+const hasGh = (env: NodeJS.ProcessEnv) => run('which', ['gh'], { env }).then(() => true, () => false);
+
+async function githubRepos() {
+  try {
+    const { stdout } = await run('gh', ['repo', 'list', '--limit', '50', '--json', 'nameWithOwner,url,description,pushedAt'], { env: await toolEnv(), timeout: 15000 });
+    const list = JSON.parse(stdout) as { nameWithOwner: string; url: string; description: string | null; pushedAt: string }[];
+    return list.sort((a, b) => b.pushedAt.localeCompare(a.pushedAt)).map((r) => ({ name: r.nameWithOwner, url: r.url, description: r.description ?? '' }));
+  } catch {
+    return []; // no gh, or not signed in
+  }
+}
+
+const SHORT = /^[\w.-]+\/[\w.-]+$/; // owner/repo
+const REPO_URL = /^(?:https:\/\/|ssh:\/\/|git@)\S+$/;
+
+/** gh for GitHub (it brings the user's sign-in), git for anything else. Never a shell: the URL is one argument. */
+async function clone(url: string, parent: string) {
+  if (!SHORT.test(url) && !REPO_URL.test(url)) throw new Error('Not a repository URL');
+  if (!isDir(parent)) throw new Error(`No folder at ${parent}`);
+  const name = url.replace(/\/+$/, '').replace(/\.git$/, '').split(/[/:]/).at(-1);
+  if (!name || name === '.' || name === '..') throw new Error('Not a repository URL');
+  const dest = join(parent, name);
+  if (existsSync(dest)) throw new Error(`${dest} already exists`);
+  const env = await toolEnv();
+  const github = SHORT.test(url) || /github\.com[/:]/.test(url);
+  const args = github && await hasGh(env) ? ['gh', 'repo', 'clone', url, dest] : ['git', 'clone', '--', SHORT.test(url) ? `https://github.com/${url}.git` : url, dest];
+  await run(args[0], args.slice(1), { env }).catch((e: { stderr?: string; message: string }) => {
+    throw new Error((e.stderr || e.message).trim().split('\n').at(-1));
+  });
+  return probe(dest);
+}
+
+const cloneDir = () => (isDir(join(homedir(), 'code')) ? join(homedir(), 'code') : homedir());
+
 // ---- windows ---------------------------------------------------------------------------------
 
 /** Navigation stays on the window's own page; external links go to the system browser. */
@@ -195,8 +241,9 @@ function openStart(staged?: string): void {
   }
   const win = new BrowserWindow({
     width: 720,
-    height: 560,
+    height: 640,
     title: 'Trove',
+    ...frame,
     webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   startWin = win;
@@ -274,6 +321,15 @@ ipcMain.handle('trove:forget', (_e, path: unknown) => {
   const p = str(path);
   writeRecents(readRecents().filter((r) => r.path !== p));
 });
+ipcMain.handle('trove:home', (e) => {
+  void startWin?.reload(); // recents and their changes as they are now
+  openStart();
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (win !== startWin) win?.close();
+});
+ipcMain.handle('trove:githubRepos', () => githubRepos());
+ipcMain.handle('trove:clone', (_e, url: unknown, parent: unknown) => clone(str(url).trim(), str(parent)));
+ipcMain.handle('trove:cloneDir', () => cloneDir());
 ipcMain.handle('trove:drop', (_e, path: unknown) => openOrStage(probe(str(path))));
 
 // ---- lifecycle -------------------------------------------------------------------------------

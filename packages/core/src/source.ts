@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { enabledTypes, included, kindOf } from './settings.js';
+import { enabledTypes, included, kindOf, loadSettings } from './settings.js';
 import type { BranchInfo, DocKind, FileEntry, GitProbe, RepoRef, Settings, WorktreeInfo, WorktreeRef } from './types.js';
 
 export const sha = (text: string) => createHash('sha1').update(text).digest('hex');
@@ -51,6 +51,37 @@ function gitAt(cwd: string) {
   return { git, tryGit, branch, defaultBase, head, place, branches };
 }
 
+const pathspec = (s: Settings) => {
+  const exts = enabledTypes(s).flatMap((t) => t.extensions.map((e) => `*${e}`));
+  // No enabled type: no pathspec at all, since excludes alone would match everything.
+  return exts.length ? [...exts, ...s.exclude.map((e) => `:(exclude,glob)${e}`)] : null;
+};
+
+/** Changed paths of the enabled doc types, staged or not. */
+function changesIn(git: ReturnType<typeof gitAt>['git'], s: Settings) {
+  const spec = pathspec(s);
+  if (!spec) return 0;
+  const parts = git('status', '--porcelain=v1', '-z', '-uall', '--', ...spec).split('\0');
+  let n = 0;
+  for (let k = 0; k < parts.length; k++) if (parts[k]) { n++; if (/^[RC]/.test(parts[k])) k++; } // a rename's old path follows as its own entry
+  return n;
+}
+
+/**
+ * Each worktree with its `changes`, counted with that worktree's own settings; 0 when git fails there
+ * (a worktree whose folder is gone). ponytail: one `git status` per worktree per call; cache by index
+ * mtime if a repository with many worktrees makes the 2s poll slow.
+ */
+export function withChanges(worktrees: WorktreeInfo[]): WorktreeInfo[] {
+  return worktrees.map((w) => {
+    const g = gitAt(w.path);
+    const dir = g.tryGit('rev-parse', '--absolute-git-dir')?.trim();
+    let changes = 0;
+    try { if (dir) changes = changesIn(g.git, loadSettings(join(dir, 'trove'))); } catch {}
+    return { ...w, changes };
+  });
+}
+
 const gitTop = (dir: string) => { try { return realpathSync(gitAt(dir).git('rev-parse', '--show-toplevel').trim()); } catch { return null; } };
 
 /** Is `path` inside a git working tree? Branches and the default base, or null when it is not. */
@@ -63,7 +94,8 @@ export function probeGit(path: string): GitProbe | null {
   // Local and remote branches, minus symbolic refs such as origin/HEAD.
   const branches = (g.tryGit('for-each-ref', '--format=%(refname:short)%00%(symref)', 'refs/heads', 'refs/remotes') ?? '')
     .split('\n').map((l) => l.split('\0')).filter(([name, sym]) => name && !sym).map(([name]) => name);
-  return { branch: g.branch(), branches, defaultBase: g.defaultBase(), local: g.branches(top), ...g.place(top) };
+  const place = g.place(top);
+  return { branch: g.branch(), branches, defaultBase: g.defaultBase(), local: g.branches(top), ...place, worktrees: withChanges(place.worktrees) };
 }
 
 /** The git working tree `root` is in. Throws if `root` does not exist or is not inside one. */
@@ -83,12 +115,6 @@ export function openSource(root: string) {
   const unstage = (rel: string) => { try { git('restore', '--staged', '--', rel); } catch {} }; // untracked: nothing staged
   const entry = (path: string, kind: DocKind, untracked: boolean, staged: boolean): FileEntry => ({ path, kind, untracked, staged });
 
-  const pathspec = (s: Settings) => {
-    const exts = enabledTypes(s).flatMap((t) => t.extensions.map((e) => `*${e}`));
-    // No enabled type: no pathspec at all, since excludes alone would match everything.
-    return exts.length ? [...exts, ...s.exclude.map((e) => `:(exclude,glob)${e}`)] : null;
-  };
-
   return {
     root: top, // realpath of the toplevel
     stateDir,
@@ -100,14 +126,7 @@ export function openSource(root: string) {
     /** The repository, this root as a worktree of it, and every worktree (main checkout first). */
     place: () => g.place(top),
     /** Changed paths of the enabled doc types, staged or not: what a switch carries along or trips on. */
-    dirty(s: Settings) {
-      const spec = pathspec(s);
-      if (!spec) return 0;
-      const parts = git('status', '--porcelain=v1', '-z', '-uall', '--', ...spec).split('\0');
-      let n = 0;
-      for (let k = 0; k < parts.length; k++) if (parts[k]) { n++; if (/^[RC]/.test(parts[k])) k++; } // a rename's old path follows as its own entry
-      return n;
-    },
+    dirty: (s: Settings) => changesIn(git, s),
     /** `git switch <branch>`; null when done, else git's own message. Never stashes, never discards. */
     switchTo(name: string): string | null {
       try { git('switch', '--no-guess', name); return null; } catch (e) { return String((e as { stderr?: string }).stderr || (e as Error).message).trim(); }
