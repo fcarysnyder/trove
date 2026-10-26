@@ -17,8 +17,8 @@ jobs:
           cache: pnpm
       - run: git config --global user.name ci && git config --global user.email ci@example.com
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build # core's types come from its dist, so build before typecheck
       - run: pnpm typecheck
-      - run: pnpm build
       - run: pnpm test
       - run: pnpm build:plugin
       - name: Committed plugin dist is up to date
