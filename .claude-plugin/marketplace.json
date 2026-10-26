@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "trove",
-      "description": "Review queue for a repo's uncommitted .md and .html files: read rendered, accept (git add), edit, or comment and send to Claude in one batch. Skill name: markdown-editor.",
+      "description": "A local review queue for a repo's uncommitted markdown and HTML: read each changed file rendered, accept it (git add), edit it in place, or comment and send the comments to Claude in one batch. Never commits. Skill: markdown-editor.",
       "category": "docs",
       "source": "./plugins/trove"
     }

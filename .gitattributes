@@ -1,0 +1,2 @@
+plugins/trove/dist/** linguist-generated=true
+plugins/trove/dist/trove.mjs -diff

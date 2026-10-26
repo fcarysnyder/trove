@@ -21,7 +21,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 // else node and the absolute path of the running file (the bundle, or bin/ in the workspace).
 const invoked = () => {
   const script = process.argv[1] ?? '';
-  return basename(script) === 'trove' ? 'trove' : `node ${realpathSync(script)}`;
+  if (basename(script) === 'trove') return 'trove';
+  const path = realpathSync(script);
+  return /[\s'"$`\\]/.test(path) ? `node '${path.replaceAll("'", String.raw`'\''`)}'` : `node ${path}`; // a path with spaces is quoted for the shell
 };
 
 // The built UI: a ui/ folder next to the running file (the plugin and npm layouts), else the

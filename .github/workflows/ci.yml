@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # version from package.json's packageManager
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: git config --global user.name ci && git config --global user.email ci@example.com
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: pnpm test
+      - run: pnpm build:plugin
+      - name: Committed plugin dist is up to date
+        run: |
+          # BUILD.json records the build's commit and time, so it always differs.
+          changes="$(git status --porcelain -- plugins/trove/dist ':!plugins/trove/dist/BUILD.json')"
+          if [ -n "$changes" ]; then
+            echo "$changes"
+            echo "::error::plugins/trove/dist is stale. Run pnpm build:plugin and commit the result."
+            exit 1
+          fi
+
+  plugin-selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: git config --global user.name ci && git config --global user.email ci@example.com
+      - run: node plugins/trove/dist/trove.mjs --selftest
