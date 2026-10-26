@@ -11,10 +11,11 @@ summary paragraph and sections are what readers see there.
 
 ## [0.5.0] - 2026-10-26
 
-Trove 0.5 is the first release you can download. The Mac app now comes as a
-disk image on GitHub Releases, with its own icon, and the CLI ships beside it
-as a single file. This release also adds Accept all, so a reviewed batch can
-be staged in one click.
+Trove 0.5 is the first release you can download. The Mac app comes as a disk
+image on GitHub Releases, with its own icon and a new look, and the CLI ships
+beside it as a single file. The start screen lets you open or clone a
+repository in one step, one menu switches repository, worktree and branch,
+and Trove now tells you when your agent has gone and starts a new one for you.
 
 ### Added
 
@@ -22,11 +23,23 @@ be staged in one click.
 - Download the CLI from the same release as one file, `trove-<version>.mjs`, that runs on Node 22 with nothing to install.
 - Accept every pending file in view at once with Accept all in the Files header. It stages them in a single `git add`.
 - Trove has an icon: a cube of glass blocks around an orange T. Small sizes use the T on its own so it stays legible, and browser tabs show the same mark.
+- Clone a GitHub repository from the start screen: paste a URL or pick one of your repositories, choose where it goes, and it opens ready to review. It uses the GitHub CLI when you have it, so private repositories work with your existing sign-in.
+- Go back to the start screen from any repository window with the home button.
+- When there is nothing to review, Trove lists the other worktrees and recent repositories that have uncommitted changes, with a count for each, so you can jump to one. The start screen's recents show the same counts.
+- Start Claude Code or Codex from the agent menu in a repository window. It opens in Terminal already attached; the commands to copy are still there underneath.
 
 ### Changed
 
 - The Mac app is signed ad hoc, so it opens on Apple silicon.
+- The start screen is one page instead of a three-step wizard. Opening a repository asks, in one dialog, what to review and which agent to start.
+- One repository menu replaces the separate repository, worktree and branch menus. It has a tab for each, each with its own search, and the Worktree tab appears only when the repository has more than one.
+- Trove has a new look, based on tweakcn's amber-minimal theme in Trove's orange, with larger buttons and a toolbar in the style of GitHub Desktop. On the Mac the window has no title text.
+- Every column says what is going on when it is empty, and the progress bar shows even when there are no files.
 - The README is rewritten for people evaluating Trove rather than for the agent.
+
+### Fixed
+
+- The agent status no longer says an agent is connected after it has quit. It follows the agent's process, so closing it shows "No agent connected" within a couple of seconds.
 
 ### Upgrading
 
