@@ -91,14 +91,17 @@ function Columns() {
     }
     save('widths', widths);
   };
+  // The drawers draw their own borders, so a collapsed drawer takes its line with it; the handle is an
+  // invisible strip over that border that lights up on hover and while dragging.
+  const handle = 'z-10 w-0 bg-transparent hover:after:bg-foreground/50 data-[separator=active]:after:bg-foreground/50';
   const reset = (name: 'files' | 'changes') => () => (name === 'files' ? files : changes).current?.resize(WIDTH[name]);
   return (
     <ResizablePanelGroup orientation="horizontal" onLayoutChanged={changed} className={cn('min-h-0', animate && 'animate')}>
-      <ResizablePanel {...side('files')}><div inert={hidden.files} className="h-full">{<FilesColumn />}</div></ResizablePanel>
-      <ResizableHandle aria-label="Resize files" disableDoubleClick onDoubleClick={reset('files')} className="hover:bg-foreground/50 data-[separator=active]:bg-foreground/50" />
+      <ResizablePanel {...side('files')}><div inert={hidden.files} className="h-full border-r">{<FilesColumn />}</div></ResizablePanel>
+      <ResizableHandle aria-label="Resize files" disableDoubleClick onDoubleClick={reset('files')} className={handle} />
       <ResizablePanel id="doc" minSize={360}><DocColumn /></ResizablePanel>
-      <ResizableHandle aria-label="Resize changes" disableDoubleClick onDoubleClick={reset('changes')} className="hover:bg-foreground/50 data-[separator=active]:bg-foreground/50" />
-      <ResizablePanel {...side('changes')}><div inert={hidden.changes} className="h-full">{<ChangesColumn />}</div></ResizablePanel>
+      <ResizableHandle aria-label="Resize changes" disableDoubleClick onDoubleClick={reset('changes')} className={handle} />
+      <ResizablePanel {...side('changes')}><div inert={hidden.changes} className="h-full border-l">{<ChangesColumn />}</div></ResizablePanel>
     </ResizablePanelGroup>
   );
 }
