@@ -1,0 +1,27 @@
+{
+  "name": "@trove/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Trove for the desktop: open a folder or a git branch, review in a window. Electron; core runs in the main process.",
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "package": "electron-vite build && electron-builder --mac --dir",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@trove/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@trove/ui": "workspace:*",
+    "@types/node": "^22.0.0",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

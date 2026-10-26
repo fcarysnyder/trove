@@ -1,0 +1,10 @@
+node_modules/
+dist/
+!plugins/trove/dist/
+out/
+release/
+.DS_Store
+*.log
+.vite/
+coverage/
+.env

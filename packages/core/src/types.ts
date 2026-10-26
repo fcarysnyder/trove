@@ -1,0 +1,191 @@
+// The contract every Trove package builds against: doc types, settings, review states, the HTTP
+// API's request and response shapes, and the desktop bridge. Pure types and constants, no imports,
+// so the browser UI and the Electron preload can both use it.
+
+/** How a file is rendered and edited. */
+export type DocKind = 'markdown' | 'html' | 'text';
+
+export interface DocType {
+  id: string;
+  label: string;
+  extensions: string[]; // lower-case, with the dot
+  kind: DocKind;
+  enabled: boolean; // the default; Settings.types overrides per source
+}
+
+/** The built-in document types. Settings.types turns each on or off. */
+export const DEFAULT_DOC_TYPES: readonly DocType[] = [
+  { id: 'md', label: 'Markdown', extensions: ['.md', '.markdown'], kind: 'markdown', enabled: true },
+  { id: 'html', label: 'HTML', extensions: ['.html', '.htm'], kind: 'html', enabled: true },
+  { id: 'mdx', label: 'MDX', extensions: ['.mdx'], kind: 'markdown', enabled: false },
+  { id: 'txt', label: 'Plain text', extensions: ['.txt'], kind: 'text', enabled: false },
+];
+
+export type Theme = 'system' | 'light' | 'dark';
+
+/**
+ * What a git source lists. `uncommitted`: files whose working copy differs from the index, plus
+ * untracked ones (today's behaviour). `branch`: those plus every file the branch changed since its
+ * merge-base with `base`; committed and unmodified ones show as accepted, and can still be read,
+ * commented on and edited.
+ */
+export type GitScope = 'uncommitted' | 'branch';
+
+export interface Settings {
+  /** doc type id -> enabled. Missing ids fall back to DEFAULT_DOC_TYPES[].enabled. */
+  types: Record<string, boolean>;
+  /** Glob pathspecs left out of the queue (git `:(exclude,glob)` syntax; folder sources match the same globs). */
+  exclude: string[];
+  theme: Theme;
+  scope: GitScope;
+  /** Branch mode's base ref. null = auto: origin/HEAD, then main, then master. */
+  base: string | null;
+  /** Show new on by default. */
+  showNew: boolean;
+}
+
+export const DEFAULT_SETTINGS: Settings = {
+  types: {},
+  exclude: [],
+  theme: 'system',
+  scope: 'uncommitted',
+  base: null,
+  showNew: true,
+};
+
+/** The server's review state of a file. The UI derives finer labels from the row (see anchor stateOf). */
+export type FileState = 'working' | 'accepted' | 'queue';
+
+export interface FileEntry {
+  path: string; // relative to the source root, forward slashes
+  kind: DocKind;
+  untracked: boolean; // git: `??`; folder: always false
+  staged: boolean; // git: index matches the working copy; folder: marked reviewed
+  committed?: boolean; // git: staged copy got committed while the review was open
+}
+
+export interface FileRow extends FileEntry {
+  state: FileState;
+  updated: boolean; // the agent changed it after a send; cleared by Accept
+  edited: boolean; // the user saved an edit in this review
+  drafts: number; // unsent comments
+}
+
+export interface Anchor {
+  quote: string;
+  prefix: string;
+  suffix: string;
+  path: string[]; // heading path above the passage
+  raw: string; // up to 400 chars of the block's source (HTML: outerHTML around the selection)
+}
+
+export type CommentKind = 'change' | 'explain';
+
+export interface Draft {
+  kind: CommentKind;
+  note: string;
+  anchor: Anchor;
+  at?: string; // ISO time
+}
+
+export interface BlockEdit {
+  id: string;
+  before: string;
+  after: string;
+  path: string[];
+  index: number | null; // null: the whole file (HTML)
+  at: number; // offset of the block when saved
+  time: string;
+  ok?: boolean; // the `after` text is still in the file (so it can be reverted)
+}
+
+export interface Question {
+  text: string;
+  kind: 'question' | 'reply';
+  at: string;
+}
+
+export interface SourceInfo {
+  kind: 'git' | 'folder';
+  root: string; // absolute path of the git toplevel or the folder
+  name: string; // last path segment, for titles
+  branch: string | null; // git: current branch (null when detached)
+  base: string | null; // git branch scope: the resolved base ref
+  scope: GitScope;
+  agent: 'claude' | 'other'; // who serves the page: Claude Code sets CLAUDECODE
+  port: number;
+  stateDir: string; // where drafts, edits, batches and state live
+  eventsLog: string;
+  batchesLog: string;
+  doneCommand: string; // what the agent runs after each file, e.g. `trove done <file> --port 4824`
+}
+
+// ---- HTTP API ------------------------------------------------------------------------------
+// Every path below is relative to the server's origin. GET routes take query params; POST routes
+// take a JSON body and require Origin to match the page's own origin. Errors are {error: string}
+// with 400, 404, 409 (hash or lock conflict; may carry `hash`), 413, 415 or 500.
+
+export interface FilesResponse { files: FileRow[]; question: Question | null } // GET /api/files
+export interface DraftsResponse { drafts: Record<string, Draft[]>; edits: Record<string, BlockEdit[]> } // GET /api/drafts
+export interface FileResponse { // GET /api/file?path=
+  path: string;
+  kind: DocKind;
+  text: string;
+  hash: string;
+  base: string | null; // what Show new marks against (staged copy, else HEAD; folder: null)
+  since: string | null; // the text before the agent's last update, if any
+  locked: boolean;
+  drafts: Draft[];
+  edited: boolean;
+  revertable: boolean; // the file is still exactly what the user's last Save wrote
+  edits: BlockEdit[];
+}
+export interface SaveDraftsBody { path: string; drafts: Draft[] } // POST /api/drafts -> {ok}
+export interface AcceptBody { path: string; hash: string } // POST /api/accept -> {ok}
+export interface UnacceptBody { path: string } // POST /api/unaccept -> {ok}
+export interface SaveBody { path: string; hash: string; index?: number; raw: string } // POST /api/save -> {hash}
+export interface RevertBody { path: string; edit?: string; hash?: string } // POST /api/revert -> {hash}
+export interface SendBody { paths?: string[]; kind?: CommentKind } // POST /api/send
+export interface SendResponse { id: string; comments: number; files: number; locked: string[] }
+export interface AskBody { text: string; kind?: 'question' | 'reply' } // POST /api/ask -> {question}
+export interface ReleaseBody { path: string } // POST /api/release -> {released, updated}
+export type SourceResponse = SourceInfo; // GET /api/source
+export type SettingsResponse = Settings; // GET /api/settings; POST /api/settings takes Partial<Settings>, returns Settings
+
+export interface BatchItem { path: string; kind: CommentKind; note: string; anchor: Anchor }
+export interface Batch { id: string; sentAt: string; items: BatchItem[] } // one line of batches.jsonl
+
+// ---- Desktop bridge --------------------------------------------------------------------------
+// Exposed by the Electron preload as `window.trove` on the zero-state page (start.html).
+
+export interface GitProbe {
+  branch: string | null;
+  branches: string[];
+  defaultBase: string | null; // what Settings.base = null would resolve to
+}
+
+export interface Recent {
+  path: string;
+  name: string;
+  kind: 'git' | 'folder';
+  openedAt: string;
+  scope?: GitScope;
+  base?: string | null;
+}
+
+export interface OpenRequest { path: string; scope?: GitScope; base?: string | null }
+
+export interface TroveBridge {
+  /** Native folder picker. null when cancelled. */
+  pickFolder(): Promise<{ path: string; git: GitProbe | null } | null>;
+  /** Inspect a path (a recent, or a drop) without opening it. null when it is not a folder. */
+  probe(path: string): Promise<{ path: string; git: GitProbe | null } | null>;
+  /** Start a server for the source and open it in a window; the zero-state window closes if it is the only one. */
+  open(req: OpenRequest): Promise<void>;
+  recents(): Promise<Recent[]>;
+  forget(path: string): Promise<void>;
+}
+
+declare global {
+  interface Window { trove?: TroveBridge }
+}

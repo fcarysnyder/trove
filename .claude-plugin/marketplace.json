@@ -1,0 +1,14 @@
+{
+  "name": "trove",
+  "version": "0.1.0",
+  "description": "Trove: a git-driven editor for AI-written markdown and HTML, as a Claude Code plugin.",
+  "owner": { "name": "F Cary Snyder" },
+  "plugins": [
+    {
+      "name": "trove",
+      "description": "Review queue for a repo's uncommitted .md and .html files: read rendered, accept (git add), edit, or comment and send to Claude in one batch. Skill name: markdown-editor.",
+      "category": "docs",
+      "source": "./plugins/trove"
+    }
+  ]
+}

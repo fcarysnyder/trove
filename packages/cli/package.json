@@ -1,0 +1,23 @@
+{
+  "name": "trove",
+  "version": "0.1.0",
+  "description": "Trove: a local, git-driven editor for AI-written markdown and HTML. `trove serve` opens a folder or repo; `trove done|ask|reply` are the agent's side.",
+  "type": "module",
+  "license": "MIT",
+  "bin": { "trove": "./bin/trove.mjs" },
+  "files": ["bin", "dist"],
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@trove/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
