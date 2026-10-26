@@ -1,6 +1,17 @@
-<img src="design/icon/macos/icon-dark.png" width="128" alt="Trove app icon: an orange T of blocks inside a glass cube">
-
-# Trove
+```
+ ____   ____   ____
+/___/| /___/| /___/|
+|   || |   || |   ||
+|___|/ |___|/ |___|/      __________  ____ _    ________
+        ____             /_  __/ __ \/ __ \ |  / / ____/
+       /___/|             / / / /_/ / / / / | / / __/
+       |   ||            / / / _, _/ /_/ /| |/ / /___
+       |___|/           /_/ /_/ |_|\____/ |___/_____/
+        ____
+       /___/|
+       |   ||
+       |___|/
+```
 
 Trove is a local editor for markdown and HTML that an AI agent wrote. It lists the changed
 documents in a git repository, shows each one rendered, and lets you accept it, edit it in
