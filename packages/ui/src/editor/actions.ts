@@ -1,8 +1,9 @@
 // The editor's behaviour, ported from the old page's script: polling, opening, stepping, accepting,
 // drafts, edits and sending. Components call these; they read and write the store.
-import type { BlockEdit, CommentKind, Draft, DraftsResponse, FileResponse, FilesResponse, GitInfo, SendBody, Settings, SourceInfo } from '@trove/core/types';
+import type { BlockEdit, CommentKind, Draft, DraftsResponse, FileResponse, FileRow, FilesResponse, GitInfo, SendBody, Settings, SourceInfo } from '@trove/core/types';
 import { toast } from 'sonner';
 import { api, ApiError, optional } from '@/lib/api';
+import { passes, normalizeOff, type FilterKey } from '@/lib/filter';
 import { inFolders, stepFrom } from '@/lib/status';
 import { save } from '@/lib/storage';
 import { kindOf } from '@/lib/text';
@@ -10,8 +11,10 @@ import { get, set, type State } from './store';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The tree's folders and the count follow this list: committed and rejected files have their own sections; Pending only leaves out accepted and skipped ones. */
-export const visible = (s: State = get()) => s.files.filter((f) => inFolders(f, s.pendingOnly));
+/** Whether the search and filters leave a file in the tree. */
+export const shown = (s: State = get()) => (f: FileRow) => passes(f, s.filterOff, s.query);
+/** The tree's folders, the n / N position and stepping follow this list: committed and rejected files have their own sections; the search and filters narrow it. */
+export const visible = (s: State = get()) => s.files.filter((f) => inFolders(f) && shown(s)(f));
 export const entry = (s: State = get()) => s.files.find((f) => f.path === s.current?.path);
 /** What Send all posts: every file's drafts except files the agent is working on. */
 export function sendable(s: State = get()): [comments: number, files: number] {
@@ -92,7 +95,7 @@ export async function reveal(path: string) {
 /** Next or previous in the visible list, skipped files passed over; works when the open file just left the view. */
 export function step(dir: 1 | -1) {
   const s = get();
-  const next = stepFrom(s.files, s.current?.path, dir, s.pendingOnly);
+  const next = stepFrom(s.files, s.current?.path, dir, shown(s));
   if (next) void open(next.path);
 }
 
@@ -246,6 +249,17 @@ export function togglePanel(name: 'files' | 'changes', hide?: boolean) {
   save(`hide-${name}`, get().hidden[name]);
 }
 
+export function setFilters(off: FilterKey[]) {
+  set({ filterOff: normalizeOff(off) });
+  save('filters-off', get().filterOff);
+}
+
+/** `/`: show the Files column if hidden and put the cursor in its search. */
+export function focusSearch() {
+  togglePanel('files', false);
+  requestAnimationFrame(() => document.getElementById('file-search')?.focus());
+}
+
 export function setShowNew(on: boolean) {
   set({ showNew: on });
   save('show-new', on);
@@ -325,7 +339,8 @@ export async function init() {
   const remembered = localStorageHas('show-new');
   if (settings && !remembered) set({ showNew: settings.showNew });
   await Promise.all([refresh(), loadGit()]);
-  const first = get().files.find((f) => f.state === 'queue' || f.state === 'working');
+  const waiting = (f: FileRow) => f.state === 'queue' || f.state === 'working';
+  const first = visible().find(waiting) ?? get().files.find(waiting); // the remembered filters may hide every waiting file
   if (first) await open(first.path);
   setInterval(() => { void refresh(); void loadGit(); }, 2000);
 }

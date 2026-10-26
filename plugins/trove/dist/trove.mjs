@@ -2,8 +2,8 @@
 // trove 0.1.0: bundled CLI and engine (@trove/core, marked). Node 22+, no dependencies.
 
 // bin/trove.mjs
-import { existsSync as existsSync3, realpathSync as realpathSync3 } from "node:fs";
-import { basename as basename2, dirname as dirname2, join as join5, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync4, realpathSync as realpathSync4 } from "node:fs";
+import { basename as basename2, dirname as dirname3, join as join5, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -24,10 +24,10 @@ var DEFAULT_SETTINGS = {
 };
 
 // ../core/src/app.ts
-import { appendFileSync, readFileSync as readFileSync3, realpathSync as realpathSync2, statSync as statSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, realpathSync as realpathSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { createServer, request } from "node:http";
 import { randomUUID } from "node:crypto";
-import { basename, extname, join as join3, relative, resolve, sep } from "node:path";
+import { basename, dirname as dirname2, extname, join as join3, relative, resolve, sep } from "node:path";
 
 // ../core/src/vendor/marked.esm.mjs
 function I() {
@@ -1407,8 +1407,11 @@ function findAnchor(items, anchor) {
   }
   return null;
 }
-var stateOf = (f) => f.state === "working" ? "working" : f.state === "accepted" ? "accepted" : f.updated ? "updated" : f.edited ? "edited" : f.drafts ? "drafts" : "pending";
-var countStates = (files) => files.reduce((c, f) => (c[stateOf(f)]++, c), { accepted: 0, updated: 0, edited: 0, drafts: 0, working: 0, pending: 0 });
+var stateOf = (f) => f.state !== "queue" ? f.state : f.updated ? "updated" : f.edited ? "edited" : f.drafts ? "drafts" : "pending";
+var countStates = (files) => files.reduce(
+  (c, f) => (c[stateOf(f)]++, c),
+  { accepted: 0, rejected: 0, skipped: 0, updated: 0, edited: 0, drafts: 0, working: 0, pending: 0 }
+);
 function matchBlocks(oldRaws, newRaws) {
   const key = (r) => r.trim();
   const changed = /* @__PURE__ */ new Map();
@@ -1563,8 +1566,7 @@ var included = (path, s) => kindOf(path, s) !== null && !excluded(path, s);
 // ../core/src/source.ts
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync as readFileSync2, realpathSync, renameSync, statSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join as join2 } from "node:path";
 var sha = (text) => createHash("sha1").update(text).digest("hex");
 function gitAt(cwd) {
@@ -1582,7 +1584,26 @@ function gitAt(cwd) {
     if (origin && origin !== "origin/HEAD") return origin;
     return ["main", "master"].find((b) => tryGit("rev-parse", "--verify", "--quiet", `refs/heads/${b}`)) ?? null;
   };
-  return { git, tryGit, branch, defaultBase };
+  const real = (p) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const head = () => tryGit("rev-parse", "--short", "HEAD")?.trim() ?? "";
+  const worktrees = (top) => (tryGit("worktree", "list", "--porcelain") ?? "").split("\n\n").flatMap((block) => {
+    const kv = new Map(block.split("\n").filter(Boolean).map((l3) => [l3.split(" ")[0], l3.slice(l3.indexOf(" ") + 1)]));
+    if (!kv.has("worktree") || kv.has("bare")) return [];
+    const path = real(kv.get("worktree"));
+    return [{ path, branch: kv.get("branch")?.replace(/^refs\/heads\//, "") ?? null, head: (kv.get("HEAD") ?? "").slice(0, 7), current: path === top }];
+  });
+  const branches = (top) => (tryGit("for-each-ref", "--format=%(refname:short)%00%(HEAD)%00%(worktreepath)%00%(upstream:short)%00%(committerdate:iso-strict)", "refs/heads") ?? "").split("\n").filter(Boolean).map((l3) => {
+    const [name, star, wt2, upstream, date] = l3.split("\0");
+    const path = wt2 ? real(wt2) : null;
+    return { name, current: star === "*", worktree: path && path !== top ? path : null, ...upstream ? { upstream } : {}, lastCommit: date };
+  });
+  return { git, tryGit, branch, defaultBase, head, worktrees, branches };
 }
 var gitTop = (dir) => {
   try {
@@ -1602,17 +1623,13 @@ function probeGit(path) {
   if (!top) return null;
   const g = gitAt(top);
   const branches = (g.tryGit("for-each-ref", "--format=%(refname:short)%00%(symref)", "refs/heads", "refs/remotes") ?? "").split("\n").map((l3) => l3.split("\0")).filter(([name, sym]) => name && !sym).map(([name]) => name);
-  return { branch: g.branch(), branches, defaultBase: g.defaultBase() };
+  return { branch: g.branch(), branches, defaultBase: g.defaultBase(), local: g.branches(top), worktrees: g.worktrees(top) };
 }
 function openSource(root) {
-  const isDir = statSync(root).isDirectory();
-  const top = gitTop(isDir ? root : dirname(root));
-  if (top) return gitSource(top);
-  if (!isDir) throw new Error(`${root} is neither a folder nor inside a git working tree`);
-  return folderSource(realpathSync(root));
-}
-function gitSource(top) {
-  const { git, tryGit, branch, defaultBase } = gitAt(top);
+  const top = gitTop(statSync(root).isDirectory() ? root : dirname(root));
+  if (!top) throw new Error(`not a git repository: ${root}`);
+  const g = gitAt(top);
+  const { git, tryGit, branch, defaultBase } = g;
   const gitDir = git("rev-parse", "--absolute-git-dir").trim();
   const stateDir = join2(gitDir, "trove");
   if (!existsSync(stateDir) && existsSync(join2(gitDir, "doc-review"))) renameSync(join2(gitDir, "doc-review"), stateDir);
@@ -1630,21 +1647,65 @@ function gitSource(top) {
     }
   };
   const entry = (path, kind, untracked, staged) => ({ path, kind, untracked, staged });
+  const pathspec = (s) => {
+    const exts = enabledTypes(s).flatMap((t) => t.extensions.map((e) => `*${e}`));
+    return exts.length ? [...exts, ...s.exclude.map((e) => `:(exclude,glob)${e}`)] : null;
+  };
   return {
-    kind: "git",
     root: top,
+    // realpath of the toplevel
     stateDir,
-    branch,
+    /** The branch scope's base ref: Settings.base, or auto. */
     resolveBase,
+    branch,
+    head: g.head,
+    branches: () => g.branches(top),
+    worktrees: () => g.worktrees(top),
+    /** Changed paths of the enabled doc types, staged or not: what a switch carries along or trips on. */
+    dirty(s) {
+      const spec = pathspec(s);
+      if (!spec) return 0;
+      const parts = git("status", "--porcelain=v1", "-z", "-uall", "--", ...spec).split("\0");
+      let n = 0;
+      for (let k2 = 0; k2 < parts.length; k2++) if (parts[k2]) {
+        n++;
+        if (/^[RC]/.test(parts[k2])) k2++;
+      }
+      return n;
+    },
+    /** `git switch <branch>`; null when done, else git's own message. Never stashes, never discards. */
+    switchTo(name) {
+      try {
+        git("switch", "--no-guess", name);
+        return null;
+      } catch (e) {
+        return String(e.stderr || e.message).trim();
+      }
+    },
     unstage,
     unaccept: unstage,
     accept: (rel) => {
       git("add", "--", rel);
     },
-    list(s, seen) {
-      const exts = enabledTypes(s).flatMap((t) => t.extensions.map((e) => `*${e}`));
-      if (!exts.length) return [];
-      const spec = [...exts, ...s.exclude.map((g) => `:(exclude,glob)${g}`)];
+    /** The index copy (`:path`), or null when untracked. */
+    indexed: (rel) => show(`:${rel}`),
+    /** Take the file out of the change set: back to HEAD in index and worktree, or, if HEAD lacks it, out of the index and off disk. */
+    reject(rel) {
+      if (show(`HEAD:${rel}`) !== null) return void git("restore", "--source=HEAD", "--staged", "--worktree", "--", rel);
+      try {
+        git("rm", "--cached", "-q", "--", rel);
+      } catch {
+      }
+      rmSync(join2(top, rel), { force: true });
+    },
+    /**
+     * The queue. What git lists is added to `seen`, and seen files stay listed (as committed) after
+     * git stops reporting them. Paths in `hide` (rejected ones) are listed only when git status
+     * reports them, never from `seen` or the branch diff.
+     */
+    list(s, seen, hide = /* @__PURE__ */ new Set()) {
+      const spec = pathspec(s);
+      if (!spec) return [];
       const parts = git("status", "--porcelain=v1", "-z", "-uall", "--", ...spec).split("\0");
       const out = [];
       for (let k2 = 0; k2 < parts.length; k2++) {
@@ -1657,7 +1718,7 @@ function gitSource(top) {
       }
       const have = new Set(out.map((f) => f.path));
       for (const path of seen) {
-        if (!have.has(path) && included(path, s) && existsSync(join2(top, path))) out.push({ ...entry(path, kindOf(path, s), false, true), committed: true });
+        if (!have.has(path) && !hide.has(path) && included(path, s) && existsSync(join2(top, path))) out.push({ ...entry(path, kindOf(path, s), false, true), committed: true });
       }
       for (const f of out) {
         seen.add(f.path);
@@ -1666,7 +1727,7 @@ function gitSource(top) {
       const mb = s.scope === "branch" ? mergeBase(s) : null;
       if (mb) {
         for (const path of git("diff", "--name-only", "-z", "--diff-filter=d", mb, "HEAD", "--", ...spec).split("\0")) {
-          const kind = path && !have.has(path) && existsSync(join2(top, path)) ? kindOf(path, s) : null;
+          const kind = path && !have.has(path) && !hide.has(path) && existsSync(join2(top, path)) ? kindOf(path, s) : null;
           if (kind) out.push(entry(path, kind, false, true));
         }
       }
@@ -1682,62 +1743,6 @@ function gitSource(top) {
       const mb = s.scope === "branch" && head === text ? mergeBase(s) : null;
       return mb ? show(`${mb}:${rel}`) : head;
     }
-  };
-}
-function folderSource(root) {
-  const stateDir = join2(homedir(), ".trove", "state", sha(root));
-  mkdirSync(stateDir, { recursive: true });
-  const file = join2(stateDir, "reviewed.json");
-  const reviewed = () => {
-    try {
-      return JSON.parse(readFileSync2(file, "utf8"));
-    } catch {
-      return {};
-    }
-  };
-  const hashOf = (rel) => {
-    try {
-      return sha(readFileSync2(join2(root, rel), "utf8"));
-    } catch {
-      return null;
-    }
-  };
-  const unstage = (rel) => {
-    const r = reviewed();
-    if (rel in r) {
-      delete r[rel];
-      writeFileSync2(file, JSON.stringify(r));
-    }
-  };
-  const walk = (dir, prefix, s, out) => {
-    let entries;
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const d of entries) {
-      const rel = prefix + d.name;
-      if (d.isDirectory()) {
-        if (!d.name.startsWith(".") && d.name !== "node_modules") walk(join2(dir, d.name), `${rel}/`, s, out);
-      } else if (d.isFile() && included(rel, s)) out.push(rel);
-    }
-    return out;
-  };
-  return {
-    kind: "folder",
-    root,
-    stateDir,
-    unstage,
-    unaccept: unstage,
-    accept: (rel) => writeFileSync2(file, JSON.stringify({ ...reviewed(), [rel]: hashOf(rel) })),
-    list(s) {
-      const r = reviewed();
-      return (walk(root, "", s, []) ?? []).map((path) => ({ path, kind: kindOf(path, s), untracked: false, staged: path in r && r[path] === hashOf(path) }));
-    },
-    baseOf: () => null,
-    branch: () => null,
-    resolveBase: () => null
   };
 }
 
@@ -1787,7 +1792,7 @@ function createApp(o) {
   let current = mergeSettings(stored, overrides);
   let saved = {};
   try {
-    saved = JSON.parse(readFileSync3(files.state, "utf8"));
+    saved = JSON.parse(readFileSync2(files.state, "utf8"));
   } catch {
   }
   const working = new Map(
@@ -1796,17 +1801,28 @@ function createApp(o) {
   let question = saved.question ?? null;
   const updated = new Map(Object.entries(saved.updated ?? {}));
   const seen = new Set(saved.seen ?? []);
-  const saveState = () => writeFileSync3(files.state, JSON.stringify({
+  const skipped = new Set(saved.skipped ?? []);
+  const rejected = new Map(Object.entries(saved.rejected ?? {}));
+  const saveState = () => writeFileSync2(files.state, JSON.stringify({
     working: Object.fromEntries([...working].map(([p, w]) => [p, { hash: w.hash, text: w.text }])),
     updated: Object.fromEntries(updated),
     question,
-    seen: [...seen]
+    seen: [...seen],
+    skipped: [...skipped],
+    rejected: Object.fromEntries(rejected)
   }));
+  const REJECTED = [409, { error: "Rejected: restore it first" }];
   function list() {
     const before = seen.size;
-    const out = source.list(current, seen).sort((a, b) => a.path < b.path ? -1 : 1);
-    if (seen.size !== before) saveState();
-    return out;
+    const out = source.list(current, seen, new Set(rejected.keys()));
+    let dropped = false;
+    for (const f of out) {
+      if (rejected.delete(f.path)) dropped = true;
+      if (skipped.has(f.path)) f.skipped = true;
+    }
+    for (const path of rejected.keys()) if (included(path, current)) out.push({ path, kind: kindOf(path, current), untracked: false, staged: false, rejected: true });
+    if (seen.size !== before || dropped) saveState();
+    return out.sort((a, b) => a.path < b.path ? -1 : 1);
   }
   function find(p) {
     if (typeof p !== "string") return null;
@@ -1819,8 +1835,8 @@ function createApp(o) {
     return list().find((f) => f.path === rel) ?? null;
   }
   const listed = (p) => find(p)?.path ?? null;
-  const read = (rel) => readFileSync3(join3(top, rel), "utf8");
-  const write = (rel, text) => writeFileSync3(join3(top, rel), text);
+  const read = (rel) => readFileSync2(join3(top, rel), "utf8");
+  const write = (rel, text) => writeFileSync2(join3(top, rel), text);
   const hashOf = (rel) => {
     try {
       return sha(read(rel));
@@ -1830,20 +1846,20 @@ function createApp(o) {
   };
   const drafts = () => {
     try {
-      return JSON.parse(readFileSync3(files.drafts, "utf8"));
+      return JSON.parse(readFileSync2(files.drafts, "utf8"));
     } catch {
       return {};
     }
   };
-  const saveDrafts = (d) => writeFileSync3(files.drafts, JSON.stringify(d, null, 1));
+  const saveDrafts = (d) => writeFileSync2(files.drafts, JSON.stringify(d, null, 1));
   const edits = () => {
     try {
-      return JSON.parse(readFileSync3(files.edits, "utf8"));
+      return JSON.parse(readFileSync2(files.edits, "utf8"));
     } catch {
       return {};
     }
   };
-  const saveEdits = (e) => writeFileSync3(files.edits, JSON.stringify(e));
+  const saveEdits = (e) => writeFileSync2(files.edits, JSON.stringify(e));
   const dropEdit = (rel) => {
     const e = edits();
     if (e[rel]) {
@@ -1873,11 +1889,11 @@ function createApp(o) {
     return a && typeof a === "object" ? a.port : 0;
   };
   const info = () => ({
-    kind: source.kind,
+    kind: "git",
     root: top,
     name: basename(top),
     branch: source.branch(),
-    base: source.kind === "git" && current.scope === "branch" ? source.resolveBase(current) : null,
+    base: current.scope === "branch" ? source.resolveBase(current) : null,
     scope: current.scope,
     agent,
     port: port(),
@@ -1886,13 +1902,22 @@ function createApp(o) {
     batchesLog: files.batches,
     doneCommand: (o.doneCommand ?? ((p) => `trove done <file> --port ${p}`))(port())
   });
+  const git = () => ({
+    root: top,
+    branch: source.branch(),
+    head: source.head(),
+    branches: source.branches(),
+    worktrees: source.worktrees(),
+    dirty: source.dirty(current),
+    base: current.scope === "branch" ? source.resolveBase(current) : null
+  });
   const routes = {
     "GET /api/files": () => {
       const d = drafts();
       const e = edits();
       const all = list().map((f) => ({
         ...f,
-        state: working.has(f.path) ? "working" : f.staged ? "accepted" : "queue",
+        state: working.has(f.path) ? "working" : f.rejected ? "rejected" : f.staged ? "accepted" : f.skipped ? "skipped" : "queue",
         updated: updated.has(f.path),
         edited: !!e[f.path],
         drafts: d[f.path]?.length ?? 0
@@ -1914,6 +1939,21 @@ function createApp(o) {
       const f = find(q2.get("path"));
       if (!f) return [404, { error: "not in the review set" }];
       const rel = f.path;
+      const gone = rejected.get(rel);
+      if (gone) return [200, {
+        path: rel,
+        kind: f.kind,
+        text: gone.text,
+        base: existsSync2(join3(top, rel)) ? read(rel) : null,
+        since: null,
+        hash: sha(gone.text),
+        locked: true,
+        rejected: true,
+        drafts: [],
+        edited: false,
+        revertable: false,
+        edits: []
+      }];
       const text = read(rel);
       const edit = edits()[rel];
       return [200, {
@@ -1933,6 +1973,7 @@ function createApp(o) {
     "POST /api/drafts": (_2, { path, drafts: list2 }) => {
       const rel = listed(path);
       if (!rel || !Array.isArray(list2)) return [400, { error: "path and drafts[] required" }];
+      if (rejected.has(rel)) return REJECTED;
       const d = drafts();
       if (list2.length) d[rel] = list2;
       else delete d[rel];
@@ -1944,17 +1985,71 @@ function createApp(o) {
       const rel = listed(path);
       if (!rel) return [404, { error: "not in the review set" }];
       if (working.has(rel)) return [409, { error: BUSY }];
+      if (rejected.has(rel)) return REJECTED;
       const now = hashOf(rel);
       if (now !== hash) return [409, { error: "The file changed; read it again before accepting", hash: now }];
       source.accept(rel);
-      if (updated.delete(rel)) saveState();
+      updated.delete(rel);
+      skipped.delete(rel);
+      saveState();
       dropEdit(rel);
+      return [200, { ok: true }];
+    },
+    // Skip: come back to it later. Only the editor's mark; git is untouched.
+    "POST /api/skip": (_2, { path, on }) => {
+      const rel = listed(path);
+      if (!rel || typeof on !== "boolean") return [400, { error: "path and on required" }];
+      if (working.has(rel)) return [409, { error: BUSY }];
+      if (rejected.has(rel)) return REJECTED;
+      if (on) skipped.add(rel);
+      else skipped.delete(rel);
+      saveState();
+      return [200, { ok: true }];
+    },
+    // Reject: take the change out of the change set (see the source's reject). The working text, the index
+    // copy and the file's drafts are saved first, so Restore can put them back. Refused on a version
+    // the user did not see. Its edits are dropped.
+    "POST /api/reject": (_2, { path, hash }) => {
+      const rel = listed(path);
+      if (!rel) return [404, { error: "not in the review set" }];
+      if (working.has(rel)) return [409, { error: BUSY }];
+      if (rejected.has(rel)) return [409, { error: "Already rejected" }];
+      const text = read(rel);
+      if (sha(text) !== hash) return [409, { error: "The file changed; read it again before rejecting", hash: sha(text) }];
+      const d = drafts();
+      rejected.set(rel, { text, staged: source.indexed(rel), drafts: d[rel] ?? [], at: (/* @__PURE__ */ new Date()).toISOString() });
+      updated.delete(rel);
+      skipped.delete(rel);
+      saveState();
+      source.reject(rel);
+      if (d[rel]) {
+        delete d[rel];
+        saveDrafts(d);
+      }
+      dropEdit(rel);
+      return [200, { ok: true }];
+    },
+    // Restore a rejected file: the index copy (staged), then the working text, then its drafts.
+    "POST /api/restore": (_2, { path }) => {
+      const rel = listed(path);
+      const gone = rel && rejected.get(rel);
+      if (!rel || !gone) return [404, { error: "not rejected" }];
+      mkdirSync2(dirname2(join3(top, rel)), { recursive: true });
+      if (gone.staged !== null) {
+        write(rel, gone.staged);
+        source.accept(rel);
+      }
+      write(rel, gone.text);
+      if (gone.drafts.length) saveDrafts({ ...drafts(), [rel]: gone.drafts });
+      rejected.delete(rel);
+      saveState();
       return [200, { ok: true }];
     },
     "POST /api/unaccept": (_2, { path }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: "not in the review set" }];
       if (working.has(rel)) return [409, { error: BUSY }];
+      if (rejected.has(rel)) return REJECTED;
       source.unaccept(rel);
       return [200, { ok: true }];
     },
@@ -1963,6 +2058,7 @@ function createApp(o) {
       if (!f || typeof raw2 !== "string") return [400, { error: "path and raw required" }];
       const rel = f.path;
       if (working.has(rel)) return [409, { error: BUSY }];
+      if (rejected.has(rel)) return REJECTED;
       const text = read(rel);
       if (sha(text) !== hash) return [409, { error: "The file changed since you started editing", hash: sha(text) }];
       let next = raw2;
@@ -2002,6 +2098,7 @@ function createApp(o) {
     // is given. Never accepts.
     "POST /api/revert": (_2, { path, edit: id, hash }) => {
       const rel = listed(path);
+      if (rel && rejected.has(rel)) return REJECTED;
       const e = edits();
       const edit = rel && e[rel];
       if (!rel || !edit) return [404, { error: "no edits to revert" }];
@@ -2027,7 +2124,7 @@ function createApp(o) {
       } else dropEdit(rel);
       return [200, { hash: sha(next) }];
     },
-    // Sends drafts, skipping files the agent is working on. Optional filters: `paths` (only these
+    // Sends drafts, skipping files the agent is working on and rejected ones. Optional filters: `paths` (only these
     // files, each checked like any other path) and `kind` ('change' or 'explain'). What is not
     // sent stays a draft.
     "POST /api/send": (_2, { paths, kind }) => {
@@ -2039,7 +2136,7 @@ function createApp(o) {
       const keep = {};
       for (const [path, list2] of Object.entries(d)) {
         const rel = listed(path);
-        const take = rel && !working.has(rel) && (!only || only.has(rel)) ? list2.filter((c) => !kind || c.kind === kind) : [];
+        const take = rel && !working.has(rel) && !rejected.has(rel) && (!only || only.has(rel)) ? list2.filter((c) => !kind || c.kind === kind) : [];
         items.push(...take.map((c) => ({ path: rel, kind: c.kind, note: c.note, anchor: c.anchor })));
         const rest = list2.filter((c) => !take.includes(c));
         if (rest.length) keep[path] = rest;
@@ -2079,6 +2176,22 @@ function createApp(o) {
       return [200, { released: release(rel), updated: updated.has(rel) }];
     },
     "GET /api/source": () => [200, info()],
+    "GET /api/git": () => [200, git()],
+    // The same as running `git switch <branch>` by hand, no more: no stash, no discard. Git itself
+    // refuses when uncommitted changes would be overwritten; its message is the answer.
+    "POST /api/switch": (_2, { branch }) => {
+      const target = typeof branch === "string" ? source.branches().find((b) => b.name === branch) : void 0;
+      if (!target) return [404, { error: `no such branch: ${branch}` }];
+      if (target.current) return [200, git()];
+      if (target.worktree) return [409, { error: `${branch} is checked out in ${target.worktree}`, worktree: target.worktree }];
+      if (working.size) return [409, { error: `${agent === "claude" ? "Claude" : "The agent"} is working on a file` }];
+      const failed = source.switchTo(branch);
+      if (failed) return [409, { error: failed }];
+      seen.clear();
+      list();
+      saveState();
+      return [200, git()];
+    },
     "GET /api/settings": () => [200, current],
     // A partial merge. Keys this run got from options (--scope, --exclude) give way to the user's
     // choice. Types, exclude, scope and base apply on the next list(), which every request runs.
@@ -2119,7 +2232,7 @@ function createApp(o) {
     if (!pathname.startsWith("/api/")) {
       if (req.method !== "GET") return reply(404);
       const file = asset(pathname);
-      if (file) return reply(200, readFileSync3(file), { "content-type": TYPES[extname(file).toLowerCase()] ?? "application/octet-stream", "content-security-policy": CSP });
+      if (file) return reply(200, readFileSync2(file), { "content-type": TYPES[extname(file).toLowerCase()] ?? "application/octet-stream", "content-security-policy": CSP });
       if (pathname === "/" && !uiDir) return reply(404, "No UI is built for this server; it answers /api/ only. Pass --ui <dir>.\n", { "content-type": "text/plain; charset=utf-8" });
       return reply(404);
     }
@@ -2165,6 +2278,7 @@ function createApp(o) {
     info,
     list,
     tick,
+    git,
     settings: () => current,
     close: () => new Promise((ok) => {
       server.close(() => ok());
@@ -2209,7 +2323,7 @@ function call(port, method, path, body, headers = {}) {
 // ../core/src/selftest.ts
 import assert from "node:assert/strict";
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync2, mkdirSync as mkdirSync2, mkdtempSync, readFileSync as readFileSync4, rmSync, symlinkSync, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync3, mkdirSync as mkdirSync3, mkdtempSync, readFileSync as readFileSync3, realpathSync as realpathSync3, rmSync as rmSync2, symlinkSync, writeFileSync as writeFileSync3 } from "node:fs";
 import { request as request2 } from "node:http";
 import { tmpdir } from "node:os";
 import { join as join4 } from "node:path";
@@ -2238,20 +2352,23 @@ async function selftest() {
     await pure();
     await gitCase(temps);
     await branchCase(temps);
-    await folderCase(temps);
+    await switchCase(temps);
+    notARepo(temps);
   } finally {
-    for (const t of temps) rmSync(t, { recursive: true, force: true });
+    for (const t of temps) rmSync2(t, { recursive: true, force: true });
   }
 }
 async function pure() {
   assert.deepEqual(countStates([
     { state: "working", drafts: 2, updated: true, edited: true },
+    { state: "rejected", updated: false, edited: false, drafts: 0 },
+    { state: "skipped", updated: true, edited: false, drafts: 1 },
     { state: "accepted", updated: true, edited: true, drafts: 0 },
     { state: "queue", updated: true, edited: true, drafts: 1 },
     { state: "queue", updated: false, edited: true, drafts: 1 },
     { state: "queue", updated: false, edited: false, drafts: 1 },
     { state: "queue", updated: false, edited: false, drafts: 0 }
-  ]), { working: 1, accepted: 1, updated: 1, edited: 1, drafts: 1, pending: 1 });
+  ]), { working: 1, rejected: 1, skipped: 1, accepted: 1, updated: 1, edited: 1, drafts: 1, pending: 1 });
   const items = [
     { text: "Intro says use a badge here.", path: ["A"] },
     { text: "Use a badge for counts. Use a badge for status.", path: ["A", "B"] }
@@ -2297,33 +2414,33 @@ async function gitCase(temps) {
   const doc = DOC;
   const { root, sh } = newRepo("trove-git-");
   temps.push(root);
-  writeFileSync4(join4(root, "a.md"), doc);
-  mkdirSync2(join4(root, "gen"));
-  writeFileSync4(join4(root, "gen/x.md"), "# gen\n");
-  writeFileSync4(join4(root, "r.md"), "# R\n");
+  writeFileSync3(join4(root, "a.md"), doc);
+  mkdirSync3(join4(root, "gen"));
+  writeFileSync3(join4(root, "gen/x.md"), "# gen\n");
+  writeFileSync3(join4(root, "r.md"), "# R\n");
   sh("add", ".");
   sh("commit", "-qm", "base");
   sh("mv", "r.md", "r \xE9 \xF1.md");
-  writeFileSync4(join4(root, "a.md"), doc.replace("Para one.", "Para one, changed."));
-  writeFileSync4(join4(root, "b.md"), "# B\n");
-  for (const out of ["x.mdx", "t.txt", "c.html"]) writeFileSync4(join4(root, out), "<h1>C</h1><p>Hi</p>\n");
-  writeFileSync4(join4(root, "gen/x.md"), "# gen 2\n");
+  writeFileSync3(join4(root, "a.md"), doc.replace("Para one.", "Para one, changed."));
+  writeFileSync3(join4(root, "b.md"), "# B\n");
+  for (const out of ["x.mdx", "t.txt", "c.html"]) writeFileSync3(join4(root, out), "<h1>C</h1><p>Hi</p>\n");
+  writeFileSync3(join4(root, "gen/x.md"), "# gen 2\n");
   const gitDir = join4(root, ".git");
-  mkdirSync2(join4(gitDir, "doc-review"));
-  writeFileSync4(join4(gitDir, "doc-review", "events.log"), "old\n");
+  mkdirSync3(join4(gitDir, "doc-review"));
+  writeFileSync3(join4(gitDir, "doc-review", "events.log"), "old\n");
   const ui = mkdtempSync(join4(tmpdir(), "trove-ui-"));
   temps.push(ui);
-  mkdirSync2(join4(ui, "assets"));
-  writeFileSync4(join4(ui, "index.html"), "<!doctype html><title>Trove</title>");
-  writeFileSync4(join4(ui, "assets", "app.js"), "export {};\n");
-  writeFileSync4(join4(tmpdir(), "trove-outside.txt"), "secret");
+  mkdirSync3(join4(ui, "assets"));
+  writeFileSync3(join4(ui, "index.html"), "<!doctype html><title>Trove</title>");
+  writeFileSync3(join4(ui, "assets", "app.js"), "export {};\n");
+  writeFileSync3(join4(tmpdir(), "trove-outside.txt"), "secret");
   const lines = [];
   const opts = { root, exclude: ["gen/**"] };
   const { app, port } = await listen({ ...opts, quietMs: 300, log: (l3) => lines.push(l3), uiDir: ui });
   const stateDir = app.info().stateDir;
   const files = { drafts: join4(stateDir, "drafts.json"), edits: join4(stateDir, "edits.json"), batches: join4(stateDir, "batches.jsonl") };
-  assert.equal(readFileSync4(join4(gitDir, "trove", "events.log"), "utf8"), "old\n", "doc-review/ became trove/");
-  assert.equal(existsSync2(join4(gitDir, "doc-review")), false);
+  assert.equal(readFileSync3(join4(gitDir, "trove", "events.log"), "utf8"), "old\n", "doc-review/ became trove/");
+  assert.equal(existsSync3(join4(gitDir, "doc-review")), false);
   const post = (path, body, headers) => call(port, "POST", path, body, headers);
   const get = (path, p = port) => call(p, "GET", path);
   const states = async () => Object.fromEntries((await get("/api/files")).body.files.map((f) => [f.path, f.state]));
@@ -2351,13 +2468,13 @@ async function gitCase(temps) {
   assert.equal((await get("/api/file?path=t.txt")).body.kind, "text");
   await post("/api/settings", { types: { txt: false } });
   assert.equal((await states())["t.txt"], void 0);
-  assert.equal(JSON.parse(readFileSync4(join4(stateDir, "settings.json"), "utf8")).theme, "dark", "saved per source");
-  assert.equal(JSON.parse(readFileSync4(join4(stateDir, "settings.json"), "utf8")).exclude.length, 0, "a run override is not saved");
+  assert.equal(JSON.parse(readFileSync3(join4(stateDir, "settings.json"), "utf8")).theme, "dark", "saved per source");
+  assert.equal(JSON.parse(readFileSync3(join4(stateDir, "settings.json"), "utf8")).exclude.length, 0, "a run override is not saved");
   assert.deepEqual(probeGit(join4(root, "gen"))?.branch, "main");
   symlinkSync(join4(root, "gone.md"), join4(root, "l.md"));
   assert.equal((await get("/api/file?path=l.md")).status, 500);
   assert.equal((await get("/api/files")).status, 200);
-  rmSync(join4(root, "l.md"));
+  rmSync2(join4(root, "l.md"));
   const page = await raw(port, "/");
   assert.deepEqual([page.status, page.type, page.text], [200, "text/html; charset=utf-8", "<!doctype html><title>Trove</title>"]);
   assert.match(page.csp, /script-src 'self';/, "no inline scripts");
@@ -2369,7 +2486,7 @@ async function gitCase(temps) {
   await bare.app.close();
   const html = (await get("/api/file?path=c.html")).body;
   assert.equal((await post("/api/save", { path: "c.html", hash: html.hash, raw: "<p>Whole</p>\n" })).status, 200);
-  assert.equal(readFileSync4(join4(root, "c.html"), "utf8"), "<p>Whole</p>\n");
+  assert.equal(readFileSync3(join4(root, "c.html"), "utf8"), "<p>Whole</p>\n");
   assert.equal(staged(), "", "an HTML save does not stage");
   assert.equal((await post("/api/accept", { path: "c.html", hash: sha("<p>Whole</p>\n") })).status, 200);
   assert.equal((await states())["c.html"], "accepted");
@@ -2402,7 +2519,7 @@ async function gitCase(temps) {
   const file = (await get("/api/file?path=a.md")).body;
   assert.equal((await post("/api/save", { path: "a.md", hash: "stale", index: 2, raw: "X" })).status, 409);
   sh("add", "a.md");
-  const beforeEdit = readFileSync4(join4(root, "a.md"), "utf8");
+  const beforeEdit = readFileSync3(join4(root, "a.md"), "utf8");
   const saved = await post("/api/save", { path: "a.md", hash: file.hash, index: 2, raw: "Para one, edited." });
   assert.equal(saved.status, 200);
   assert.equal(staged(), "", "a save unstages and does not stage");
@@ -2413,21 +2530,21 @@ async function gitCase(temps) {
   await again.app.close();
   assert.equal((await post("/api/save", { path: "a.md", hash: saved.body.hash, index: 2, raw: "Para one, twice." })).status, 200);
   assert.equal((await post("/api/revert", { path: "a.md" })).status, 200);
-  assert.equal(readFileSync4(join4(root, "a.md"), "utf8"), beforeEdit, "revert restores the text before the first edit");
+  assert.equal(readFileSync3(join4(root, "a.md"), "utf8"), beforeEdit, "revert restores the text before the first edit");
   assert.deepEqual([(await row("a.md")).edited, staged()], [false, ""]);
   assert.equal((await post("/api/revert", { path: "a.md" })).status, 404, "nothing left to revert");
   const s2 = await post("/api/save", { path: "a.md", hash: sha(beforeEdit), index: 2, raw: "Para two." });
   assert.equal(s2.status, 200);
-  writeFileSync4(join4(root, "a.md"), readFileSync4(join4(root, "a.md"), "utf8") + "\nMore.\n");
+  writeFileSync3(join4(root, "a.md"), readFileSync3(join4(root, "a.md"), "utf8") + "\nMore.\n");
   assert.equal((await get("/api/file?path=a.md")).body.revertable, false);
   assert.equal((await post("/api/revert", { path: "a.md" })).status, 409);
-  writeFileSync4(join4(root, "a.md"), doc.replace("Para one.", "Para two."));
+  writeFileSync3(join4(root, "a.md"), doc.replace("Para one.", "Para two."));
   const now = (await get("/api/file?path=a.md")).body.hash;
   assert.equal((await post("/api/accept", { path: "a.md", hash: now })).status, 200);
   assert.deepEqual([(await row("a.md")).state, (await row("a.md")).edited], ["accepted", false]);
-  assert.equal(JSON.parse(readFileSync4(files.edits, "utf8"))["a.md"], void 0, "the snapshot is gone");
-  const base = readFileSync4(join4(root, "a.md"), "utf8");
-  const saveBlock = async (index, raw2) => post("/api/save", { path: "a.md", hash: sha(readFileSync4(join4(root, "a.md"), "utf8")), index, raw: raw2 });
+  assert.equal(JSON.parse(readFileSync3(files.edits, "utf8"))["a.md"], void 0, "the snapshot is gone");
+  const base = readFileSync3(join4(root, "a.md"), "utf8");
+  const saveBlock = async (index, raw2) => post("/api/save", { path: "a.md", hash: sha(readFileSync3(join4(root, "a.md"), "utf8")), index, raw: raw2 });
   await saveBlock(2, "Para X.");
   await saveBlock(2, "Para Y.");
   await saveBlock(4, "- z");
@@ -2436,50 +2553,50 @@ async function gitCase(temps) {
   const later = await restart();
   assert.equal((await get("/api/file?path=a.md", later.port)).body.edits.length, 2, "edits survive a restart");
   await later.app.close();
-  const withList = readFileSync4(join4(root, "a.md"), "utf8");
+  const withList = readFileSync3(join4(root, "a.md"), "utf8");
   assert.equal((await post("/api/revert", { path: "a.md", edit: editsNow[0].id, hash: sha(withList) })).status, 200);
-  assert.equal(readFileSync4(join4(root, "a.md"), "utf8"), withList.replace("Para Y.", "Para two."), "only that block changed");
+  assert.equal(readFileSync3(join4(root, "a.md"), "utf8"), withList.replace("Para Y.", "Para two."), "only that block changed");
   assert.equal(staged(), "", "reverting does not stage");
-  writeFileSync4(join4(root, "a.md"), readFileSync4(join4(root, "a.md"), "utf8").replace("- z", "- w"));
+  writeFileSync3(join4(root, "a.md"), readFileSync3(join4(root, "a.md"), "utf8").replace("- z", "- w"));
   assert.equal((await get("/api/file?path=a.md")).body.edits[0].ok, false);
   assert.equal((await post("/api/revert", { path: "a.md", edit: editsNow[1].id })).status, 409, "refused once the text changed");
-  writeFileSync4(join4(root, "a.md"), readFileSync4(join4(root, "a.md"), "utf8").replace("- w", "- z"));
+  writeFileSync3(join4(root, "a.md"), readFileSync3(join4(root, "a.md"), "utf8").replace("- w", "- z"));
   assert.equal((await post("/api/revert", { path: "a.md", edit: editsNow[1].id })).status, 200);
-  assert.equal(readFileSync4(join4(root, "a.md"), "utf8"), base, "both reverts give back the original bytes");
+  assert.equal(readFileSync3(join4(root, "a.md"), "utf8"), base, "both reverts give back the original bytes");
   assert.equal((await row("a.md")).edited, false, "the last revert clears Edited");
   await saveBlock(2, "Para Z.");
-  assert.equal((await post("/api/accept", { path: "a.md", hash: sha(readFileSync4(join4(root, "a.md"), "utf8")) })).status, 200);
+  assert.equal((await post("/api/accept", { path: "a.md", hash: sha(readFileSync3(join4(root, "a.md"), "utf8")) })).status, 200);
   assert.deepEqual((await get("/api/file?path=a.md")).body.edits, [], "Accept clears the edits");
   const anchor = makeAnchor("Para two.", 0, 4, ["A"]);
   await post("/api/drafts", { path: "a.md", drafts: [{ kind: "change", note: "shorter", anchor }] });
   await post("/api/drafts", { path: "b.md", drafts: [{ kind: "explain", note: "why?", anchor }] });
-  assert.equal(JSON.parse(readFileSync4(files.drafts, "utf8"))["a.md"][0].note, "shorter");
-  const stored = JSON.parse(readFileSync4(files.drafts, "utf8"));
-  writeFileSync4(files.drafts, JSON.stringify({ ...stored, "gone.md": [{ kind: "change", note: "x", anchor }] }));
+  assert.equal(JSON.parse(readFileSync3(files.drafts, "utf8"))["a.md"][0].note, "shorter");
+  const stored = JSON.parse(readFileSync3(files.drafts, "utf8"));
+  writeFileSync3(files.drafts, JSON.stringify({ ...stored, "gone.md": [{ kind: "change", note: "x", anchor }] }));
   assert.deepEqual(Object.keys((await get("/api/drafts")).body.drafts).sort(), ["a.md", "b.md"], "only listed files");
   assert.equal((await call(port, "GET", "/api/drafts", void 0, { host: "evil.example" })).status, 403);
-  writeFileSync4(files.drafts, JSON.stringify(stored));
-  const atSend = readFileSync4(join4(root, "a.md"), "utf8");
+  writeFileSync3(files.drafts, JSON.stringify(stored));
+  const atSend = readFileSync3(join4(root, "a.md"), "utf8");
   const sent = await post("/api/send", {});
   assert.deepEqual([sent.body.comments, sent.body.files, sent.body.locked], [2, 2, ["a.md"]]);
   assert.deepEqual(await states(), { "a.md": "working", "b.md": "queue", "c.html": "queue", "r \xE9 \xF1.md": "accepted" }, "explain-only files do not lock");
   assert.equal(staged(), "", "sending unstages");
   assert.deepEqual(lines, [`batch ${sent.body.id}: 2 comments on 2 files. Read it with: grep -F ${sent.body.id} '${files.batches}'`]);
-  assert.equal(readFileSync4(join4(stateDir, "events.log"), "utf8"), `old
+  assert.equal(readFileSync3(join4(stateDir, "events.log"), "utf8"), `old
 ${lines[0]}
 `, "the notice goes to the events log");
-  assert.equal(JSON.parse(readFileSync4(files.batches, "utf8")).items.length, 2);
-  assert.deepEqual(JSON.parse(readFileSync4(files.drafts, "utf8")), {});
-  const busy = await post("/api/accept", { path: "a.md", hash: sha(readFileSync4(join4(root, "a.md"), "utf8")) });
+  assert.equal(JSON.parse(readFileSync3(files.batches, "utf8")).items.length, 2);
+  assert.deepEqual(JSON.parse(readFileSync3(files.drafts, "utf8")), {});
+  const busy = await post("/api/accept", { path: "a.md", hash: sha(readFileSync3(join4(root, "a.md"), "utf8")) });
   assert.deepEqual([busy.status, busy.body.error], [409, "The agent is working on this file"], "locked: no accept");
   assert.equal((await post("/api/unaccept", { path: "a.md" })).status, 409, "locked: no undo accept");
-  assert.equal((await post("/api/save", { path: "a.md", hash: sha(readFileSync4(join4(root, "a.md"), "utf8")), index: 2, raw: "Y" })).status, 409, "locked: no edit");
+  assert.equal((await post("/api/save", { path: "a.md", hash: sha(readFileSync3(join4(root, "a.md"), "utf8")), index: 2, raw: "Y" })).status, 409, "locked: no edit");
   assert.equal((await post("/api/send", {})).status, 400, "nothing left to send");
   await post("/api/drafts", { path: "a.md", drafts: [{ kind: "change", note: "later", anchor }] });
   await post("/api/drafts", { path: "b.md", drafts: [{ kind: "explain", note: "now", anchor }] });
   const partial = await post("/api/send", {});
   assert.deepEqual([partial.body.comments, partial.body.locked], [1, []]);
-  assert.equal(JSON.parse(readFileSync4(files.batches, "utf8").trim().split("\n").at(-1)).items[0].path, "b.md");
+  assert.equal(JSON.parse(readFileSync3(files.batches, "utf8").trim().split("\n").at(-1)).items[0].path, "b.md");
   assert.deepEqual(Object.keys((await get("/api/drafts")).body.drafts), ["a.md"], "the locked file keeps its drafts");
   const ex = { kind: "explain", note: "why", anchor };
   const ch = { kind: "change", note: "fix", anchor };
@@ -2504,7 +2621,7 @@ ${lines[0]}
   assert.equal((await post("/api/ask", { text: "x", kind: "nope" })).status, 400);
   await post("/api/ask", { text: "" });
   assert.equal((await get("/api/files")).body.question, null, "an empty text clears it");
-  writeFileSync4(join4(root, "a.md"), doc.replace("Para one.", "Para, by the agent."));
+  writeFileSync3(join4(root, "a.md"), doc.replace("Para one.", "Para, by the agent."));
   assert.deepEqual((await post("/api/release", { path: join4(root, "a.md") })).body, { released: true, updated: true });
   const after = (await get("/api/files")).body.files.find((f) => f.path === "a.md");
   assert.deepEqual([after.state, after.updated], ["queue", true]);
@@ -2517,7 +2634,7 @@ ${lines[0]}
   await post("/api/send", {});
   app.tick(0);
   assert.equal(await working(), 1, "unchanged stays locked");
-  writeFileSync4(join4(root, "a.md"), "edited\n");
+  writeFileSync3(join4(root, "a.md"), "edited\n");
   app.tick(1e3);
   assert.equal(await working(), 1, "still changing stays locked");
   app.tick(1200);
@@ -2530,23 +2647,62 @@ ${lines[0]}
   assert.equal((await get("/api/files", relaunched.port)).body.files.find((f) => f.path === "b.md").state, "working", "a lock survives a restart");
   await relaunched.app.close();
   assert.deepEqual((await post("/api/release", { path: "b.md" })).body, { released: true, updated: false });
+  const indexed = (p) => sh("diff", "--cached", "--name-only", "--", p).trim();
+  assert.equal((await post("/api/skip", { path: "b.md", on: true })).status, 200);
+  assert.deepEqual([(await states())["b.md"], indexed("b.md")], ["skipped", ""], "skipping touches no git state");
+  await post("/api/skip", { path: "b.md", on: false });
+  assert.equal((await states())["b.md"], "queue");
+  writeFileSync3(join4(root, "a.md"), doc.replace("Para one.", "Para, to reject."));
+  const aText = readFileSync3(join4(root, "a.md"), "utf8");
+  await post("/api/skip", { path: "a.md", on: true });
+  assert.equal((await post("/api/reject", { path: "a.md", hash: "stale" })).status, 409);
+  assert.equal((await post("/api/reject", { path: "a.md", hash: sha(aText) })).status, 200);
+  assert.equal(readFileSync3(join4(root, "a.md"), "utf8"), sh("show", "HEAD:a.md"), "a tracked file goes back to HEAD");
+  assert.deepEqual([(await states())["a.md"], indexed("a.md")], ["rejected", ""]);
+  const shownGone = (await get("/api/file?path=a.md")).body;
+  assert.deepEqual([shownGone.text, shownGone.locked, shownGone.rejected, shownGone.base], [aText, true, true, sh("show", "HEAD:a.md")], "a rejected file shows what was rejected, read-only, against the file now");
+  assert.deepEqual((await post("/api/accept", { path: "a.md", hash: sha(aText) })).body, { error: "Rejected: restore it first" }, "no accepting a rejected file");
+  assert.equal((await post("/api/save", { path: "a.md", hash: sha(aText), index: 2, raw: "X" })).status, 409, "no editing a rejected file");
+  assert.equal((await post("/api/reject", { path: "a.md", hash: sha(aText) })).status, 409, "already rejected");
+  assert.equal((await post("/api/restore", { path: "a.md" })).status, 200);
+  assert.deepEqual([readFileSync3(join4(root, "a.md"), "utf8"), (await states())["a.md"]], [aText, "queue"], "restore puts it back, no longer skipped");
+  await post("/api/drafts", { path: "b.md", drafts: [{ kind: "change", note: "keep me", anchor }] });
+  const bText = readFileSync3(join4(root, "b.md"), "utf8");
+  assert.equal((await post("/api/reject", { path: "b.md", hash: sha(bText) })).status, 200);
+  assert.equal(existsSync3(join4(root, "b.md")), false, "a new file is deleted");
+  assert.equal((await get("/api/drafts")).body.drafts["b.md"], void 0, "its drafts go with it");
+  assert.equal((await post("/api/send", { paths: ["b.md"] })).status, 400, "nothing of a rejected file is sent");
+  const afterRestart = await restart();
+  assert.equal((await get("/api/files", afterRestart.port)).body.files.find((f) => f.path === "b.md")?.state, "rejected", "the backup survives a restart");
+  await afterRestart.app.close();
+  assert.equal((await post("/api/restore", { path: "b.md" })).status, 200);
+  assert.equal(readFileSync3(join4(root, "b.md"), "utf8"), bText);
+  assert.equal((await get("/api/drafts")).body.drafts["b.md"][0].note, "keep me", "and its drafts come back");
+  assert.equal((await post("/api/reject", { path: "b.md", hash: sha(bText) })).status, 200);
+  writeFileSync3(join4(root, "b.md"), "# B, regenerated\n");
+  assert.equal((await states())["b.md"], "queue");
+  assert.equal((await post("/api/restore", { path: "b.md" })).status, 404);
   await app.close();
-  rmSync(join4(tmpdir(), "trove-outside.txt"), { force: true });
+  rmSync2(join4(tmpdir(), "trove-outside.txt"), { force: true });
 }
 async function branchCase(temps) {
   const { root, sh } = newRepo("trove-branch-");
   temps.push(root);
-  for (const f of ["old.md", "same.md", "edit.md"]) writeFileSync4(join4(root, f), `# ${f}
+  for (const f of ["old.md", "same.md", "edit.md"]) writeFileSync3(join4(root, f), `# ${f}
 `);
   sh("add", ".");
   sh("commit", "-qm", "base");
   sh("checkout", "-qb", "feature");
-  writeFileSync4(join4(root, "edit.md"), "# edit.md\n\nOn the branch.\n");
-  writeFileSync4(join4(root, "new.md"), "# new\n");
+  writeFileSync3(join4(root, "edit.md"), "# edit.md\n\nOn the branch.\n");
+  writeFileSync3(join4(root, "new.md"), "# new\n");
   sh("add", ".");
   sh("commit", "-qm", "branch work");
-  writeFileSync4(join4(root, "old.md"), "# old.md, uncommitted\n");
-  assert.deepEqual(probeGit(root), { branch: "feature", branches: ["feature", "main"], defaultBase: "main" });
+  writeFileSync3(join4(root, "old.md"), "# old.md, uncommitted\n");
+  const probe = probeGit(root);
+  assert.deepEqual(
+    [probe.branch, probe.branches, probe.defaultBase, probe.local.map((b) => [b.name, b.current, b.worktree])],
+    ["feature", ["feature", "main"], "main", [["feature", true, null], ["main", false, null]]]
+  );
   const { app, port } = await listen({ root });
   const rows = async () => Object.fromEntries((await call(port, "GET", "/api/files")).body.files.map((f) => [f.path, f.state]));
   assert.deepEqual(await rows(), { "old.md": "queue" }, "uncommitted: the working tree only");
@@ -2570,58 +2726,84 @@ async function branchCase(temps) {
   await app.close();
   const cli = await listen({ root, scope: "branch" });
   assert.equal(cli.app.settings().scope, "branch");
-  assert.equal(JSON.parse(readFileSync4(join4(cli.app.info().stateDir, "settings.json"), "utf8")).scope, "uncommitted");
+  assert.equal(JSON.parse(readFileSync3(join4(cli.app.info().stateDir, "settings.json"), "utf8")).scope, "uncommitted");
   await cli.app.close();
 }
-async function folderCase(temps) {
-  const root = mkdtempSync(join4(tmpdir(), "trove-folder-"));
-  temps.push(root);
-  for (const d of ["node_modules", ".hidden", "gen", "sub"]) mkdirSync2(join4(root, d));
-  for (const f of ["a.md", "b.html", "t.txt", "node_modules/x.md", ".hidden/y.md", "gen/z.md", "sub/c.markdown"]) writeFileSync4(join4(root, f), `# ${f}
-
-Text.
-`);
-  assert.equal(probeGit(root), null);
+async function switchCase(temps) {
+  const { root, sh } = newRepo("trove-switch-");
+  const wtDir = mkdtempSync(join4(tmpdir(), "trove-wt-"));
+  temps.push(root, wtDir);
+  writeFileSync3(join4(root, "a.md"), "# A\n");
+  writeFileSync3(join4(root, "b.md"), "# B\n");
+  sh("add", ".");
+  sh("commit", "-qm", "base");
+  sh("branch", "wt");
+  sh("checkout", "-qb", "free");
+  writeFileSync3(join4(root, "a.md"), "# A on free\n");
+  sh("commit", "-qam", "free");
+  sh("checkout", "-q", "main");
+  rmSync2(wtDir, { recursive: true });
+  sh("worktree", "add", "-q", wtDir, "wt");
+  const wtPath = realpathSync3(wtDir);
   const { app, port } = await listen({ root });
-  temps.push(app.info().stateDir);
-  const get = (path) => call(port, "GET", path);
-  const post = (path, body) => call(port, "POST", path, body);
-  const rows = async () => Object.fromEntries((await get("/api/files")).body.files.map((f) => [f.path, f.state]));
-  const info = (await get("/api/source")).body;
-  assert.deepEqual([info.kind, info.branch, info.base, info.name], ["folder", null, null, root.split("/").at(-1)]);
-  assert.ok(info.stateDir.includes(join4(".trove", "state")), info.stateDir);
-  assert.deepEqual(await rows(), { "a.md": "queue", "b.html": "queue", "gen/z.md": "queue", "sub/c.markdown": "queue" }, "skips dot folders, node_modules and disabled types");
-  await post("/api/settings", { exclude: ["gen/**"], types: { txt: true } });
-  assert.deepEqual(Object.keys(await rows()), ["a.md", "b.html", "sub/c.markdown", "t.txt"]);
-  const a = (await get("/api/file?path=a.md")).body;
-  assert.deepEqual([a.base, a.kind, (await get("/api/file?path=../x.md")).status], [null, "markdown", 404]);
-  assert.equal((await post("/api/accept", { path: "a.md", hash: "stale" })).status, 409);
-  assert.equal((await post("/api/accept", { path: "a.md", hash: a.hash })).status, 200);
-  assert.equal((await rows())["a.md"], "accepted");
-  const again = await listen({ root });
-  assert.equal((await call(again.port, "GET", "/api/files")).body.files.find((f) => f.path === "a.md").state, "accepted", "reviewed survives a restart");
-  await again.app.close();
-  writeFileSync4(join4(root, "a.md"), "# changed\n");
-  assert.equal((await rows())["a.md"], "queue", "a change after accept queues it again");
-  const t = (await get("/api/file?path=t.txt")).body;
-  assert.equal((await post("/api/save", { path: "t.txt", hash: t.hash, raw: "whole\n" })).status, 200);
-  assert.equal(readFileSync4(join4(root, "t.txt"), "utf8"), "whole\n", "text is saved whole");
-  await post("/api/accept", { path: "t.txt", hash: sha("whole\n") });
-  assert.equal((await post("/api/unaccept", { path: "t.txt" })).status, 200);
-  assert.equal((await rows())["t.txt"], "queue");
+  const get = async (path) => (await call(port, "GET", path)).body;
+  const sw = (branch) => call(port, "POST", "/api/switch", { branch });
+  const paths = async () => (await get("/api/files")).files.map((f) => f.path);
+  const info = await get("/api/git");
+  assert.deepEqual(
+    [info.branch, info.branches.map((b) => [b.name, b.current, b.worktree])],
+    ["main", [["free", false, null], ["main", true, null], ["wt", false, wtPath]]],
+    "the worktree branch says where it is checked out"
+  );
+  assert.deepEqual(info.worktrees.map((w) => [w.path, w.branch, w.current]), [[realpathSync3(root), "main", true], [wtPath, "wt", false]]);
+  assert.equal(info.dirty, 0);
+  assert.equal(probeGit(wtDir)?.branch, "wt", "a worktree is a repository of its own");
+  writeFileSync3(join4(root, "b.md"), "# B, uncommitted\n");
+  writeFileSync3(join4(root, "a.md"), "# A, uncommitted\n");
+  assert.equal((await get("/api/git")).dirty, 2);
+  const refused = await sw("free");
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error, /overwritten/, "git's own message");
+  assert.deepEqual([(await get("/api/git")).branch, readFileSync3(join4(root, "a.md"), "utf8")], ["main", "# A, uncommitted\n"], "nothing changed");
+  sh("checkout", "--", "a.md");
+  const busy = await sw("wt");
+  assert.deepEqual([busy.status, busy.body.worktree], [409, wtPath], "a branch checked out elsewhere: open that worktree instead");
+  assert.equal((await sw("nope")).status, 404);
+  await call(port, "POST", "/api/drafts", { path: "b.md", drafts: [{ kind: "change", note: "n", anchor: { quote: "B", prefix: "", suffix: "", path: [], raw: "" } }] });
+  assert.equal((await call(port, "POST", "/api/send", {})).status, 200);
+  assert.match((await sw("free")).body.error, /working on a file/, "no switching under the agent");
+  await call(port, "POST", "/api/release", { path: "b.md" });
+  assert.deepEqual(await paths(), ["b.md"]);
+  const done = await sw("free");
+  assert.deepEqual([done.status, done.body.branch, done.body.dirty], [200, "free", 1]);
+  assert.deepEqual(
+    [await paths(), readFileSync3(join4(root, "a.md"), "utf8"), (await get("/api/source")).branch],
+    [["b.md"], "# A on free\n", "free"],
+    "the queue re-lists on the new branch; uncommitted work comes along, as with git switch"
+  );
+  assert.equal((await sw("free")).status, 200, "the current branch is a no-op");
   await app.close();
+  sh("worktree", "remove", "--force", wtDir);
+}
+function notARepo(temps) {
+  const root = mkdtempSync(join4(tmpdir(), "trove-plain-"));
+  temps.push(root);
+  writeFileSync3(join4(root, "a.md"), "# A\n");
+  assert.equal(probeGit(root), null);
+  assert.throws(() => createApp({ root, log: () => {
+  } }), { message: `not a git repository: ${root}` });
 }
 
 // bin/trove.mjs
 var USAGE = 'usage: trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>] | done <file> [--port 4824] | ask "<question>" | reply "<summary>" | ask --clear [--port 4824] | --selftest';
-var here = dirname2(fileURLToPath(import.meta.url));
+var here = dirname3(fileURLToPath(import.meta.url));
 var invoked = () => {
   const script = process.argv[1] ?? "";
   if (basename2(script) === "trove") return "trove";
-  const path = realpathSync3(script);
+  const path = realpathSync4(script);
   return /[\s'"$`\\]/.test(path) ? `node '${path.replaceAll("'", String.raw`'\''`)}'` : `node ${path}`;
 };
-var defaultUi = () => [join5(here, "ui"), resolve2(here, "../../ui/dist")].find((d) => existsSync3(join5(d, "index.html"))) ?? null;
+var defaultUi = () => [join5(here, "ui"), resolve2(here, "../../ui/dist")].find((d) => existsSync4(join5(d, "index.html"))) ?? null;
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === "--selftest") {
@@ -2652,7 +2834,7 @@ async function main() {
     return;
   }
   if (command === "done" && positionals[0]) {
-    const file = existsSync3(positionals[0]) ? resolve2(positionals[0]) : positionals[0];
+    const file = existsSync4(positionals[0]) ? resolve2(positionals[0]) : positionals[0];
     const r = await call(port, "POST", "/api/release", { path: file }).catch(failed);
     console.log(r.status === 200 ? r.body.released ? `released ${positionals[0]}` : `${positionals[0]} was not locked` : `done failed: ${r.body?.error ?? r.status}`);
     process.exitCode = r.status === 200 ? 0 : 1;
@@ -2679,9 +2861,10 @@ async function main() {
     });
     const info = app.info();
     const queued = app.list().filter((f) => !f.staged).length;
-    console.log(`reviewing ${queued} files at ${url}; notices in ${info.eventsLog}; after each file run: ${info.doneCommand}`);
+    const git = app.git();
+    console.log(`reviewing ${queued} files on ${git.branch ?? git.head} at ${url}; notices in ${info.eventsLog}; after each file run: ${info.doneCommand}`);
   } catch (error) {
-    console.log(error.code === "EADDRINUSE" ? `port ${port} is busy: another session is probably serving. Stop it, or pass --port.` : `server failed: ${error.message}`);
+    console.log(error.code === "EADDRINUSE" ? `port ${port} is busy: another session is probably serving. Stop it, or pass --port.` : error.message.startsWith("not a git repository") ? error.message : `server failed: ${error.message}`);
     process.exitCode = 1;
   }
 }

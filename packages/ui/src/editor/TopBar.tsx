@@ -25,7 +25,8 @@ export function TopBar() {
   const offline = useStore((s) => s.offline);
   const hasSettings = useStore((s) => s.hasSettings);
   const current = useStore((s) => s.current?.path);
-  useStore((s) => s.pendingOnly);
+  useStore((s) => s.filterOff);
+  useStore((s) => s.query);
   const list = visible(get());
   const pos = list.findIndex((f) => f.path === current) + 1;
   return (

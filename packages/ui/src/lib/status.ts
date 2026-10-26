@@ -35,13 +35,12 @@ export function status(f: Pick<FileRow, 'state' | 'updated' | 'edited' | 'drafts
 
 type Listed = Pick<FileRow, 'path' | 'state' | 'committed'>;
 
-/** In the tree's folders: committed and rejected files have sections of their own; Pending only also hides accepted and skipped ones. */
-export const inFolders = (f: Listed, pendingOnly: boolean) =>
-  !f.committed && f.state !== 'rejected' && !(pendingOnly && (f.state === 'accepted' || f.state === 'skipped'));
+/** In the tree's folders: committed and rejected files have sections of their own. */
+export const inFolders = (f: Listed) => !f.committed && f.state !== 'rejected';
 
-/** j/k: the next or previous file in the folders, by position in the full list (so it works from a file outside them), passing over skipped ones. */
-export function stepFrom<T extends Listed>(files: T[], current: string | undefined, dir: 1 | -1, pendingOnly: boolean): T | undefined {
+/** j/k: the next or previous file the tree shows (`shown`), by position in the full list (so it works from a file outside them), passing over skipped ones. */
+export function stepFrom<T extends Listed>(files: T[], current: string | undefined, dir: 1 | -1, shown: (f: T) => boolean): T | undefined {
   const at = files.findIndex((f) => f.path === current);
-  const list = files.filter((f, i) => inFolders(f, pendingOnly) && f.state !== 'skipped' && (dir > 0 ? i > at : i < at));
+  const list = files.filter((f, i) => inFolders(f) && shown(f) && f.state !== 'skipped' && (dir > 0 ? i > at : i < at));
   return dir > 0 ? list[0] : list.at(-1);
 }

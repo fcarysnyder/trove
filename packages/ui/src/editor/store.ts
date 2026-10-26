@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS } from '@trove/core/types';
 import type { AnchorHit } from '@trove/core/anchor';
 import { useSyncExternalStore } from 'react';
 import { load } from '@/lib/storage';
+import { normalizeOff, type FilterKey } from '@/lib/filter';
 import { names, type Names } from '@/lib/status';
 
 export interface Editing {
@@ -41,7 +42,8 @@ export interface State {
   composer: { kind: CommentKind; anchor: Anchor } | null;
   noteEdit: Draft | null; // the comment whose note is being edited, by identity
   pick: Pick | null;
-  pendingOnly: boolean;
+  filterOff: FilterKey[]; // filters turned off: those files leave the tree (persisted)
+  query: string; // the Files search (page state, not persisted)
   scope: 'file' | 'all';
   showNew: boolean;
   hidden: { files: boolean; changes: boolean };
@@ -70,7 +72,8 @@ let state: State = {
   composer: null,
   noteEdit: null,
   pick: null,
-  pendingOnly: false,
+  filterOff: normalizeOff(load<unknown>('filters-off', [])),
+  query: '',
   scope: load<'file' | 'all'>('scope', 'file') === 'all' ? 'all' : 'file',
   showNew: load<boolean | null>('show-new', null) ?? true,
   hidden: { files: load<boolean>('hide-files', false) === true, changes: load<boolean>('hide-changes', false) === true },

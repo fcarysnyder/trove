@@ -51,6 +51,7 @@ the scope in Settings.
 |---|---|
 | `j` / `→` | next file in the tree |
 | `k` / `←` | previous file |
+| `/` | focus the Files search; in it, `Enter` opens the first file, `Esc` clears it |
 | `Enter` | Accept and next (only from the page itself or a tree row) |
 | `[` / `]` | hide or show Files / Changes |
 | `N` | Show new on or off |
