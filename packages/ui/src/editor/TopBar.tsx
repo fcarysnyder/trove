@@ -1,9 +1,10 @@
 import { countStates } from '@trove/core/anchor';
-import { AGENT_LABELS, attachCommand, type AgentTool } from '@trove/core/types';
-import { ChevronLeft, ChevronRight, Copy, Plug, Settings, Unplug, X } from 'lucide-react';
-import { useState } from 'react';
+import { attachCommand, type AgentTool } from '@trove/core/types';
+import { ChevronLeft, ChevronRight, Copy, House, Settings, Unplug, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PROGRESS, stateInfo } from '@/lib/status';
@@ -31,8 +32,22 @@ export function TopBar() {
   const list = visible(get());
   const pos = list.findIndex((f) => f.path === current) + 1;
   return (
-    <header className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 border-b px-4 py-2 whitespace-nowrap">
-      <Switcher />
+    // GitHub Desktop's toolbar: full-height segments on the left, and the empty space drags the window.
+    <header className="grid h-14 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 border-b pr-4 whitespace-nowrap [-webkit-app-region:drag] xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] [&_:is(button,[tabindex])]:[-webkit-app-region:no-drag]">
+      <div className="flex h-full min-w-0 items-stretch">
+        {window.trove && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button aria-label="Home" onClick={() => void window.trove!.home()}
+                className="grid w-14 shrink-0 place-items-center border-r text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent [&_svg]:size-4.5">
+                <House />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Home</TooltipContent>
+          </Tooltip>
+        )}
+        <Switcher />
+      </div>
       <div className="flex items-center gap-2">
         <Progress />
         <span className="text-xs text-muted-foreground tabular-nums">{pos || '–'} / {list.length}</span>
@@ -65,7 +80,7 @@ function Progress() {
     <span className="mr-2 flex items-center gap-2 text-xs text-muted-foreground">
       <Tooltip>
         <TooltipTrigger asChild>
-          <span role="img" tabIndex={0} aria-label={label} className="flex h-2.5 w-[100px] overflow-hidden rounded-full outline-offset-3 focus-visible:outline-2 focus-visible:outline-ring">
+          <span role="img" tabIndex={0} aria-label={label} className="flex h-2.5 w-[100px] overflow-hidden rounded-full bg-muted outline-offset-3 focus-visible:outline-2 focus-visible:outline-ring">
             {PROGRESS.map((s, i) => (
               <span
                 key={s}
@@ -112,7 +127,7 @@ function Notice() {
     <span className="inline-flex items-center rounded-full border bg-card">
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="xs" className="h-6 gap-1.5 rounded-l-full rounded-r-none pr-1.5 pl-2.5 text-foreground"
+          <Button variant="ghost" size="sm" className="h-8 gap-1.5 rounded-l-full rounded-r-none pr-1.5 pl-2.5 text-foreground"
             aria-label={`${label}${changed.length ? `, ${plural(changed.length, 'file')} changed` : ''}`}>
             <span className="size-2 rounded-full bg-agent" aria-hidden />
             {label}
@@ -130,7 +145,7 @@ function Notice() {
           ))}
         </PopoverContent>
       </Popover>
-      <IconButton label="Dismiss" className="h-6 rounded-l-none rounded-r-full pr-1.5 [&_svg]:size-3.5" onClick={() => void dismissQuestion()}><X /></IconButton>
+      <IconButton label="Dismiss" className="h-8 rounded-l-none rounded-r-full pr-1.5 [&_svg]:size-3.5" onClick={() => void dismissQuestion()}><X /></IconButton>
     </span>
   );
 }
@@ -139,51 +154,76 @@ function Notice() {
 const waiting = new URLSearchParams(location.search).get('waiting') as AgentTool | null;
 const TOOLS: [AgentTool, string][] = [['claude', 'Claude Code'], ['codex', 'Codex']];
 
-/** Who is attached, and how an agent attaches: its start command per tool, the events log it streams and the command it runs after each file. */
+/**
+ * Who is attached, and attaching one: on the desktop a Start button per tool opens it in Terminal, attached
+ * to this server; the commands to copy (each tool's start command, the events log, the done command) come second.
+ */
 function Connect() {
   const source = useStore((s) => s.source)!;
   const n = useNames();
   const [open, setOpen] = useState(false);
+  const [commands, setCommands] = useState(false);
+  const [starting, setStarting] = useState<AgentTool | null>(waiting);
+  const [tools, setTools] = useState<Record<AgentTool, boolean> | null>(null);
+  const bridge = window.trove;
+  const agent = source.agentInfo;
+  useEffect(() => { if (agent?.connected) setStarting(null); }, [agent?.connected]);
+  useEffect(() => { if (open && bridge && !tools) void bridge.tools().then(setTools, () => {}); }, [open]);
+  const start = (tool: AgentTool) => {
+    setOpen(false);
+    setStarting(tool);
+    bridge!.open({ path: source.root, agent: tool }).catch((e: unknown) => { setStarting(null); toast(e instanceof Error ? e.message : String(e)); });
+  };
   const copy = (text: string) => navigator.clipboard.writeText(text).then(() => toast('Copied'), () => toast('Copy failed'));
   const rows = [
     ...TOOLS.map(([tool, label]) => [label, attachCommand(tool, source.root, source.port)] as const),
     ['Events log', source.eventsLog], ['Done command', source.doneCommand],
   ] as const;
-  const agent = source.agentInfo;
+  const label = TOOLS.find(([t]) => t === starting)?.[1];
   return (
-    <>
-      {agent?.connected && (
-        <span className="inline-flex items-center gap-1.5 text-xs text-foreground">
-          <span className="size-2 rounded-full bg-agent" aria-hidden />{n.Agent}
-        </span>
-      )}
-      {agent && !agent.connected && (
-        <Button variant="ghost" size="xs" className="h-6 rounded-full border px-2.5 text-muted-foreground" onClick={() => setOpen(true)}>
-          {waiting && AGENT_LABELS[waiting] ? `Waiting for ${AGENT_LABELS[waiting]}` : 'No agent'}
-        </Button>
-      )}
-      <Popover open={open} onOpenChange={setOpen}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon-xs" aria-label="Connect an agent" className="text-muted-foreground [&_svg]:size-4"><Plug /></Button>
-            </PopoverTrigger>
-          </TooltipTrigger>
-          <TooltipContent>Connect an agent</TooltipContent>
-        </Tooltip>
-        <PopoverContent align="end" onOpenAutoFocus={(e) => e.preventDefault()} className="w-[420px] gap-3">
-          <div className="font-semibold text-foreground">Connect an agent</div>
-          {rows.map(([label, value]) => (
-            <div key={label} className="flex flex-col gap-1">
-              <span className="text-xs text-muted-foreground">{label}</span>
-              <div className="flex items-start gap-1">
-                <code className="min-w-0 flex-1 rounded-sm bg-background px-2 py-1 font-mono text-xs break-all text-foreground">{value}</code>
-                <IconButton label={`Copy ${label}`} onClick={() => copy(value)}><Copy /></IconButton>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        {agent?.connected ? (
+          <Button variant="ghost" size="sm" className="gap-1.5 px-2 text-xs font-normal text-foreground">
+            <span className="size-2 rounded-full bg-agent" aria-hidden />{n.Agent}
+          </Button>
+        ) : (
+          <Button variant="ghost" size="sm" className="gap-1.5 px-2 text-xs font-normal text-foreground">
+            <span className={cn('size-2 rounded-full border border-muted-foreground', label && 'animate-pulse')} aria-hidden />
+            {label ? `Starting ${label}…` : 'No agent connected'}
+          </Button>
+        )}
+      </PopoverTrigger>
+      <PopoverContent align="end" onOpenAutoFocus={(e) => e.preventDefault()} className="w-[420px] gap-3">
+        <div className="font-semibold text-foreground">{agent?.connected ? `${n.Agent} is connected` : 'Connect an agent'}</div>
+        {bridge && (
+          <div className="flex gap-2">
+            {TOOLS.map(([tool, text], k) => (
+              <Button key={tool} variant={k ? 'outline' : 'default'} className="flex-1" disabled={tools?.[tool] === false} onClick={() => start(tool)}>
+                {tools?.[tool] === false ? `${text} not installed` : `Start ${text}`}
+              </Button>
+            ))}
+          </div>
+        )}
+        <Collapsible open={!bridge || commands} onOpenChange={setCommands}>
+          {bridge && (
+            <CollapsibleTrigger className="group flex items-center gap-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground">
+              <ChevronRight className="size-3.5 transition-transform group-data-[state=open]:rotate-90 motion-reduce:transition-none" aria-hidden />Copy a command instead
+            </CollapsibleTrigger>
+          )}
+          <CollapsibleContent className={cn('flex flex-col gap-3', bridge && 'pt-3')}>
+            {rows.map(([label, value]) => (
+              <div key={label} className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">{label}</span>
+                <div className="flex items-start gap-1">
+                  <code className="min-w-0 flex-1 rounded-sm bg-background px-2 py-1 font-mono text-xs break-all text-foreground">{value}</code>
+                  <IconButton label={`Copy ${label}`} onClick={() => copy(value)}><Copy /></IconButton>
+                </div>
               </div>
-            </div>
-          ))}
-        </PopoverContent>
-      </Popover>
-    </>
+            ))}
+          </CollapsibleContent>
+        </Collapsible>
+      </PopoverContent>
+    </Popover>
   );
 }

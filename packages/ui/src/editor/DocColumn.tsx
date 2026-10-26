@@ -1,6 +1,7 @@
 import { findAnchor, type AnchorHit } from '@trove/core/anchor';
 import type { DiffOp } from '@trove/core/anchor';
-import { MessageSquare, PanelLeft, PanelRight, Pencil, Undo2 } from 'lucide-react';
+import { GitBranch, MessageSquare, PanelLeft, PanelRight, Pencil, Undo2 } from 'lucide-react';
+import { recentName } from '@trove/core/types';
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -8,10 +9,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { status } from '@/lib/status';
-import { nameOf, plural } from '@/lib/text';
+import { nameOf, plural, tilde } from '@/lib/text';
 import { cn } from '@/lib/utils';
-import { accept, entry, focusComment, nextPending, post, reject, restore, revertAll, setShowNew, skip, togglePanel } from './actions';
-import { IconButton, PathLabel } from './bits';
+import { accept, entry, focusComment, loadRecents, nextPending, openRecent, openWorktree, post, reject, restore, revertAll, setShowNew, skip, togglePanel } from './actions';
+import { Count, IconButton, nothingText, PathLabel } from './bits';
 import { StateIcons } from './StateIcon';
 import { get, set, useNames, useStore } from './store';
 import { editBlock, onSelect } from './doc/commands';
@@ -32,21 +33,21 @@ export function DocColumn() {
   return (
     <section aria-label="File" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">
-        {hidden.files && <IconButton label="Show files" tip="Show files ([)" className="-ml-2" onClick={() => togglePanel('files', false)}><PanelLeft /></IconButton>}
+        {hidden.files && <IconButton side="bottom" label="Show files" tip="Show files ([)" className="-ml-2" onClick={() => togglePanel('files', false)}><PanelLeft /></IconButton>}
         <span className="flex min-w-0 flex-1 items-center font-semibold">
-          {current ? <PathLabel path={current.path} nameClass="text-foreground" /> : <span className="font-normal text-muted-foreground">Pick a file</span>}
+          {current && <PathLabel path={current.path} nameClass="text-foreground" />}
         </span>
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex items-center gap-2">
-              <Switch id="show-new" size="sm" checked={showNew} disabled={!model?.canShowNew || !!editing} onCheckedChange={setShowNew} />
+              <Switch id="show-new" size="default" checked={showNew} disabled={!model?.canShowNew || !!editing} onCheckedChange={setShowNew} />
               <Label htmlFor="show-new" className="text-xs font-normal whitespace-nowrap text-muted-foreground peer-disabled:opacity-40">Show new</Label>
             </span>
           </TooltipTrigger>
           <TooltipContent>{newTip}</TooltipContent>
         </Tooltip>
         {hidden.changes && (
-          <IconButton label={own ? `Show changes, ${plural(own, 'change')}` : 'Show changes'} tip="Show changes (])" className="relative" onClick={() => togglePanel('changes', false)}>
+          <IconButton side="bottom" label={own ? `Show changes, ${plural(own, 'change')}` : 'Show changes'} tip="Show changes (])" className="relative" onClick={() => togglePanel('changes', false)}>
             {own > 0 && <span aria-hidden className="absolute top-px right-px size-2 rounded-full bg-destructive shadow-[0_0_0_1.5px_var(--background)]" />}
             <PanelRight />
           </IconButton>
@@ -64,7 +65,51 @@ function DocBody() {
   return (
     <div ref={scroller} id="doc" onScroll={() => window.dispatchEvent(new Event('doc-scroll'))}
       className={cn('min-h-0 flex-1 overflow-auto py-6 [container-type:inline-size]', current?.locked && 'doc-locked')}>
-      {current && <DocView key={current.path} />}
+      {current ? <DocView key={current.path} /> : <Nothing />}
+    </div>
+  );
+}
+
+/** No file open: pick one, or, with nothing to review here, the worktrees and recent repositories that have changes. */
+function Nothing() {
+  const loaded = useStore((s) => s.loaded);
+  const any = useStore((s) => s.files.length > 0);
+  const source = useStore((s) => s.source);
+  const git = useStore((s) => s.git);
+  const recents = useStore((s) => s.recents);
+  useEffect(() => { void loadRecents(); }, []);
+  if (!loaded) return null;
+  if (any) return <p className="grid min-h-full place-items-center text-muted-foreground">Select a file</p>;
+  const ours = new Set(git?.worktrees.map((w) => w.path));
+  const elsewhere = [
+    ...(git?.worktrees ?? []).filter((w) => !w.current && w.changes).map((w) => ({
+      key: w.path, title: w.main ? `${git!.repo.name} · main checkout` : `${git!.repo.name} / ${w.name}`, sub: w.branch ?? w.head, n: w.changes!, go: () => openWorktree(w.path),
+    })),
+    ...recents.filter((r) => r.changes && !ours.has(r.path)).map((r) => ({ key: r.path, title: recentName(r), sub: tilde(r.path), n: r.changes!, go: () => openRecent(r) })),
+  ];
+  return (
+    <div className="flex min-h-full flex-col items-center justify-center gap-5 px-6">
+      <p className="font-medium text-foreground">{nothingText(source)}</p>
+      {elsewhere.length > 0 && (
+        <div className="flex w-full max-w-sm flex-col">
+          <span className="px-2 pb-1 text-xs text-muted-foreground">Changes elsewhere</span>
+          {elsewhere.map((e) => (
+            <button key={e.key} onClick={() => void e.go()} title={e.key}
+              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm text-foreground">{e.title}</span>
+                <span className="truncate font-mono text-xs text-muted-foreground">{e.sub}</span>
+              </span>
+              <Count n={e.n} />
+            </button>
+          ))}
+        </div>
+      )}
+      {git && (
+        <Button variant="outline" onClick={() => set({ switcher: 'branch' })}>
+          <GitBranch />Switch branch or repository
+        </Button>
+      )}
     </div>
   );
 }
@@ -287,13 +332,13 @@ function DocFooter() {
       <span className="flex min-w-0 flex-[1_1_auto] cursor-default items-center gap-1.5 overflow-hidden text-xs whitespace-nowrap text-muted-foreground select-none">
         <StateIcons file={f} names={n} className="size-3.5" />{s.label}
       </span>
-      {f.state === 'working' ? <Button variant="ghost" size="sm" disabled={busy} onClick={act(() => post('release'))}>Unlock</Button>
-        : f.state === 'accepted' ? <Button variant="ghost" size="sm" disabled={busy} onClick={act(() => post('unaccept'))}>Undo accept</Button>
-        : f.state === 'rejected' ? <Button variant="ghost" size="sm" onClick={act(restore)}>Restore</Button>
+      {f.state === 'working' ? <Button variant="ghost" size="default" disabled={busy} onClick={act(() => post('release'))}>Unlock</Button>
+        : f.state === 'accepted' ? <Button variant="ghost" size="default" disabled={busy} onClick={act(() => post('unaccept'))}>Undo accept</Button>
+        : f.state === 'rejected' ? <Button variant="ghost" size="default" onClick={act(restore)}>Restore</Button>
         : f.state === 'skipped' ? (
           <>
-            <Button variant="ghost" size="sm" disabled={busy} onClick={act(() => skip(false))}>Unskip</Button>
-            <Button variant="ghost" size="sm" disabled={busy} onClick={act(() => accept(false))}>Accept</Button>
+            <Button variant="ghost" size="default" disabled={busy} onClick={act(() => skip(false))}>Unskip</Button>
+            <Button variant="ghost" size="default" disabled={busy} onClick={act(() => accept(false))}>Accept</Button>
           </>
         ) : (
           <>
@@ -301,16 +346,16 @@ function DocFooter() {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span tabIndex={current.revertable ? -1 : 0} className="inline-flex">
-                    <Button variant="ghost" size="sm" disabled={busy || !current.revertable} onClick={act(revertAll)}><Undo2 />Revert all edits</Button>
+                    <Button variant="ghost" size="default" disabled={busy || !current.revertable} onClick={act(revertAll)}><Undo2 />Revert all edits</Button>
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>{current.revertable ? 'Back to the text before your first edit' : 'The file changed since your edit'}</TooltipContent>
               </Tooltip>
             )}
             <RejectButton path={current.path} untracked={f.untracked} disabled={busy} />
-            <Button variant="ghost" size="sm" disabled={busy} onClick={act(() => skip(true))}>Skip</Button>
-            <Button variant="ghost" size="sm" disabled={busy} onClick={act(() => accept(false))}>Accept</Button>
-            {next && <Button size="sm" disabled={busy} onClick={act(() => accept(true))}>Accept and next</Button>}
+            <Button variant="ghost" size="default" disabled={busy} onClick={act(() => skip(true))}>Skip</Button>
+            <Button variant="ghost" size="default" disabled={busy} onClick={act(() => accept(false))}>Accept</Button>
+            {next && <Button size="default" disabled={busy} onClick={act(() => accept(true))}>Accept and next</Button>}
           </>
         )}
     </div>
@@ -324,15 +369,15 @@ function RejectButton({ path, untracked, disabled }: { path: string; untracked: 
   return (
     <Popover open={open} onOpenChange={(o) => set({ rejecting: o })}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" disabled={disabled} className="text-destructive hover:text-destructive aria-expanded:text-destructive">Reject</Button>
+        <Button variant="ghost" size="default" disabled={disabled} className="text-destructive hover:text-destructive aria-expanded:text-destructive">Reject</Button>
       </PopoverTrigger>
       <PopoverContent side="top" align="end" className="w-72 gap-3"
         onOpenAutoFocus={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).querySelector<HTMLElement>('[data-confirm]')?.focus(); }}
         onCloseAutoFocus={(e) => e.preventDefault()}>
         <p className="text-[13px] text-body">{what} Restore brings it back.</p>
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={() => set({ rejecting: false })}>Cancel</Button>
-          <Button size="sm" data-confirm onClick={() => { set({ rejecting: false }); void reject(); }}>Reject</Button>
+          <Button variant="ghost" size="default" onClick={() => set({ rejecting: false })}>Cancel</Button>
+          <Button size="default" data-confirm onClick={() => { set({ rejecting: false }); void reject(); }}>Reject</Button>
         </div>
       </PopoverContent>
     </Popover>

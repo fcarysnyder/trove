@@ -1,74 +1,154 @@
-// GitHub Desktop's top-left menus: Current repository (on the desktop the recents and Open
-// repository…), Current worktree (the repository's worktrees) and Current branch (switch here, or open
-// the worktree a branch is checked out in). A server serves one root, so another worktree opens elsewhere.
-import { recentName, type BranchInfo, type Recent } from '@trove/core/types';
-import { BookMarked, Check, ChevronDown, Copy, FolderTree, GitBranch } from 'lucide-react';
-import { useRef, useState, type ReactNode } from 'react';
+// GitHub Desktop's top-left menu as one popover with a tab per thing to switch: Repository (on the
+// desktop the recents and Open repository…), Worktree (only when the repository has more than one) and
+// Branch (switch here, or open the worktree a branch is checked out in), each with its own filter. A
+// server serves one root, so another worktree opens elsewhere.
+import { recentName, type BranchInfo } from '@trove/core/types';
+import { BookMarked, Check, ChevronDown, Copy, FolderTree, Search } from 'lucide-react';
+import { Tabs } from 'radix-ui';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { tilde } from '@/lib/text';
 import { cn } from '@/lib/utils';
-import { loadGit, openWorktree, switchBranch } from './actions';
+import { loadGit, loadRecents, openRecent, openWorktree, switchBranch } from './actions';
 import { Count, IconButton } from './bits';
-import { get, set, useNames, useStore } from './store';
+import { get, set, useNames, useStore, type State } from './store';
 
-// ponytail: home is guessed from the path (/Users/<name>, /home/<name>); the server could send it if that misses.
-const tilde = (p: string) => p.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~');
+type Tab = NonNullable<State['switcher']>;
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const MAIN = 'main checkout';
+let lastTab: Tab = 'repo';
 
 export function Switcher() {
   const git = useStore((s) => s.git);
   const source = useStore((s) => s.source);
-  if (!git) return <strong className="truncate font-semibold text-foreground" title={source?.root}>{source?.name ?? 'Trove'}</strong>;
+  const tab = useStore((s) => s.switcher);
+  const open = !!tab;
+  useEffect(() => {
+    if (!open) return;
+    void loadGit();
+    void loadRecents();
+  }, [open]);
+  if (!git) return <strong className="self-center truncate px-4 font-semibold text-foreground" title={source?.root}>{source?.name ?? 'Trove'}</strong>;
+  const multi = git.worktrees.length > 1;
+  const value = tab === 'worktree' && !multi ? 'branch' : tab;
+  const where = [!git.worktree.main && git.worktree.name, git.branch ?? git.head].filter(Boolean).join(' · ');
+  const tabs: [Tab, string][] = [['repo', 'Repository'], ...(multi ? [['worktree', 'Worktree'] as [Tab, string]] : []), ['branch', 'Branch']];
   return (
-    <div className="flex min-w-0 items-center -ml-2">
-      <RepoMenu />
-      <span className="mx-1 h-6 w-px shrink-0 bg-border" aria-hidden />
-      <WorktreeMenu />
-      <span className="mx-1 h-6 w-px shrink-0 bg-border" aria-hidden />
-      <BranchMenu />
+    <>
+      <Popover open={open} onOpenChange={(on) => set({ switcher: on ? lastTab : null })}>
+        <PopoverTrigger asChild>
+          <Button variant="ghost" title={git.root} aria-label={`Repository ${git.repo.name}, ${where}`}
+            className="h-full w-72 min-w-0 shrink justify-start gap-3 rounded-none border-r px-4 text-left hover:bg-accent aria-expanded:bg-accent [&>svg]:text-muted-foreground">
+            <BookMarked />
+            <span className="flex min-w-0 flex-col">
+              <span className="flex min-w-0 items-center gap-1.5 text-[13px] leading-4 font-semibold text-foreground">
+                <span className="max-w-[240px] truncate">{git.repo.name}</span>
+                {git.dirty > 0 && <Count n={git.dirty} />}
+              </span>
+              <span className="max-w-[280px] truncate font-mono text-[11px] leading-4 font-normal text-muted-foreground">{where}</span>
+            </span>
+            <ChevronDown className="ml-auto size-4" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-96 gap-0 p-0"
+          onOpenAutoFocus={(e) => e.preventDefault()} // the tab's filter focuses itself
+          // The serve dialog opens as the popover closes: focus going back to the trigger would close it again.
+          onCloseAutoFocus={(e) => { if (get().serveRoot) e.preventDefault(); }}>
+          <Tabs.Root value={value ?? 'repo'} onValueChange={(v) => { lastTab = v as Tab; set({ switcher: v as Tab }); }}>
+            <Tabs.List aria-label="Switch" className="flex gap-1 border-b px-2 pt-1.5">
+              {tabs.map(([v, label]) => (
+                <Tabs.Trigger key={v} value={v}
+                  className="-mb-px border-b-2 border-transparent px-2 pt-1 pb-2 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground data-[state=active]:border-foreground data-[state=active]:text-foreground">
+                  {label}
+                </Tabs.Trigger>
+              ))}
+            </Tabs.List>
+            <Tabs.Content value="repo"><RepoTab /></Tabs.Content>
+            {multi && <Tabs.Content value="worktree"><WorktreeTab /></Tabs.Content>}
+            <Tabs.Content value="branch"><BranchTab /></Tabs.Content>
+          </Tabs.Root>
+        </PopoverContent>
+      </Popover>
       <ServeDialog />
+    </>
+  );
+}
+
+interface Row { key: string; title: string; sub?: string; hint?: string; mono?: boolean; current?: boolean; count?: number; mark?: ReactNode; off?: string; pick: () => void }
+
+/** A filter over a list of rows: ↓/↑ move through it, Enter takes the first match, choosing closes the popover. */
+function PickList({ rows, noun, footer }: { rows: Row[]; noun: string; footer?: ReactNode }) {
+  const [q, setQ] = useState('');
+  const input = useRef<HTMLInputElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  // A frame later: opening the popover and clicking a tab both put focus on the tabs after this mounts.
+  useEffect(() => { const id = requestAnimationFrame(() => input.current?.focus()); return () => cancelAnimationFrame(id); }, []);
+  const needle = q.trim().toLowerCase();
+  const shown = rows.filter((r) => `${r.title} ${r.sub ?? ''}`.toLowerCase().includes(needle));
+  const go = (r: Row) => {
+    if (r.off) return;
+    set({ switcher: null });
+    if (!r.current) r.pick();
+  };
+  const nav = (e: ReactKeyboardEvent) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const items = [input.current!, ...list.current!.querySelectorAll<HTMLElement>('button:not(:disabled)')];
+    const k = items.indexOf(document.activeElement as HTMLElement);
+    items[Math.max(0, Math.min(items.length - 1, k + (e.key === 'ArrowDown' ? 1 : -1)))]?.focus();
+  };
+  return (
+    <div onKeyDown={nav}>
+      <div className="relative p-2">
+        <Search className="pointer-events-none absolute top-1/2 left-4.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+        <Input ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Filter ${noun}`} aria-label={`Filter ${noun}`}
+          autoComplete="off" spellCheck={false} className="h-8 pl-8"
+          onKeyDown={(e) => {
+            const first = shown.find((r) => !r.off);
+            if (e.key === 'Enter' && first) { e.preventDefault(); go(first); }
+          }} />
+      </div>
+      <div ref={list} className="max-h-80 overflow-auto px-1 pb-1">
+        {shown.length === 0 && <p className="px-2 py-1.5 text-sm text-muted-foreground">{rows.length ? `No ${noun} match` : `No ${noun}`}</p>}
+        {shown.map((r) => {
+          const row = (
+            <button key={r.key} disabled={!!r.off} onClick={() => go(r)} title={r.hint}
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-accent focus-visible:bg-accent disabled:opacity-50 disabled:hover:bg-transparent">
+              <Check className={cn('size-4 shrink-0 text-muted-foreground', !r.current && 'invisible')} />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className={cn('truncate text-sm text-foreground', r.mono && 'font-mono text-xs')}>{r.title}</span>
+                {r.sub && <span className="truncate text-xs text-muted-foreground">{r.sub}</span>}
+              </span>
+              {!!r.count && <Count n={r.count} />}
+              {r.mark}
+            </button>
+          );
+          // A disabled button takes no pointer events, so its tooltip sits on a wrapper.
+          return r.off ? (
+            <Tooltip key={r.key}>
+              <TooltipTrigger asChild><div>{row}</div></TooltipTrigger>
+              <TooltipContent side="right">{r.off}</TooltipContent>
+            </Tooltip>
+          ) : row;
+        })}
+      </div>
+      {footer && <div className="border-t p-1">{footer}</div>}
     </div>
   );
 }
 
-function Segment({ icon, label, value, extra, title }: { icon: ReactNode; label: string; value: string; extra?: ReactNode; title?: string }) {
-  return (
-    <DropdownMenuTrigger asChild>
-      <Button variant="ghost" title={title} aria-label={`${label}: ${value}`} className="-my-1 h-auto min-w-0 shrink justify-start gap-2 px-2 py-0 text-left [&>svg]:text-muted-foreground">
-        {icon}
-        <span className="flex min-w-0 flex-col">
-          <span className="truncate text-[11px] leading-3 font-normal text-muted-foreground">{label}</span>
-          <span className="flex min-w-0 items-center gap-1.5 text-[13px] leading-4 font-semibold text-foreground">
-            <span className="max-w-[200px] truncate">{value}</span>
-            {extra}
-          </span>
-        </span>
-        <ChevronDown className="size-3.5" />
-      </Button>
-    </DropdownMenuTrigger>
-  );
-}
-
-// The serve dialog opens as the menu closes: focus going back to the trigger would close it again.
-const keepDialog = (e: Event) => { if (get().serveRoot) e.preventDefault(); };
-
-function RepoMenu() {
+function RepoTab() {
   const git = useStore((s) => s.git)!;
-  const [recents, setRecents] = useState<Recent[]>([]);
+  const recents = useStore((s) => s.recents);
   const bridge = window.trove;
-  const ours = new Set([git.root, ...git.worktrees.map((w) => w.path)]); // the worktree menu's
-  const onOpen = (open: boolean) => {
-    if (!open) return;
-    void loadGit();
-    if (bridge) void bridge.recents().then(setRecents, () => setRecents([]));
-  };
+  const ours = new Set([git.repo.root, ...git.worktrees.map((w) => w.path)]); // the worktree tab's
   const openRepo = async () => {
+    set({ switcher: null });
     try {
       const picked = await bridge!.pickFolder();
       if (!picked) return;
@@ -78,147 +158,45 @@ function RepoMenu() {
       toast(errText(e));
     }
   };
-  const recent = recents.filter((r) => !ours.has(r.path));
+  const rows: Row[] = [
+    { key: git.repo.root, title: git.repo.name, sub: tilde(git.repo.root), hint: git.repo.root, current: true, pick: () => {} },
+    ...recents.filter((r) => !ours.has(r.path)).map((r): Row => ({
+      key: r.path, title: recentName(r), sub: tilde(r.path), hint: r.path, count: r.changes ?? 0,
+      off: r.changes === null ? 'Not a git repository' : undefined, pick: () => void openRecent(r),
+    })),
+  ];
   return (
-    <DropdownMenu onOpenChange={onOpen}>
-      <Segment icon={<BookMarked />} label="Current repository" value={git.repo.name} title={git.repo.root} />
-      <DropdownMenuContent align="start" className="w-80" onCloseAutoFocus={keepDialog}>
-        <DropdownMenuItem className="items-start">
-          <Check className="mt-0.5" />
-          <span className="flex min-w-0 flex-col">
-            <span className="truncate text-foreground">{git.repo.name}</span>
-            <span className="truncate text-xs text-muted-foreground" title={git.repo.root}>{tilde(git.repo.root)}</span>
-          </span>
-        </DropdownMenuItem>
-        {bridge && recent.length > 0 && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>Recent</DropdownMenuLabel>
-            {recent.map((r) => (
-              <DropdownMenuItem key={r.path} onSelect={() => void bridge.open({ path: r.path, scope: r.scope, base: r.base }).catch((e) => toast(errText(e)))} className="items-start">
-                <Check className="invisible mt-0.5" />
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate text-foreground">{recentName(r)}</span>
-                  <span className="truncate text-xs text-muted-foreground" title={r.path}>{tilde(r.path)}</span>
-                </span>
-              </DropdownMenuItem>
-            ))}
-          </>
-        )}
-        {bridge && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => void openRepo()}><Check className="invisible" />Open repository…</DropdownMenuItem>
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <PickList rows={rows} noun="repositories"
+      footer={bridge && <Button variant="ghost" size="default" className="w-full justify-start font-normal" onClick={() => void openRepo()}>Open repository…</Button>} />
   );
 }
 
-const MAIN = 'main checkout';
-
-function WorktreeMenu() {
+function WorktreeTab() {
   const git = useStore((s) => s.git)!;
-  return (
-    <DropdownMenu onOpenChange={(open) => { if (open) void loadGit(); }}>
-      <Segment icon={<FolderTree />} label="Current worktree" value={git.worktree.main ? MAIN : git.worktree.name} title={git.root} />
-      <DropdownMenuContent align="start" className="w-80" onCloseAutoFocus={keepDialog}>
-        {git.worktrees.map((w) => (
-          <DropdownMenuItem key={w.path} onSelect={() => { if (!w.current) void openWorktree(w.path); }} className="items-start">
-            <Check className={cn('mt-0.5', !w.current && 'invisible')} />
-            <span className="flex min-w-0 flex-col">
-              <span className="truncate text-foreground" title={w.path}>{w.main ? MAIN : w.name}</span>
-              <span className="truncate font-mono text-xs text-muted-foreground">{w.branch ?? w.head}</span>
-            </span>
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
+  const rows = git.worktrees.map((w): Row => ({
+    key: w.path, title: w.main ? MAIN : w.name, sub: w.branch ?? w.head, hint: w.path, current: w.current, count: w.changes,
+    pick: () => void openWorktree(w.path),
+  }));
+  return <PickList rows={rows} noun="worktrees" />;
 }
 
-function BranchMenu() {
+function BranchTab() {
   const git = useStore((s) => s.git)!;
   const locked = useStore((s) => s.files.some((f) => f.state === 'working'));
   const n = useNames();
-  const [filter, setFilter] = useState('');
-  const [open, setOpen] = useState(false);
-  const input = useRef<HTMLInputElement>(null);
-  const shown = git.branches.filter((b) => b.name.toLowerCase().includes(filter.trim().toLowerCase()));
-  const choose = (b: BranchInfo) => {
-    if (b.current) return;
-    if (b.worktree) void openWorktree(b.worktree);
-    else void switchBranch(b.name);
-  };
-  const busy = `${n.Agent} is working on a file`;
-  return (
-    <DropdownMenu open={open} onOpenChange={(on) => {
-      setOpen(on);
-      if (!on) return;
-      setFilter('');
-      void loadGit();
-      requestAnimationFrame(() => input.current?.focus()); // after the menu takes focus
-    }}>
-      <Segment
-        icon={<GitBranch />}
-        label="Current branch"
-        value={git.branch ?? git.head}
-        extra={git.dirty > 0 && <Count n={git.dirty} />}
-      />
-      <DropdownMenuContent align="start" className="w-80 pt-0" onCloseAutoFocus={keepDialog}>
-        <div className="sticky top-0 z-10 -mx-1 bg-popover px-1 pt-1 pb-1">
-          <Input
-            ref={input}
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter"
-            aria-label="Filter branches"
-            className="h-8"
-            // The menu's typeahead would take every key; the filter keeps them. Down moves into the list, Enter takes the first match.
-            onKeyDown={(e) => {
-              if (e.key === 'Escape' || e.key === 'Tab') return;
-              e.stopPropagation();
-              if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                e.currentTarget.closest('[role=menu]')?.querySelector<HTMLElement>('[role=menuitem]:not([data-disabled])')?.focus();
-              }
-              if (e.key === 'Enter' && shown[0] && !(locked && !shown[0].worktree)) {
-                e.preventDefault();
-                setOpen(false);
-                choose(shown[0]);
-              }
-            }}
-          />
-        </div>
-        {shown.length === 0 && <div className="px-2 py-1.5 text-sm text-muted-foreground">No branches match</div>}
-        {shown.map((b) => {
-          const off = locked && !b.current && !b.worktree;
-          const item = (
-            <DropdownMenuItem key={b.name} disabled={off} onSelect={() => choose(b)}
-              // Hovering does not steal focus from the filter, so typing keeps filtering.
-              onPointerMove={(e) => e.preventDefault()} onPointerLeave={(e) => e.preventDefault()} className="hover:bg-accent">
-              <Check className={cn(!b.current && 'invisible')} />
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">{b.name}</span>
-              {b.worktree && (
-                <Tooltip>
-                  <TooltipTrigger asChild><FolderTree className="text-muted-foreground" aria-label={`Checked out in ${b.worktree}`} /></TooltipTrigger>
-                  <TooltipContent side="right">Checked out in {tilde(b.worktree)}</TooltipContent>
-                </Tooltip>
-              )}
-            </DropdownMenuItem>
-          );
-          // A disabled item takes no pointer events, so its tooltip sits on a wrapper.
-          return off ? (
-            <Tooltip key={b.name}>
-              <TooltipTrigger asChild><div>{item}</div></TooltipTrigger>
-              <TooltipContent side="right">{busy}</TooltipContent>
-            </Tooltip>
-          ) : item;
-        })}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
+  const choose = (b: BranchInfo) => (b.worktree ? openWorktree(b.worktree) : switchBranch(b.name));
+  const rows = git.branches.map((b): Row => ({
+    key: b.name, title: b.name, mono: true, current: b.current,
+    off: locked && !b.current && !b.worktree ? `${n.Agent} is working on a file` : undefined,
+    mark: b.worktree && (
+      <Tooltip>
+        <TooltipTrigger asChild><FolderTree className="size-4 shrink-0 text-muted-foreground" aria-label={`Checked out in ${b.worktree}`} /></TooltipTrigger>
+        <TooltipContent side="right">Checked out in {tilde(b.worktree)}</TooltipContent>
+      </Tooltip>
+    ),
+    pick: () => void choose(b),
+  }));
+  return <PickList rows={rows} noun="branches" />;
 }
 
 /** Without the desktop there is no window to open: the command that serves the other worktree. */

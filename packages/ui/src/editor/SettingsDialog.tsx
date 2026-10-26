@@ -80,7 +80,7 @@ function Body() {
       <>
         <Row label="Theme" htmlFor="set-theme">
           <Select value={draft.theme} onValueChange={(v) => edit({ theme: v as Theme })}>
-            <SelectTrigger id="set-theme" size="sm" className="w-[160px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger id="set-theme" size="default" className="w-[160px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="system">System</SelectItem>
               <SelectItem value="light">Light</SelectItem>
@@ -110,7 +110,7 @@ function Body() {
       <>
         <Row label="Scope" htmlFor="set-scope">
           <Select value={draft.scope} onValueChange={(v) => edit({ scope: v as GitScope })}>
-            <SelectTrigger id="set-scope" size="sm" className="w-[200px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger id="set-scope" size="default" className="w-[200px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="uncommitted">Uncommitted changes</SelectItem>
               <SelectItem value="branch">Branch vs base</SelectItem>
@@ -134,7 +134,7 @@ function Body() {
         <div className="flex h-8 items-center gap-2 px-1.5 font-semibold text-foreground"><Gear className="size-4" aria-hidden />Settings</div>
         <nav aria-label="Settings categories" className="flex flex-col gap-0.5">
           {CATEGORIES.map((c) => (
-            <Button key={c} variant="ghost" size="sm" aria-current={c === category ? 'page' : undefined} onClick={() => setCategory(c)}
+            <Button key={c} variant="ghost" size="default" aria-current={c === category ? 'page' : undefined} onClick={() => setCategory(c)}
               className={cn('w-full justify-start px-2', c === category && 'bg-accent text-foreground')}>
               {c}
             </Button>
@@ -151,11 +151,11 @@ function Body() {
         </div>
         <div className="flex shrink-0 items-center justify-end gap-2.5 border-t px-5 py-3">
           {changes === 0 ? (
-            <DialogClose asChild><Button variant="ghost" size="sm">Cancel</Button></DialogClose>
+            <DialogClose asChild><Button variant="ghost" size="default">Cancel</Button></DialogClose>
           ) : (
-            <Button variant="ghost" size="sm" onClick={clear}>Clear changes</Button>
+            <Button variant="ghost" size="default" onClick={clear}>Clear changes</Button>
           )}
-          <Button size="sm" disabled={!changes || saving} onClick={() => void save()}>
+          <Button size="default" disabled={!changes || saving} onClick={() => void save()}>
             {changes ? `Save ${plural(changes, 'change')}` : 'Save'}
           </Button>
         </div>

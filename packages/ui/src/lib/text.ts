@@ -10,3 +10,5 @@ export const kindOf = (path: string, kind?: DocKind): DocKind =>
   kind ?? (/\.html?$/i.test(path) ? 'html' : /\.txt$/i.test(path) ? 'text' : 'markdown');
 export const mod = typeof navigator !== 'undefined' && /Mac/.test(navigator.userAgent) ? 'Cmd' : 'Ctrl';
 export const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+// ponytail: home is guessed from the path (/Users/<name>, /home/<name>); the server could send it if that misses.
+export const tilde = (p: string) => p.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~');

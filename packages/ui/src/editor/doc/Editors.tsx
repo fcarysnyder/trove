@@ -110,10 +110,10 @@ export function InlineEditor({ editing }: { editing: Editing }) {
         }}
       />
       <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground" style={{ marginBottom: marginBottom ?? 12 }}>
-        <Button variant="ghost" size="xs" onClick={() => void save()}>Save<Kbd>{SAVE_KEY}</Kbd></Button>
-        <Button variant="ghost" size="xs" onClick={cancelEdit}>Cancel<Kbd>Esc</Kbd></Button>
+        <Button variant="ghost" size="sm" onClick={() => void save()}>Save<Kbd>{SAVE_KEY}</Kbd></Button>
+        <Button variant="ghost" size="sm" onClick={cancelEdit}>Cancel<Kbd>Esc</Kbd></Button>
         <IconButton label="Expand" onClick={() => expandEdit(value)}><Maximize2 /></IconButton>
-        {prior && <Button variant="ghost" size="xs" onClick={() => { set({ editing: null }); void revertEdit(current.path, prior); }}><Undo2 />Revert</Button>}
+        {prior && <Button variant="ghost" size="sm" onClick={() => { set({ editing: null }); void revertEdit(current.path, prior); }}><Undo2 />Revert</Button>}
         {msg && <span role="alert" className="text-destructive">{msg}</span>}
       </div>
     </div>
@@ -172,9 +172,9 @@ function ModalBody({ editing }: { editing: Editing }) {
       <div className="flex items-center gap-2 border-t px-4 py-2 text-xs text-muted-foreground">
         {msg && <span role="alert" className="text-destructive">{msg}</span>}
         <span className="flex-1" />
-        {prior && <Button variant="ghost" size="sm" onClick={() => { set({ editing: null }); void revertEdit(current.path, prior); }}><Undo2 />Revert</Button>}
-        <Button variant="ghost" size="sm" onClick={cancelEdit}>Cancel</Button>
-        <Button size="sm" onClick={() => void save()}>Save<Kbd className="bg-primary-foreground/15 text-primary-foreground">{SAVE_KEY}</Kbd></Button>
+        {prior && <Button variant="ghost" size="default" onClick={() => { set({ editing: null }); void revertEdit(current.path, prior); }}><Undo2 />Revert</Button>}
+        <Button variant="ghost" size="default" onClick={cancelEdit}>Cancel</Button>
+        <Button size="default" onClick={() => void save()}>Save<Kbd className="bg-primary-foreground/15 text-primary-foreground">{SAVE_KEY}</Kbd></Button>
       </div>
     </>
   );

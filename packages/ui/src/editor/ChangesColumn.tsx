@@ -43,7 +43,7 @@ export function ChangesColumn() {
   };
 
   let body: ReactNode;
-  if (!current) body = null;
+  if (!current) body = <p className="px-4 py-3 text-muted-foreground">No file open</p>;
   else if (scope === 'file') {
     body = composer || own ? rowsOf(current) : <p className="px-4 py-3 text-muted-foreground">No comments or edits on this file</p>;
   } else {
@@ -68,12 +68,12 @@ export function ChangesColumn() {
         <span className="flex flex-1 items-center gap-1.5 font-semibold text-foreground" aria-label={shown ? `Changes, ${plural(shown, 'change')}` : 'Changes'}>
           Changes{shown > 0 && <Count n={shown} />}
         </span>
-        <IconButton label="Hide changes" tip="Hide changes (])" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
+        <IconButton side="bottom" label="Hide changes" tip="Hide changes (])" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
       </div>
       <ToggleGroup type="single" value={scope} onValueChange={(v) => v && setScope(v as 'file' | 'all')} aria-label="Comments shown" spacing={0}
         className="mx-4 my-2 w-auto shrink-0 gap-0.5 rounded-lg bg-card p-0.5">
         {(['file', 'all'] as const).map((v) => (
-          <ToggleGroupItem key={v} value={v} size="sm" className="h-6 flex-1 rounded-md! px-2 text-xs text-muted-foreground data-[state=on]:bg-accent data-[state=on]:text-foreground">
+          <ToggleGroupItem key={v} value={v} size="default" className="h-8 flex-1 rounded-md! px-2 text-xs text-muted-foreground data-[state=on]:bg-accent data-[state=on]:text-foreground">
             {v === 'file' ? 'This file' : 'All files'}
           </ToggleGroupItem>
         ))}
@@ -125,8 +125,8 @@ function NoteField({ value, placeholder, verb, submit, cancel }: { value: string
           if (e.key === 'Escape') { e.preventDefault(); cancel(); }
         }} />
       <div className="my-2 flex items-center gap-2">
-        <Button variant="ghost" size="xs" onClick={() => submit(text.trim())}>{verb}<Kbd>{mod === 'Cmd' ? '⌘↵' : 'Ctrl ↵'}</Kbd></Button>
-        <Button variant="ghost" size="xs" onClick={cancel}>Cancel</Button>
+        <Button variant="ghost" size="sm" onClick={() => submit(text.trim())}>{verb}<Kbd>{mod === 'Cmd' ? '⌘↵' : 'Ctrl ↵'}</Kbd></Button>
+        <Button variant="ghost" size="sm" onClick={cancel}>Cancel</Button>
       </div>
     </>
   );
@@ -186,7 +186,7 @@ function EditRow({ path, x, locked }: { path: string; x: BlockEdit; locked: bool
             <Tooltip>
               <TooltipTrigger asChild>
                 <span tabIndex={x.ok ? -1 : 0} className="inline-flex">
-                  <Button variant="ghost" size="icon-xs" aria-label="Revert this edit" disabled={!x.ok} className="text-muted-foreground [&_svg]:size-4" onClick={() => void revertEdit(path, x)}><Undo2 /></Button>
+                  <Button variant="ghost" size="icon-sm" aria-label="Revert this edit" disabled={!x.ok} className="text-muted-foreground [&_svg]:size-4" onClick={() => void revertEdit(path, x)}><Undo2 /></Button>
                 </span>
               </TooltipTrigger>
               <TooltipContent>{x.ok ? 'Revert this edit' : 'The text changed since your edit'}</TooltipContent>
@@ -237,12 +237,12 @@ function SendButton() {
   };
   return (
     <ButtonGroup className="ml-auto min-w-0">
-      <Button variant="tier2" size="sm" className="min-w-0 truncate" disabled={!comments || offline} onClick={(e) => { if (e.detail <= 1) void send({}); }}>
+      <Button variant="tier2" size="default" className="min-w-0 truncate" disabled={!comments || offline} onClick={(e) => { if (e.detail <= 1) void send({}); }}>
         <span className="truncate">{comments ? `Send all (${plural(comments, 'comment')}, ${plural(withComments, 'file')})` : 'Send all'}</span>
       </Button>
       <DropdownMenu onOpenChange={(o) => { if (o) void loadAll().catch(() => {}); }}>
         <DropdownMenuTrigger asChild>
-          <Button variant="tier2" size="icon-sm" aria-label="More send options" disabled={!anyDrafts || offline} className="border-l border-black/25">
+          <Button variant="tier2" size="icon" aria-label="More send options" disabled={!anyDrafts || offline} className="border-l border-black/25">
             <ChevronDown />
           </Button>
         </DropdownMenuTrigger>

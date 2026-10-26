@@ -14,6 +14,7 @@ import { onKey } from './keys';
 import { SelectionToolbar } from './SelectionToolbar';
 import { SettingsDialog } from './SettingsDialog';
 import { get, set, useStore } from './store';
+import { TitleStrip } from './bits';
 import { TopBar } from './TopBar';
 import { ModalEditor } from './doc/Editors';
 
@@ -39,7 +40,8 @@ export function App() {
   }, []);
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="grid h-screen grid-rows-[auto_minmax(0,1fr)]">
+      <div className="grid h-screen grid-rows-[auto_auto_minmax(0,1fr)]">
+        <TitleStrip />
         <TopBar />
         <Columns />
       </div>
