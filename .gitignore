@@ -2,7 +2,7 @@ node_modules/
 dist/
 !plugins/trove/dist/
 out/
-release/
+apps/desktop/release/
 .DS_Store
 *.log
 .vite/

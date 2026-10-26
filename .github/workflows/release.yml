@@ -1,0 +1,130 @@
+name: Release
+
+# A pushed v<version> tag builds the Mac app on Apple silicon and publishes a GitHub Release with
+# the installer, its checksum, the CLI bundle and notes from CHANGELOG.md. Pull requests that touch
+# the app run the same build and checks without publishing. See docs/DISTRIBUTION.md.
+
+on:
+  push:
+    tags: ['v*.*.*']
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/release/**
+      - apps/desktop/**
+      - packages/ui/**
+      - packages/core/**
+      - design/icon/**
+      - CHANGELOG.md
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package macOS app
+    runs-on: macos-15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags, for the release notes' compare link
+
+      - name: Check version
+        id: version
+        run: |
+          tag=""
+          if [ "$GITHUB_REF_TYPE" = tag ]; then tag="$GITHUB_REF_NAME"; fi
+          echo "version=$(node scripts/release/check-version.mjs $tag)" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v4 # version from package.json's packageManager
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Build the installer
+        run: pnpm --filter @trove/desktop dist
+
+      - name: Check the app
+        working-directory: apps/desktop/release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          app=mac-arm64/Trove.app
+          plist="$app/Contents/Info.plist"
+          test "$(plutil -extract CFBundleShortVersionString raw "$plist")" = "$VERSION"
+          icon="$(plutil -extract CFBundleIconFile raw "$plist")"
+          cmp "$app/Contents/Resources/${icon%.icns}.icns" ../assets/icon.icns
+          codesign --verify --deep --strict "$app"
+          codesign -dv "$app" 2>&1 | grep -q 'Signature=adhoc'
+          lipo -archs "$app/Contents/MacOS/Trove" | grep -qx arm64
+          test -f "Installer-Trove-$VERSION-arm64.dmg"
+          echo "Trove $VERSION: version, icon, ad-hoc signature and arch check out"
+
+      - name: Stage release assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release" && cd "$RUNNER_TEMP/release"
+          dmg="Installer-Trove-$VERSION-arm64.dmg"
+          cp "$GITHUB_WORKSPACE/apps/desktop/release/$dmg" .
+          cp "$GITHUB_WORKSPACE/plugins/trove/dist/trove.mjs" "trove-$VERSION.mjs"
+          shasum -a 256 "$dmg" > "Checksum-Trove-$VERSION-arm64.dmg.sha256"
+          shasum -a 256 "trove-$VERSION.mjs" > "Checksum-trove-$VERSION.mjs.sha256"
+          node "$GITHUB_WORKSPACE/scripts/release/release-notes.mjs" "$VERSION" --repo "$GITHUB_REPOSITORY" > release-notes.md
+          ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trove-${{ steps.version.outputs.version }}
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    if: github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.package.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: trove-${{ needs.package.outputs.version }}
+          path: release
+
+      - name: Attest the installer and CLI
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release/Installer-Trove-${{ needs.package.outputs.version }}-arm64.dmg
+            release/trove-${{ needs.package.outputs.version }}.mjs
+
+      - name: Create the release
+        working-directory: release
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "Installer-Trove-$VERSION-arm64.dmg" \
+            "Checksum-Trove-$VERSION-arm64.dmg.sha256" \
+            "trove-$VERSION.mjs" \
+            "Checksum-trove-$VERSION.mjs.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Trove $VERSION" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            --latest

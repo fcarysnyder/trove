@@ -49,6 +49,8 @@ to get out of sync with the repository, and nothing to clean up when you stop.
 
 ## Install
 
+**[Download Trove for Mac](https://github.com/fcarysnyder/trove/releases/latest)** (Apple silicon) · [Changelog](CHANGELOG.md) · [All releases](https://github.com/fcarysnyder/trove/releases)
+
 ### Claude Code plugin
 
 ```
@@ -61,7 +63,9 @@ URL, applies the comments you send and releases each file when it is done.
 
 ### CLI
 
-Trove is not on npm yet. From a checkout:
+Trove is not on npm yet. Each [release](https://github.com/fcarysnyder/trove/releases/latest) has the CLI as
+one file, `trove-<version>.mjs`, that runs with Node 22: `node trove-<version>.mjs serve --root <repo>`.
+From a checkout:
 
 ```sh
 pnpm install && pnpm build
@@ -83,14 +87,23 @@ trove reply "<summary>"                              answer a question the revie
 
 ### Desktop app
 
+Download `Installer-Trove-<version>-arm64.dmg` from the
+[latest release](https://github.com/fcarysnyder/trove/releases/latest), open it and drag Trove to
+Applications. It runs on Apple silicon Macs. Trove is not notarized yet, so the first time you open
+it macOS blocks it: open System Settings › Privacy & Security and choose **Open Anyway**. You only
+need to do this once.
+
+The app opens a repository, picks a worktree and branch, and can start Claude Code or Codex in
+Terminal already attached to that window's server. Each repository gets its own window and its own
+server on a random local port.
+
+To run it from a checkout instead:
+
 ```sh
 pnpm install && pnpm dev:desktop
 ```
 
-The app opens a repository, picks a worktree and branch, and can start Claude Code or Codex in
-Terminal already attached to that window's server. Each repository gets its own window and its own
-server on a random local port. Packaging with electron-builder is wired up but untested outside
-macOS.
+How releases are built, signed and published is in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
 
 ## Working with an agent
 
