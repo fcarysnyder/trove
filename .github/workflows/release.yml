@@ -67,16 +67,30 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          # Every check runs and reports by name, so one failure doesn't hide the rest.
           app=mac-arm64/Trove.app
           plist="$app/Contents/Info.plist"
-          test "$(plutil -extract CFBundleShortVersionString raw "$plist")" = "$VERSION"
-          icon="$(plutil -extract CFBundleIconFile raw "$plist")"
-          cmp "$app/Contents/Resources/${icon%.icns}.icns" ../assets/icon.icns
-          codesign --verify --deep --strict "$app"
-          codesign -dv "$app" 2>&1 | grep -q 'Signature=adhoc'
-          lipo -archs "$app/Contents/MacOS/Trove" | grep -qx arm64
-          test -f "Installer-Trove-$VERSION-arm64.dmg"
-          echo "Trove $VERSION: version, icon, ad-hoc signature and arch check out"
+          failed=0
+          check() { # name, then a command that must succeed
+            local name="$1"; shift
+            if out="$("$@" 2>&1)"; then echo "ok   $name"; else echo "::error title=$name::${out//$'\n'/%0A}"; failed=1; fi
+          }
+          version_is() { v="$(plutil -extract CFBundleShortVersionString raw "$plist")"; [ "$v" = "$VERSION" ] || { echo "Info.plist says $v, expected $VERSION"; return 1; }; }
+          icon_is_ours() {
+            icon="$(plutil -extract CFBundleIconFile raw "$plist")" || return 1
+            file="$app/Contents/Resources/${icon%.icns}.icns"
+            cmp "$file" ../assets/icon.icns || { echo "CFBundleIconFile=$icon; $(ls -l "$app/Contents/Resources" | grep -i icns)"; return 1; }
+          }
+          adhoc() { d="$(codesign -dv "$app" 2>&1)"; grep -q 'Signature=adhoc' <<<"$d" || { echo "$d"; return 1; }; }
+          arm64() { a="$(lipo -archs "$app/Contents/MacOS/Trove")"; [ "$a" = arm64 ] || { echo "archs: $a"; return 1; }; }
+          check "Version is $VERSION" version_is
+          check "Icon is assets/icon.icns" icon_is_ours
+          check "Signature verifies" codesign --verify --deep --strict "$app"
+          check "Signed ad hoc" adhoc
+          check "Built for arm64" arm64
+          check "Installer is named for the release" test -f "Installer-Trove-$VERSION-arm64.dmg"
+          ls -l . "$app/Contents/Resources" | head -40
+          exit $failed
 
       - name: Stage release assets
         env:
