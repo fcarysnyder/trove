@@ -14,7 +14,8 @@ electronDist: node_modules/electron/dist
 npmRebuild: false
 mac:
   target: [dir, dmg]
-  icon: assets/icon.png
+  # icon.icns carries simplified 16/32pt art; regenerate with design/icon/src/export.py
+  icon: assets/icon.icns
   category: public.app-category.developer-tools
   identity: null
   notarize: false

@@ -1,3 +1,5 @@
+<img src="design/icon/macos/icon-dark.png" width="128" alt="Trove app icon: an orange T of blocks inside a glass cube">
+
 # Trove
 
 Trove is a local editor for markdown and HTML that an AI agent wrote. It lists the changed
