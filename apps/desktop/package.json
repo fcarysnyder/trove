@@ -9,8 +9,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "package": "electron-vite build && electron-builder --mac --dir",
-    "test": "vitest run"
+    "package": "electron-vite build && electron-builder --mac --dir"
   },
   "dependencies": {
     "@trove/core": "workspace:*"

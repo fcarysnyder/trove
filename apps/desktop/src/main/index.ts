@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { probeGit, serve, type App, type GitScope, type OpenRequest, type Recent } from '@trove/core';
 
-const uiDir = join(app.getAppPath(), 'out/ui');
+const uiDir = join(import.meta.dirname, '../ui'); // out/main -> out/ui, however Electron was launched
 const startHtml = join(uiDir, 'start.html');
 const preload = join(import.meta.dirname, '../preload/index.cjs');
 const recentsFile = () => join(app.getPath('userData'), 'recents.json');

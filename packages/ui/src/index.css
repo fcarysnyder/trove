@@ -1,0 +1,115 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+@import "./doc.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: 'Inter Variable', Inter, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  /* Trove's own: body text, and the state colours. */
+  --color-body: var(--body);
+  --color-good: var(--good);
+  --color-dirty: var(--dirty);
+  --color-cool: var(--cool);
+  --color-agent: var(--agent);
+  --color-bad: var(--destructive);
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: var(--radius);
+  --radius-xl: 0.75rem;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* PLAN.md's table: shadcn neutral tokens tuned to the old page. */
+:root {
+  --radius: 0.5rem;
+  --background: #ffffff;
+  --foreground: #111111;
+  --body: #555555;
+  --card: #f5f5f5;
+  --card-foreground: #111111;
+  --popover: #f5f5f5;
+  --popover-foreground: #111111;
+  --primary: #111111;
+  --primary-foreground: #ffffff;
+  --secondary: #e5e5e5;
+  --secondary-foreground: #111111;
+  --muted: #eeeeee;
+  --muted-foreground: #737373;
+  --accent: #eeeeee;
+  --accent-foreground: #111111;
+  --destructive: #dc2626;
+  --border: #d4d4d4;
+  --input: #cccccc;
+  --ring: #111111;
+  --good: #2a8101;
+  --dirty: #a78800;
+  --cool: #0276a1;
+  --agent: #c2410c;
+  --hl-comment: rgb(255 208 0 / 0.35);
+  --hl-flash: rgb(255 208 0 / 0.7);
+  --hl-added: rgb(42 129 1 / 0.16);
+  --hl-mine: rgb(0 0 0 / 0.1);
+  color-scheme: light;
+}
+:root[data-agent='other'] { --agent: #0f766e; }
+
+.dark {
+  --background: #111111;
+  --foreground: #ffffff;
+  --body: #cccccc;
+  --card: #222222;
+  --card-foreground: #ffffff;
+  --popover: #222222;
+  --popover-foreground: #ffffff;
+  --primary: #ffffff;
+  --primary-foreground: #000000;
+  --secondary: #444444;
+  --secondary-foreground: #cccccc;
+  --muted: #333333;
+  --muted-foreground: #999999;
+  --accent: #333333;
+  --accent-foreground: #ffffff;
+  --destructive: #ef4e4e;
+  --border: #444444;
+  --input: #444444;
+  --ring: #ffffff;
+  --good: #46d401;
+  --dirty: #ffd000;
+  --cool: #04b9fb;
+  --agent: #d97757;
+  --hl-comment: rgb(255 208 0 / 0.3);
+  --hl-added: rgb(70 212 1 / 0.2);
+  --hl-mine: rgb(255 255 255 / 0.15);
+  color-scheme: dark;
+}
+.dark[data-agent='other'] { --agent: #2dd4bf; }
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html { @apply font-sans; }
+  body { @apply bg-background text-body; font-size: 14px; line-height: 1.5; }
+}
+

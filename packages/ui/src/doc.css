@@ -1,0 +1,82 @@
+/* The document column: markdown rendered from marked's HTML (no utility classes reach it), the
+   gutters, the Show new layers and the comment highlights. Everything measured for anchors lives in
+   .block-body; gutters, bars and markers sit beside it. */
+.md { max-width: 856px; margin: 0 auto; padding: 0 48px; }
+.md .block { position: relative; border-radius: var(--radius-sm); padding: 0 8px; margin: 0 -8px; }
+.md .block:hover { background: var(--card); }
+.doc-locked .block:hover, .doc-editing .block:hover { background: none; }
+.md .edit-btn { position: absolute; top: 0; left: -36px; opacity: 0; }
+.md .block:hover .edit-btn, .md .edit-btn:focus-visible { opacity: 1; }
+.doc-locked .edit-btn, .doc-editing .edit-btn { display: none; }
+.md .marker { position: absolute; top: 0; left: calc(100% + 4px); }
+@container (max-width: 520px) {
+  .md { padding: 0 16px; }
+  .doc-frame { width: calc(100% - 32px) !important; margin: 0 16px !important; }
+  .md .edit-btn { left: auto; right: 2px; top: 2px; background: var(--card); }
+  .md .marker { display: none; }
+}
+
+.block-body :is(h1, h2, h3, h4, h5, h6, strong) { color: var(--foreground); }
+.block-body h1 { font-size: 24px; font-weight: 700; margin: 0.67em 0; }
+.block-body h2 { font-size: 20px; font-weight: 700; margin: 0.83em 0; }
+.block-body h3 { font-size: 16px; font-weight: 700; margin: 1em 0; }
+.block-body :is(h4, h5, h6) { font-weight: 700; margin: 1.33em 0; }
+.block-body p, .block-body pre, .block-body table, .block-body blockquote, .block-body hr { margin: 1em 0; }
+.block-body :is(ul, ol) { margin: 1em 0; padding-left: 40px; }
+.block-body ul { list-style: disc; }
+.block-body ol { list-style: decimal; }
+.block-body :is(ul, ol) :is(ul, ol) { margin: 0; }
+.block-body a { color: var(--foreground); text-decoration: underline; }
+.block-body code { background: var(--card); border-radius: var(--radius-sm); padding: 1px 4px; font-size: 13px; font-family: var(--font-mono); }
+.block-body pre { background: var(--card); padding: 12px; border-radius: var(--radius); overflow: auto; }
+.block-body pre code { padding: 0; }
+.block-body table { display: block; overflow-x: auto; border-collapse: collapse; }
+.block-body :is(th, td) { border: 1px solid var(--border); padding: 4px 8px; vertical-align: top; }
+.block-body th { text-align: left; color: var(--foreground); }
+.block-body blockquote { border-left: 3px solid var(--border); padding-left: 12px; }
+.block-body hr { border: 0; border-top: 1px solid var(--border); }
+.block-body img { max-width: 100%; }
+.block-body pre.fm, .preview pre.fm { color: var(--muted-foreground); font-size: 12px; background: var(--card); padding: 12px; border-radius: var(--radius); white-space: pre-wrap; }
+.block-body pre.text { background: none; padding: 0; white-space: pre-wrap; font: 13px/1.6 var(--font-mono); }
+
+/* Show new: flat bars in the left gutter beside the changed lines, a red bar where a block went. */
+.chg, .gone::before { position: absolute; left: -7px; width: 6px; border-left: 2px solid var(--good); }
+.chg.cut { border-color: var(--destructive); }
+.chg.agent { border-color: var(--agent); }
+.chg.mine { border-color: var(--foreground); }
+.gone { position: relative; height: 0; margin: 0 -8px; }
+.gone::before { content: ''; top: -8px; height: 16px; border-color: var(--destructive); }
+::highlight(added) { background: var(--hl-added); }
+::highlight(agent) { background: color-mix(in srgb, var(--agent) 28%, transparent); }
+::highlight(mine) { background: var(--hl-mine); }
+::highlight(comment) { background: var(--hl-comment); }
+::highlight(flash) { background: var(--hl-flash); }
+/* Run badges: the number is CSS content, so the block's text (what anchors measure) is untouched. */
+.new-n { display: inline-flex; align-items: center; justify-content: center; min-width: 12px; height: 12px; margin: 0 2px; padding: 0 2px;
+  border-radius: 9999px; background: var(--good); color: #000; font: 600 9px/12px var(--font-sans); vertical-align: text-top; user-select: none; }
+.new-n::after { content: attr(data-n); }
+.new-n.agent { background: var(--agent); }
+.new-n.mine { background: var(--foreground); color: var(--background); }
+
+/* An editor's tint lives in a mirror behind its transparent textarea. */
+.tint-wrap { position: relative; min-height: 0; }
+.tint-wrap > textarea { position: relative; }
+.tint-mirror { position: absolute; inset: 0; overflow: hidden; border-style: solid; border-color: transparent; color: transparent; pointer-events: none; }
+.tint-mirror mark { background: var(--hl-added); color: transparent; }
+.tint-mirror mark.agent { background: color-mix(in srgb, var(--agent) 28%, transparent); }
+.tint-mirror mark.mine { background: var(--hl-mine); }
+textarea.quiet { display: block; width: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; resize: none; overflow: hidden;
+  background: transparent; color: var(--foreground); font: inherit; }
+textarea.quiet:focus { outline: 1px solid var(--border); outline-offset: 4px; }
+
+.flash { animation: flash 1.2s ease-out; }
+@keyframes flash { from { outline: 1px solid var(--foreground); } to { outline: 1px solid transparent; } }
+.folder { overflow: hidden; text-overflow: ellipsis; direction: rtl; white-space: nowrap; }
+
+/* Side columns ease open and shut, except while dragging, on load, or with reduced motion. */
+[data-slot='resizable-panel-group'].animate:not(:has([data-separator='active'])) > [data-panel] { transition: flex-grow 220ms var(--ease-out); }
+@media (prefers-reduced-motion: reduce) {
+  [data-slot='resizable-panel-group'].animate > [data-panel] { transition: none; }
+  .animate-spin { animation-duration: 3s; }
+  .flash { animation: none; }
+}
