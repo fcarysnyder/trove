@@ -1,0 +1,37 @@
+import { execFileSync, spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createInterface } from 'node:readline';
+import { expect, test } from 'vitest';
+
+const bundle = new URL('../dist/trove.mjs', import.meta.url).pathname;
+const firstLine = (args: string[]) => new Promise<{ line: string; kill: () => void }>((ok, fail) => {
+  const child = spawn(process.execPath, [bundle, ...args], { stdio: ['ignore', 'pipe', 'inherit'] });
+  child.on('error', fail);
+  createInterface({ input: child.stdout }).once('line', (line) => ok({ line, kill: () => child.kill() }));
+});
+
+test('the bundle builds, serves a folder and prints the done command', async () => {
+  execFileSync(process.execPath, [new URL('../build.mjs', import.meta.url).pathname]);
+  const root = mkdtempSync(join(tmpdir(), 'trove-cli-'));
+  writeFileSync(join(root, 'a.md'), '# A\n');
+  writeFileSync(join(root, 'b.md'), '# B\n');
+  const { line, kill } = await firstLine(['serve', '--root', root, '--port', '0']);
+  let busy;
+  try {
+    const port = Number(line.match(/127\.0\.0\.1:(\d+);/)?.[1]);
+    expect(line).toBe(`reviewing 2 files at http://127.0.0.1:${port}; notices in ${line.match(/notices in (.*?); /)?.[1]}; after each file run: node ${bundle} done <file> --port ${port}`);
+    const files = await (await fetch(`http://127.0.0.1:${port}/api/files`)).json();
+    expect(files.files.map((f: any) => f.path)).toEqual(['a.md', 'b.md']);
+    expect((await (await fetch(`http://127.0.0.1:${port}/api/source`)).json()).kind).toBe('folder');
+    busy = await firstLine(['serve', '--root', root, '--port', String(port)]);
+    expect(busy.line).toBe(`port ${port} is busy: another session is probably serving. Stop it, or pass --port.`);
+    const stateDir = (await (await fetch(`http://127.0.0.1:${port}/api/source`)).json()).stateDir;
+    rmSync(stateDir, { recursive: true, force: true });
+  } finally {
+    kill();
+    busy?.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);
