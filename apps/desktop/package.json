@@ -9,8 +9,8 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "package": "electron-vite build && electron-builder --mac --dir",
-    "dist": "electron-vite build && electron-builder --mac dmg --arm64 --publish never"
+    "package": "install-electron && electron-vite build && electron-builder --mac --dir",
+    "dist": "install-electron && electron-vite build && electron-builder --mac dmg --arm64 --publish never"
   },
   "dependencies": {
     "@trove/core": "workspace:*"

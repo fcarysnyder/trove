@@ -10,7 +10,8 @@ files:
   - out/**
   - package.json
   - "!node_modules/**"
-# Use the Electron already installed by pnpm instead of downloading it.
+# Package the Electron binary in node_modules. Electron 45 no longer downloads it on install, so the
+# package and dist scripts run install-electron first (a no-op once it is there).
 electronDist: node_modules/electron/dist
 npmRebuild: false
 mac:
