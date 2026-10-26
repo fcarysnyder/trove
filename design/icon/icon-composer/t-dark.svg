@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
 <defs>
-<linearGradient id="tileg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#23273A"/><stop offset="1" stop-color="#0A0B12"/></linearGradient>
+<linearGradient id="tileg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000000"/><stop offset="1" stop-color="#000000"/></linearGradient>
 <linearGradient id="tilehl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.12"/><stop offset="0.4" stop-color="#fff" stop-opacity="0"/></linearGradient>
 <filter id="tshadow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="14"/></filter>
 <filter id="b4" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4"/></filter>

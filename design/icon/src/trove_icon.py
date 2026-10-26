@@ -24,7 +24,7 @@ def mix(a, b, t):
     a, b = hexrgb(a), hexrgb(b)
     return '#%02x%02x%02x' % tuple(int(round(x + (y-x)*t)) for x, y in zip(a, b))
 
-DARK = dict(dark=True, tile=("#23273A", "#0A0B12"),
+DARK = dict(dark=True, tile=("#000000", "#000000"),   # flat black, no gradient
             g_top=("#E6F3FF", 0.26, 0.08), g_right=("#CFE6FF", 0.15, 0.04), g_left=("#B9D6F5", 0.10, 0.02),
             t_top="#FFB766", t_right="#F68E36", t_left="#DC6A1C",
             glow="#FF9A3D", glow_op=0.18, warm=0.55, shadow=0.55, glint=0.55,
@@ -127,7 +127,7 @@ def build(name, st, u=114, gap=0.13, cy=512, vox_set=None, falloff=1.5, floor=No
 <g clip-path="url(#tileclip)">
 {chr(10).join(O)}
 </g>
-<path d="{TILE}" fill="url(#tilehl)"/>
+{"" if st["dark"] else '<path d="' + TILE + '" fill="url(#tilehl)"/>'}
 <path d="{TILE}" fill="none" stroke="{'#fff' if st['dark'] else '#000'}" stroke-opacity="{0.1 if st['dark'] else 0.06}" stroke-width="3"/>
 </svg>'''
     od = out_dir or OUT
