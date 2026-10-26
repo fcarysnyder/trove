@@ -1,0 +1,20 @@
+appId: com.fcarysnyder.trove
+productName: Trove
+directories:
+  output: release
+  buildResources: assets
+# main bundles @trove/core and out/ui holds @trove/ui's build (see electron.vite.config.ts), so the
+# app needs nothing from node_modules.
+files:
+  - out/**
+  - package.json
+  - "!node_modules/**"
+# Use the Electron already installed by pnpm instead of downloading it.
+electronDist: node_modules/electron/dist
+npmRebuild: false
+mac:
+  target: [dir, dmg]
+  icon: assets/icon.png
+  category: public.app-category.developer-tools
+  identity: null
+  notarize: false
