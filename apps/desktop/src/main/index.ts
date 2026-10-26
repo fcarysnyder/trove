@@ -19,7 +19,7 @@ let startWin: BrowserWindow | null = null;
 function readRecents(): Recent[] {
   try {
     const list = JSON.parse(readFileSync(recentsFile(), 'utf8'));
-    return Array.isArray(list) ? list : [];
+    return Array.isArray(list) ? list.filter((r) => r?.kind === 'git') : []; // folder entries predate repositories-only
   } catch {
     return [];
   }
@@ -90,7 +90,7 @@ async function openNow(req: OpenRequest): Promise<void> {
       name: info.name,
       kind: info.kind,
       openedAt: new Date().toISOString(),
-      ...(info.kind === 'git' ? { scope: info.scope } : {}),
+      scope: info.scope,
       ...(req.base !== undefined ? { base: req.base } : {}),
     },
     ...readRecents().filter((r) => r.path !== info.root),
@@ -116,7 +116,14 @@ async function openNow(req: OpenRequest): Promise<void> {
 
 /** Errors from the menu, the dock or a drop have no page to land on. */
 function openOrReport(run: () => Promise<void>): void {
-  run().catch((err: unknown) => dialog.showErrorBox('Trove could not open that folder', String(err instanceof Error ? err.message : err)));
+  run().catch((err: unknown) => dialog.showErrorBox('Trove could not open that repository', String(err instanceof Error ? err.message : err)));
+}
+
+/** A repository opens; any other folder waits on the zero state, which says it is not a repository. */
+function openOrStage(picked: ReturnType<typeof probe>): void {
+  if (!picked) return;
+  if (picked.git) openOrReport(() => reopen(picked.path));
+  else openStart(picked.path);
 }
 
 // ---- windows ---------------------------------------------------------------------------------
@@ -138,8 +145,11 @@ function guard(win: BrowserWindow, allowed: (target: URL) => boolean): void {
   });
 }
 
-function openStart(): void {
+/** `staged`: a folder to show in the zero state (it reads the path from the hash). */
+function openStart(staged?: string): void {
+  const load = (win: BrowserWindow) => win.loadFile(startHtml, staged ? { hash: encodeURIComponent(staged) } : undefined);
   if (startWin) {
+    if (staged) void load(startWin);
     startWin.show();
     startWin.focus();
     return;
@@ -156,7 +166,7 @@ function openStart(): void {
   });
   const own = pathToFileURL(startHtml).href;
   guard(win, (target) => target.href.split(/[?#]/)[0] === own);
-  void win.loadFile(startHtml);
+  void load(win);
 }
 
 async function pickFolder(parent?: BrowserWindow | null) {
@@ -177,11 +187,7 @@ function buildMenu(): void {
         {
           label: 'Open…',
           accelerator: 'CmdOrCtrl+O',
-          click: () =>
-            openOrReport(async () => {
-              const picked = await pickFolder(BrowserWindow.getFocusedWindow());
-              if (picked) await reopen(picked.path);
-            }),
+          click: () => void pickFolder(BrowserWindow.getFocusedWindow()).then(openOrStage),
         },
         {
           label: 'Open Recent',
@@ -191,9 +197,9 @@ function buildMenu(): void {
                 { type: 'separator' as const },
                 { label: 'Clear Menu', click: () => writeRecents([]) },
               ]
-            : [{ label: 'No Recent Folders', enabled: false }],
+            : [{ label: 'No Recent Repositories', enabled: false }],
         },
-        { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: openStart },
+        { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => openStart() },
         { type: 'separator' },
         { role: 'close' },
       ],
@@ -227,10 +233,7 @@ ipcMain.handle('trove:forget', (_e, path: unknown) => {
   const p = str(path);
   writeRecents(readRecents().filter((r) => r.path !== p));
 });
-ipcMain.handle('trove:drop', (_e, path: unknown) => {
-  const p = str(path);
-  if (isDir(p)) openOrReport(() => reopen(p));
-});
+ipcMain.handle('trove:drop', (_e, path: unknown) => openOrStage(probe(str(path))));
 
 // ---- lifecycle -------------------------------------------------------------------------------
 

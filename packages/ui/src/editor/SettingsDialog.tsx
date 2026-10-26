@@ -75,8 +75,6 @@ function Body() {
       setSaving(false);
     }
   };
-  const git = source?.kind !== 'folder';
-
   const panes: Record<Category, ReactNode> = {
     General: (
       <>
@@ -108,7 +106,7 @@ function Body() {
         </Row>
       </>
     ),
-    Source: git ? (
+    Source: (
       <>
         <Row label="Scope" htmlFor="set-scope">
           <Select value={draft.scope} onValueChange={(v) => edit({ scope: v as GitScope })}>
@@ -126,11 +124,6 @@ function Body() {
         <Fact label="Branch" value={source?.branch ?? null} />
         <Fact label="Repository" value={source?.root ?? null} />
         <Fact label="Review state" value={source?.stateDir ?? null} />
-      </>
-    ) : (
-      <>
-        <Fact label="Folder" value={source.root} />
-        <Fact label="Review state" value={source.stateDir} />
       </>
     ),
   };

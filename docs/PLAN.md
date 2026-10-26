@@ -3,20 +3,21 @@
 Trove productizes the `markdown-editor` skill from `crossnokaye/design-plugins`
 (`.claude/skills/markdown-editor/`, the source of truth for today's behaviour; its README and
 SKILL.md describe every state, key and route). The goal: a general-purpose editor for AI-written
-markdown and HTML, driven by git where git exists, that runs three ways from one codebase:
+markdown and HTML, driven by git, that runs three ways from one codebase:
 
 1. **Claude Code plugin** (`plugins/trove`, skill `markdown-editor`): the exact experience of
    today's skill. Install from this repo, say "review my docs", get the same page and workflow.
 2. **CLI** (`trove serve`, `trove done|ask|reply`): the plugin's runtime, also installable from
    npm for other agents and terminals.
-3. **Desktop app** (`apps/desktop`, Electron): zero state asks for a folder or a git repo (and a
-   branch scope); each source gets a window.
+3. **Desktop app** (`apps/desktop`, Electron): zero state asks for a git repository (and a
+   branch scope); each repository gets a window. A folder that is not a repository stays on the
+   zero state with "Not a git repository. Try again." and cannot be opened.
 
 ## Principles
 
-- Git's index is the only approval state in a git source. Accept is the only `git add`; the tool
-  never commits. Folder mode keeps a local "reviewed" marker instead and loses Show new, Undo
-  accept's git meaning and the committed section; that is accepted.
+- A source is a git repository, nothing else; anything outside a working tree is refused with
+  `not a git repository: <path>`. Git's index is the only approval state. Accept is the only
+  `git add`; the tool never commits.
 - Comments are feedback on the document, never instructions to the agent.
 - The plugin runtime stays Node built-ins only: one bundled server file and static UI assets,
   committed under `plugins/trove/dist`, so install-from-git needs no build. Node 22+.
@@ -49,21 +50,18 @@ functions. Change the contract only with a note in the commit; every package dep
 ### Sources
 
 ```
-Source
-  kind: 'git' | 'folder'
+openSource(root)               the working tree root is in; throws `not a git repository: <root>` otherwise
   list(): FileEntry[]          what the queue shows
-  accept(rel) / unaccept(rel)  git: add / restore --staged;  folder: reviewed-set in stateDir
-  unstage(rel)                 git: restore --staged;        folder: drop from reviewed-set
-  baseOf(rel, text)            git: staged copy, else HEAD;  folder: null
-  stateDir                     git: <git-dir>/trove/ (renamed from doc-review/ on first run if that exists)
-                               folder: ~/.trove/state/<sha1(root)>/
+  accept(rel) / unaccept(rel)  add / restore --staged
+  unstage(rel)                 restore --staged
+  baseOf(rel, text)            staged copy, else HEAD
+  stateDir                     <git-dir>/trove/ (renamed from doc-review/ on first run if that exists)
 ```
 
 Git scopes: `uncommitted` is today's `git status --porcelain=v1 -z -uall` over the enabled
 extensions; `branch` unions in `git diff --name-only <merge-base>...HEAD`, where the base is
 `Settings.base` or auto (origin/HEAD, main, master). A committed, unmodified file lists as staged
-(accepted). Folder sources walk the tree for enabled extensions, skipping dot-folders,
-`node_modules`, and `Settings.exclude` globs.
+(accepted).
 
 ### Doc types
 
@@ -80,7 +78,7 @@ exclude globs, git scope and base, Show new default. The UI's settings dialog fo
 Hyperion's site settings modal: a 216px rail of categories on the left, a scrolling pane of rows
 on the right under a sticky title, each row a bold label with its control on the right, a footer
 with Cancel/Save. Categories: General (theme, Show new), Documents (one switch per doc type,
-exclude globs), Source (git scope and base; read-only facts for a folder).
+exclude globs), Source (git scope and base, and read-only facts).
 
 ### Routes
 
@@ -136,10 +134,11 @@ the tier2 Send split button. Light values are a first pass; adjust for contrast.
 | plugin | `plugins/trove`, `scripts/build-plugin.mjs`, `.github/workflows/ci.yml`, `README.md` | core and ui builds, at the end |
 
 Integration (after all four): `pnpm install && pnpm build && pnpm test`, `pnpm build:plugin`,
-run the plugin's selftest and open the page on a real repo, run the desktop app on a folder and
-a repo, commit `plugins/trove/dist`.
+run the plugin's selftest and open the page on a real repo, run the desktop app on a repo and on
+a plain folder (refused), commit `plugins/trove/dist`.
 
 ## Out of scope for this pass
 
 WYSIWYG editing, real MDX compilation, multi-user, publishing or sync, Safari, Windows packaging,
-npm publishing (the bin works from the repo; publishing is a follow-up), per-file history views.
+npm publishing (the bin works from the repo; publishing is a follow-up), per-file history views,
+sources that are not git repositories (folder mode was built and removed).

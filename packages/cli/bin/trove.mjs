@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // @ts-check
-// trove: the CLI. `serve` runs the review server over a folder or git repo; `done`, `ask` and
+// trove: the CLI. `serve` runs the review server over a git repository; `done`, `ask` and
 // `reply` are the agent's side of it; `--selftest` checks the engine end to end.
 //
 //   trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>]
@@ -77,7 +77,8 @@ async function main() {
     const queued = app.list().filter((f) => !f.staged).length;
     console.log(`reviewing ${queued} files at ${url}; notices in ${info.eventsLog}; after each file run: ${info.doneCommand}`);
   } catch (/** @type {any} */ error) {
-    console.log(error.code === 'EADDRINUSE' ? `port ${port} is busy: another session is probably serving. Stop it, or pass --port.` : `server failed: ${error.message}`);
+    console.log(error.code === 'EADDRINUSE' ? `port ${port} is busy: another session is probably serving. Stop it, or pass --port.`
+      : error.message.startsWith('not a git repository') ? error.message : `server failed: ${error.message}`);
     process.exitCode = 1;
   }
 }

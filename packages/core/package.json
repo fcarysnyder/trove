@@ -1,7 +1,7 @@
 {
   "name": "@trove/core",
   "version": "0.1.0",
-  "description": "Trove's engine: a review queue over a folder or git working tree of markdown and HTML files, with comments, batches, locks and a local HTTP API. Node built-ins plus the vendored marked lexer; no other runtime dependency.",
+  "description": "Trove's engine: a review queue over a git working tree of markdown and HTML files, with comments, batches, locks and a local HTTP API. Node built-ins plus the vendored marked lexer; no other runtime dependency.",
   "type": "module",
   "license": "MIT",
   "exports": {

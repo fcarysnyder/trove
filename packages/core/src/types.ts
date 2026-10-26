@@ -34,7 +34,7 @@ export type GitScope = 'uncommitted' | 'branch';
 export interface Settings {
   /** doc type id -> enabled. Missing ids fall back to DEFAULT_DOC_TYPES[].enabled. */
   types: Record<string, boolean>;
-  /** Glob pathspecs left out of the queue (git `:(exclude,glob)` syntax; folder sources match the same globs). */
+  /** Glob pathspecs left out of the queue (git `:(exclude,glob)` syntax). */
   exclude: string[];
   theme: Theme;
   scope: GitScope;
@@ -62,9 +62,9 @@ export type FileState = 'working' | 'rejected' | 'accepted' | 'skipped' | 'queue
 export interface FileEntry {
   path: string; // relative to the source root, forward slashes
   kind: DocKind;
-  untracked: boolean; // git: `??`; folder: always false
-  staged: boolean; // git: index matches the working copy; folder: marked reviewed
-  committed?: boolean; // git: staged copy got committed while the review was open
+  untracked: boolean; // `??`
+  staged: boolean; // the index matches the working copy
+  committed?: boolean; // the staged copy got committed while the review was open
   skipped?: boolean; // the user will come back to it; the editor's mark only, no git effect
   rejected?: boolean; // taken out of the change set (back to HEAD, or deleted); listed from its backup until restored
 }
@@ -111,11 +111,11 @@ export interface Question {
 }
 
 export interface SourceInfo {
-  kind: 'git' | 'folder';
-  root: string; // absolute path of the git toplevel or the folder
+  kind: 'git';
+  root: string; // absolute path of the git toplevel
   name: string; // last path segment, for titles
-  branch: string | null; // git: current branch (null when detached)
-  base: string | null; // git branch scope: the resolved base ref
+  branch: string | null; // current branch (null when detached)
+  base: string | null; // branch scope: the resolved base ref
   scope: GitScope;
   agent: 'claude' | 'other'; // who serves the page: Claude Code sets CLAUDECODE
   port: number;
@@ -137,7 +137,7 @@ export interface FileResponse { // GET /api/file?path=
   kind: DocKind;
   text: string;
   hash: string;
-  base: string | null; // what Show new marks against (staged copy, else HEAD; folder: null)
+  base: string | null; // what Show new marks against (staged copy, else HEAD)
   since: string | null; // the text before the agent's last update, if any
   locked: boolean;
   drafts: Draft[];
@@ -176,7 +176,7 @@ export interface GitProbe {
 export interface Recent {
   path: string;
   name: string;
-  kind: 'git' | 'folder';
+  kind: 'git';
   openedAt: string;
   scope?: GitScope;
   base?: string | null;
@@ -185,11 +185,11 @@ export interface Recent {
 export interface OpenRequest { path: string; scope?: GitScope; base?: string | null }
 
 export interface TroveBridge {
-  /** Native folder picker. null when cancelled. */
+  /** Native folder picker. null when cancelled; `git` null when the folder is not in a git repository (it cannot be opened). */
   pickFolder(): Promise<{ path: string; git: GitProbe | null } | null>;
-  /** Inspect a path (a recent, or a drop) without opening it. null when it is not a folder. */
+  /** Inspect a path (a recent, or a staged one) without opening it. null when it is not a folder; `git` null when it is not in a repository. */
   probe(path: string): Promise<{ path: string; git: GitProbe | null } | null>;
-  /** Start a server for the source and open it in a window; the zero-state window closes if it is the only one. */
+  /** Start a server for the repository and open it in a window; the zero-state window closes if it is the only one. Rejects `not a git repository: <path>` for anything else. */
   open(req: OpenRequest): Promise<void>;
   recents(): Promise<Recent[]>;
   forget(path: string): Promise<void>;

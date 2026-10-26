@@ -46,7 +46,7 @@ export function kindOf(path: string, s: Settings): DocKind | null {
   return enabledTypes(s).find((t) => t.extensions.some((e) => name.endsWith(e) && name.length > e.length))?.kind ?? null;
 }
 
-// Git's `:(glob)` pathspec rules, so a folder source and the seen set exclude what git would:
+// Git's `:(glob)` pathspec rules, so the seen set excludes what git would:
 // `*` and `?` stop at `/`, `**/` is any number of folders, a trailing `/**` everything inside.
 // ponytail: no `[...]` classes (matched literally); add them if someone's exclude needs one.
 const globRe = (g: string) => new RegExp('^' + g.replace(/\*\*\/|\/\*\*$|\*\*|\*|\?|[.+^${}()|[\]\\]/g, (m) =>

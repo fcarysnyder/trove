@@ -1,4 +1,4 @@
-// The review server: a queue over a Source, comment drafts, the user's block edits, batches for the
+// The review server: a queue over a git working tree, comment drafts, the user's block edits, batches for the
 // agent, locks while it works, and the HTTP API the page talks to. Ported from the markdown-editor
 // skill's doc-review.mjs; every route behaves as it did there. Node built-ins only.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
@@ -12,9 +12,9 @@ import { openSource, sha } from './source.js';
 import type { BlockEdit, Draft, FileEntry, GitScope, Question, Settings, SourceInfo } from './types.js';
 
 export interface AppOptions {
-  root: string; // a folder, or any path inside a git working tree
-  scope?: GitScope; // git only; default from settings
-  base?: string | null; // git branch scope's base; default from settings
+  root: string; // any path inside a git working tree; anything else throws `not a git repository: <root>`
+  scope?: GitScope; // default from settings
+  base?: string | null; // branch scope's base; default from settings
   exclude?: string[]; // replaces Settings.exclude for this run
   quietMs?: number; // the quiet-release fallback, default 5000
   log?: (line: string) => void;
@@ -158,8 +158,8 @@ export function createApp(o: AppOptions): App {
 
   const port = () => { const a = server.address(); return a && typeof a === 'object' ? a.port : 0; };
   const info = (): SourceInfo => ({
-    kind: source.kind, root: top, name: basename(top), branch: source.branch(),
-    base: source.kind === 'git' && current.scope === 'branch' ? source.resolveBase(current) : null,
+    kind: 'git', root: top, name: basename(top), branch: source.branch(),
+    base: current.scope === 'branch' ? source.resolveBase(current) : null,
     scope: current.scope, agent, port: port(), stateDir: dir, eventsLog: files.events, batchesLog: files.batches,
     doneCommand: (o.doneCommand ?? ((p) => `trove done <file> --port ${p}`))(port()),
   });
@@ -237,7 +237,7 @@ export function createApp(o: AppOptions): App {
       saveState();
       return [200, { ok: true }];
     },
-    // Reject: take the change out of the change set (see Source.reject). The working text, the index
+    // Reject: take the change out of the change set (see the source's reject). The working text, the index
     // copy and the file's drafts are saved first, so Restore can put them back. Refused on a version
     // the user did not see. Its edits are dropped.
     'POST /api/reject': (_, { path, hash }) => {

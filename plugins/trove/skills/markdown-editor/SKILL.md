@@ -20,8 +20,7 @@ reverted. The tool never commits. GitHub Desktop does not show the index: its ch
 own and start all ticked, so committing there takes every changed file, accepted or not. To commit
 only what was accepted, run `git commit` (no `-a`). Nothing is excluded by default; the user sets
 exclude globs in Settings, or pass `--exclude <glob>` (repeatable) to replace that list for this
-run. Outside a git repo the page runs on the folder with a local reviewed mark instead of the
-index, and loses Show new and the committed section.
+run.
 
 ## Start
 

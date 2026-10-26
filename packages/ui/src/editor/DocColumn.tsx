@@ -320,8 +320,7 @@ function DocFooter() {
 /** Reject, behind a confirm that says what happens to the file. X opens it too. */
 function RejectButton({ path, untracked, disabled }: { path: string; untracked: boolean; disabled: boolean }) {
   const open = useStore((s) => s.rejecting);
-  const folder = useStore((s) => s.source?.kind === 'folder');
-  const what = untracked || folder ? `Deletes ${nameOf(path)}.` : `Undoes every uncommitted change to ${nameOf(path)}.`;
+  const what = untracked ? `Deletes ${nameOf(path)}.` : `Undoes every uncommitted change to ${nameOf(path)}.`;
   return (
     <Popover open={open} onOpenChange={(o) => set({ rejecting: o })}>
       <PopoverTrigger asChild>

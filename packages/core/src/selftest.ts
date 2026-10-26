@@ -1,6 +1,6 @@
 // The end-to-end check, ported from doc-review.mjs --selftest: anchoring, the block splice, hash
-// checks, Host/Origin checks and every state transition against a throwaway git repo, plus a folder
-// source, a branch scope, settings and the UI static files. Node built-ins only, so the bundled CLI
+// checks, Host/Origin checks and every state transition against a throwaway git repo, plus the
+// refusal of a plain folder, a branch scope, settings and the UI static files. Node built-ins only, so the bundled CLI
 // runs it (`trove --selftest`) with no devDependencies; vitest calls it too.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -40,7 +40,7 @@ export async function selftest(): Promise<void> {
     await pure();
     await gitCase(temps);
     await branchCase(temps);
-    await folderCase(temps);
+    notARepo(temps);
   } finally {
     for (const t of temps) rmSync(t, { recursive: true, force: true });
   }
@@ -461,45 +461,11 @@ async function branchCase(temps: string[]) {
   await cli.app.close();
 }
 
-// A folder with no git: a walk for enabled types, a reviewed set instead of the index.
-async function folderCase(temps: string[]) {
-  const root = mkdtempSync(join(tmpdir(), 'trove-folder-'));
+// A folder outside any git repository is refused, and the probe says so.
+function notARepo(temps: string[]) {
+  const root = mkdtempSync(join(tmpdir(), 'trove-plain-'));
   temps.push(root);
-  for (const d of ['node_modules', '.hidden', 'gen', 'sub']) mkdirSync(join(root, d));
-  for (const f of ['a.md', 'b.html', 't.txt', 'node_modules/x.md', '.hidden/y.md', 'gen/z.md', 'sub/c.markdown']) writeFileSync(join(root, f), `# ${f}\n\nText.\n`);
+  writeFileSync(join(root, 'a.md'), '# A\n');
   assert.equal(probeGit(root), null);
-  const { app, port } = await listen({ root });
-  temps.push(app.info().stateDir);
-  const get = (path: string) => call(port, 'GET', path);
-  const post = (path: string, body: unknown) => call(port, 'POST', path, body);
-  const rows = async () => Object.fromEntries((await get('/api/files')).body.files.map((f: any) => [f.path, f.state]));
-  const info = (await get('/api/source')).body;
-  assert.deepEqual([info.kind, info.branch, info.base, info.name], ['folder', null, null, root.split('/').at(-1)]);
-  assert.ok(info.stateDir.includes(join('.trove', 'state')), info.stateDir);
-  assert.deepEqual(await rows(), { 'a.md': 'queue', 'b.html': 'queue', 'gen/z.md': 'queue', 'sub/c.markdown': 'queue' }, 'skips dot folders, node_modules and disabled types');
-  await post('/api/settings', { exclude: ['gen/**'], types: { txt: true } });
-  assert.deepEqual(Object.keys(await rows()), ['a.md', 'b.html', 'sub/c.markdown', 't.txt']);
-  const a = (await get('/api/file?path=a.md')).body;
-  assert.deepEqual([a.base, a.kind, (await get('/api/file?path=../x.md')).status], [null, 'markdown', 404]);
-  assert.equal((await post('/api/accept', { path: 'a.md', hash: 'stale' })).status, 409);
-  assert.equal((await post('/api/accept', { path: 'a.md', hash: a.hash })).status, 200);
-  assert.equal((await rows())['a.md'], 'accepted');
-  const again = await listen({ root });
-  assert.equal((await call(again.port, 'GET', '/api/files')).body.files.find((f: any) => f.path === 'a.md').state, 'accepted', 'reviewed survives a restart');
-  await again.app.close();
-  writeFileSync(join(root, 'a.md'), '# changed\n');
-  assert.equal((await rows())['a.md'], 'queue', 'a change after accept queues it again');
-  const t = (await get('/api/file?path=t.txt')).body;
-  assert.equal((await post('/api/save', { path: 't.txt', hash: t.hash, raw: 'whole\n' })).status, 200);
-  assert.equal(readFileSync(join(root, 't.txt'), 'utf8'), 'whole\n', 'text is saved whole');
-  await post('/api/accept', { path: 't.txt', hash: sha('whole\n') });
-  assert.equal((await post('/api/unaccept', { path: 't.txt' })).status, 200);
-  assert.equal((await rows())['t.txt'], 'queue');
-  // Reject deletes the file and unmarks it, keeping a backup; Restore writes it back.
-  await post('/api/accept', { path: 't.txt', hash: sha('whole\n') });
-  assert.equal((await post('/api/reject', { path: 't.txt', hash: sha('whole\n') })).status, 200);
-  assert.deepEqual([existsSync(join(root, 't.txt')), (await rows())['t.txt'], (await get('/api/file?path=t.txt')).body.text], [false, 'rejected', 'whole\n']);
-  assert.equal((await post('/api/restore', { path: 't.txt' })).status, 200);
-  assert.deepEqual([readFileSync(join(root, 't.txt'), 'utf8'), (await rows())['t.txt']], ['whole\n', 'queue'], 'back, and no longer reviewed');
-  await app.close();
+  assert.throws(() => createApp({ root, log: () => {} }), { message: `not a git repository: ${root}` });
 }

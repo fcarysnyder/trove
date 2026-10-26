@@ -2,7 +2,7 @@
   "name": "@trove/desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Trove for the desktop: open a folder or a git branch, review in a window. Electron; core runs in the main process.",
+  "description": "Trove for the desktop: open a git repository or branch, review in a window. Electron; core runs in the main process.",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {

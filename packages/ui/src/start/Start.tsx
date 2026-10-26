@@ -1,7 +1,8 @@
-// The desktop zero state: open a folder or a git repository (with a scope), or a recent one.
-// In a plain browser there is no bridge, so it says how to run the server instead.
+// The desktop zero state: open a git repository (with a scope), or a recent one. A folder that is
+// not a repository stays here with the reason. In a plain browser there is no bridge, so it says
+// how to run the server instead.
 import type { GitProbe, GitScope, Recent } from '@trove/core/types';
-import { FolderOpen, GitBranch, X } from 'lucide-react';
+import { GitBranch, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -44,30 +45,49 @@ function NoBridge() {
     <Card className="w-full max-w-md">
       <CardHeader><CardTitle className="text-foreground">Trove</CardTitle></CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <p>Run Trove from a folder or a git repository, then open the address it prints:</p>
-        <code className="rounded-md bg-background px-3 py-2 font-mono text-[13px] text-foreground">trove serve</code>
+        <p>Run Trove on a git repository, then open the address it prints:</p>
+        <code className="rounded-md bg-background px-3 py-2 font-mono text-[13px] text-foreground">trove serve --root &lt;repo&gt;</code>
       </CardContent>
     </Card>
   );
 }
 
+const NOT_A_REPO = 'Not a git repository. Try again.';
+type Picked = { path: string; git: GitProbe | null };
+
 function Picker() {
   const bridge = window.trove!;
   const [recents, setRecents] = useState<Recent[]>([]);
-  const [repo, setRepo] = useState<{ path: string; git: GitProbe } | null>(null);
+  const [notRepos, setNotRepos] = useState<Set<string>>(new Set());
+  const [picked, setPicked] = useState<Picked | null>(null);
   const [dragging, setDragging] = useState(false);
-  const reload = () => bridge.recents().then(setRecents, () => setRecents([]));
+  const reload = async () => {
+    const list = await bridge.recents().catch(() => []);
+    const probes = await Promise.all(list.map((r) => bridge.probe(r.path).catch(() => null)));
+    setNotRepos(new Set(list.filter((_, k) => !probes[k]?.git).map((r) => r.path)));
+    setRecents(list);
+  };
   useEffect(() => { void reload(); }, []);
+  // The app stages a folder here (a drop, or File > Open) by putting its path in the hash.
+  useEffect(() => {
+    const stage = () => {
+      const path = decodeURIComponent(location.hash.slice(1));
+      history.replaceState(null, '', location.pathname); // so staging the same path again is a change
+      if (path) void bridge.probe(path).then((res) => setPicked(res ?? { path, git: null }), (e) => toast(errText(e)));
+    };
+    stage();
+    addEventListener('hashchange', stage);
+    return () => removeEventListener('hashchange', stage);
+  }, []);
   const pick = async () => {
     try {
       const res = await bridge.pickFolder();
-      if (!res) return;
-      if (res.git) setRepo({ path: res.path, git: res.git });
-      else await bridge.open({ path: res.path });
+      if (res) setPicked(res);
     } catch (e) {
       toast(errText(e));
     }
   };
+  const repo = picked?.git ? { path: picked.path, git: picked.git } : null;
   return (
     <div
       className={cn('flex w-full max-w-lg flex-col gap-4 rounded-xl outline-2 outline-offset-8 outline-transparent transition-[outline-color]', dragging && 'outline-dashed outline-border')}
@@ -77,12 +97,17 @@ function Picker() {
       onDrop={() => setDragging(false)}
     >
       <Card>
-        <CardHeader><CardTitle className="text-foreground">{repo ? repo.path.split('/').at(-1) : 'Trove'}</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-foreground">{picked ? picked.path.split('/').at(-1) : 'Trove'}</CardTitle></CardHeader>
         <CardContent>
-          {repo ? <RepoStep repo={repo} onBack={() => setRepo(null)} /> : (
-            <div className="flex gap-2">
-              <Button variant="ghost" onClick={() => void pick()}><FolderOpen />Open folder</Button>
-              <Button variant="ghost" onClick={() => void pick()}><GitBranch />Open git repository</Button>
+          {repo ? <RepoStep repo={repo} onBack={() => setPicked(null)} /> : (
+            <div className="flex flex-col items-start gap-3">
+              {picked && (
+                <div className="flex w-full min-w-0 flex-col gap-1">
+                  <span className="folder w-full text-left font-mono text-xs text-muted-foreground">{`\u200E${picked.path}\u200E`}</span>
+                  <span role="alert" className="text-sm text-destructive">{NOT_A_REPO}</span>
+                </div>
+              )}
+              <Button onClick={() => void pick()}><GitBranch />Open repository</Button>
             </div>
           )}
         </CardContent>
@@ -91,23 +116,35 @@ function Picker() {
         <Card className="gap-0 py-2">
           <CardHeader className="px-4 py-2"><CardTitle className="text-sm text-foreground">Recent</CardTitle></CardHeader>
           <ul>
-            {recents.map((r, k) => (
-              <li key={r.path}>
-                {k > 0 && <Separator />}
-                <div className="group flex items-center gap-2 px-2">
-                  <button className="flex min-w-0 flex-1 flex-col items-start rounded-md px-2 py-2 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-                    onClick={() => bridge.open({ path: r.path, scope: r.scope, base: r.base }).catch((e) => toast(errText(e)))}>
-                    <span className="flex w-full items-center gap-2">
-                      <span className="truncate font-medium text-foreground">{r.name}</span>
-                      <span className="text-xs text-muted-foreground">{r.kind === 'git' ? (r.scope === 'branch' ? `git · branch vs ${r.base ?? 'base'}` : 'git') : 'folder'}</span>
-                      <span className="ml-auto shrink-0 text-xs text-muted-foreground">{ago(r.openedAt)}</span>
-                    </span>
-                    <span className="folder w-full text-left text-xs text-muted-foreground">{`‎${r.path}‎`}</span>
-                  </button>
-                  <IconButton label={`Remove ${r.name} from recents`} tip="Remove" onClick={() => bridge.forget(r.path).then(reload)}><X /></IconButton>
-                </div>
-              </li>
-            ))}
+            {recents.map((r, k) => {
+              const bad = notRepos.has(r.path);
+              const body = (
+                <>
+                  <span className="flex w-full items-center gap-2">
+                    <span className="truncate font-medium text-foreground">{r.name}</span>
+                    {bad ? <span className="text-xs text-destructive">{NOT_A_REPO}</span>
+                      : r.scope === 'branch' && <span className="text-xs text-muted-foreground">{`branch vs ${r.base ?? 'base'}`}</span>}
+                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">{ago(r.openedAt)}</span>
+                  </span>
+                  <span className="folder w-full text-left text-xs text-muted-foreground">{`\u200E${r.path}\u200E`}</span>
+                </>
+              );
+              const row = 'flex min-w-0 flex-1 flex-col items-start rounded-md px-2 py-2 text-left';
+              return (
+                <li key={r.path}>
+                  {k > 0 && <Separator />}
+                  <div className="group flex items-center gap-2 px-2">
+                    {bad ? <div className={cn(row, 'opacity-60')} aria-disabled>{body}</div> : (
+                      <button className={cn(row, 'outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring')}
+                        onClick={() => bridge.open({ path: r.path, scope: r.scope, base: r.base }).catch((e) => toast(errText(e)))}>
+                        {body}
+                      </button>
+                    )}
+                    <IconButton label={`Remove ${r.name} from recents`} tip="Remove" onClick={() => bridge.forget(r.path).then(reload)}><X /></IconButton>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </Card>
       )}

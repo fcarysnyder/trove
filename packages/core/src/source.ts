@@ -1,37 +1,11 @@
-// Where the queue comes from. A git source is today's behaviour: the index is the approval state,
-// Accept is `git add`, nothing ever commits. A folder source has no git: a reviewed.json of
-// path -> hash at accept stands in for the index, so a later change puts the file back in the queue.
+// Where the queue comes from: a git working tree. The index is the approval state, Accept is
+// `git add`, nothing ever commits.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { enabledTypes, included, kindOf } from './settings.js';
 import type { DocKind, FileEntry, GitProbe, Settings } from './types.js';
-
-export interface Source {
-  kind: 'git' | 'folder';
-  root: string; // realpath of the git toplevel or the folder
-  stateDir: string;
-  /**
-   * The queue. Git adds what it lists to `seen` and keeps listing seen files (as committed) after git
-   * stops reporting them. Paths in `hide` (rejected ones) are listed only when git status or the walk
-   * reports them, never from `seen` or the branch diff.
-   */
-  list(s: Settings, seen: Set<string>, hide?: Set<string>): FileEntry[];
-  accept(rel: string): void;
-  unaccept(rel: string): void;
-  unstage(rel: string): void;
-  /** The index copy (git `:path`), or null: untracked, or a folder. */
-  indexed(rel: string): string | null;
-  /** Take the file out of the change set. Git: back to HEAD in index and worktree, or, if HEAD lacks it, out of the index and off disk. Folder: deleted and unmarked. */
-  reject(rel: string): void;
-  /** What Show new marks against: the staged copy, else HEAD (else the merge-base in branch scope). */
-  baseOf(rel: string, text: string, s: Settings): string | null;
-  branch(): string | null;
-  /** The branch scope's base ref: Settings.base, or auto. */
-  resolveBase(s: Settings): string | null;
-}
 
 export const sha = (text: string) => createHash('sha1').update(text).digest('hex');
 
@@ -50,7 +24,7 @@ function gitAt(cwd: string) {
 
 const gitTop = (dir: string) => { try { return realpathSync(gitAt(dir).git('rev-parse', '--show-toplevel').trim()); } catch { return null; } };
 
-/** Is `path` inside a git working tree? Branches and the default base, or null for a plain folder. */
+/** Is `path` inside a git working tree? Branches and the default base, or null when it is not. */
 export function probeGit(path: string): GitProbe | null {
   let dir = path;
   try { if (!statSync(path).isDirectory()) dir = dirname(path); } catch { return null; }
@@ -63,16 +37,10 @@ export function probeGit(path: string): GitProbe | null {
   return { branch: g.branch(), branches, defaultBase: g.defaultBase() };
 }
 
-/** A git source if `root` is inside a working tree, else a folder source. Throws if `root` does not exist. */
-export function openSource(root: string): Source {
-  const isDir = statSync(root).isDirectory();
-  const top = gitTop(isDir ? root : dirname(root));
-  if (top) return gitSource(top);
-  if (!isDir) throw new Error(`${root} is neither a folder nor inside a git working tree`);
-  return folderSource(realpathSync(root));
-}
-
-function gitSource(top: string): Source {
+/** The git working tree `root` is in. Throws if `root` does not exist or is not inside one. */
+export function openSource(root: string) {
+  const top = gitTop(statSync(root).isDirectory() ? root : dirname(root));
+  if (!top) throw new Error(`not a git repository: ${root}`);
   const { git, tryGit, branch, defaultBase } = gitAt(top);
   const gitDir = git('rev-parse', '--absolute-git-dir').trim();
   const stateDir = join(gitDir, 'trove');
@@ -86,16 +54,28 @@ function gitSource(top: string): Source {
   const entry = (path: string, kind: DocKind, untracked: boolean, staged: boolean): FileEntry => ({ path, kind, untracked, staged });
 
   return {
-    kind: 'git', root: top, stateDir, branch, resolveBase, unstage,
+    root: top, // realpath of the toplevel
+    stateDir,
+    /** The branch scope's base ref: Settings.base, or auto. */
+    resolveBase,
+    branch,
+    unstage,
     unaccept: unstage,
-    accept: (rel) => { git('add', '--', rel); },
-    indexed: (rel) => show(`:${rel}`),
-    reject(rel) {
+    accept: (rel: string) => { git('add', '--', rel); },
+    /** The index copy (`:path`), or null when untracked. */
+    indexed: (rel: string) => show(`:${rel}`),
+    /** Take the file out of the change set: back to HEAD in index and worktree, or, if HEAD lacks it, out of the index and off disk. */
+    reject(rel: string) {
       if (show(`HEAD:${rel}`) !== null) return void git('restore', '--source=HEAD', '--staged', '--worktree', '--', rel);
       try { git('rm', '--cached', '-q', '--', rel); } catch {} // untracked: nothing in the index
       rmSync(join(top, rel), { force: true });
     },
-    list(s, seen, hide = new Set()) {
+    /**
+     * The queue. What git lists is added to `seen`, and seen files stay listed (as committed) after
+     * git stops reporting them. Paths in `hide` (rejected ones) are listed only when git status
+     * reports them, never from `seen` or the branch diff.
+     */
+    list(s: Settings, seen: Set<string>, hide = new Set<string>()): FileEntry[] {
       const exts = enabledTypes(s).flatMap((t) => t.extensions.map((e) => `*${e}`));
       if (!exts.length) return []; // a pathspec of excludes alone would match everything
       const spec = [...exts, ...s.exclude.map((g) => `:(exclude,glob)${g}`)];
@@ -131,46 +111,12 @@ function gitSource(top: string): Source {
     // What `text` is new against, for the page's Show new: the staged copy, or HEAD's once the file
     // is staged as it is (accepted). In branch scope a file committed as it is diffs against the
     // merge-base, so the branch's own changes show. Null for a file git has no earlier copy of.
-    baseOf(rel, text, s) {
+    baseOf(rel: string, text: string, s: Settings): string | null {
       const staged = show(`:${rel}`);
       if (staged !== null && staged !== text) return staged;
       const head = show(`HEAD:${rel}`);
       const mb = s.scope === 'branch' && head === text ? mergeBase(s) : null;
       return mb ? show(`${mb}:${rel}`) : head;
     },
-  };
-}
-
-function folderSource(root: string): Source {
-  const stateDir = join(homedir(), '.trove', 'state', sha(root));
-  mkdirSync(stateDir, { recursive: true });
-  const file = join(stateDir, 'reviewed.json');
-  const reviewed = (): Record<string, string> => { try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return {}; } };
-  const hashOf = (rel: string) => { try { return sha(readFileSync(join(root, rel), 'utf8')); } catch { return null; } };
-  const unstage = (rel: string) => { const r = reviewed(); if (rel in r) { delete r[rel]; writeFileSync(file, JSON.stringify(r)); } };
-  // ponytail: walks the whole tree on every list(); a cap or a watcher if someone opens their home folder.
-  const walk = (dir: string, prefix: string, s: Settings, out: string[]) => {
-    let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; } // unreadable: skip
-    for (const d of entries) {
-      const rel = prefix + d.name;
-      if (d.isDirectory()) { if (!d.name.startsWith('.') && d.name !== 'node_modules') walk(join(dir, d.name), `${rel}/`, s, out); }
-      else if (d.isFile() && included(rel, s)) out.push(rel);
-    }
-    return out;
-  };
-  return {
-    kind: 'folder', root, stateDir, unstage,
-    unaccept: unstage,
-    accept: (rel) => writeFileSync(file, JSON.stringify({ ...reviewed(), [rel]: hashOf(rel) })),
-    indexed: () => null,
-    reject(rel) { unstage(rel); rmSync(join(root, rel), { force: true }); },
-    list(s) {
-      const r = reviewed();
-      return (walk(root, '', s, []) ?? []).map((path) => ({ path, kind: kindOf(path, s)!, untracked: false, staged: path in r && r[path] === hashOf(path) }));
-    },
-    baseOf: () => null,
-    branch: () => null,
-    resolveBase: () => null,
   };
 }
