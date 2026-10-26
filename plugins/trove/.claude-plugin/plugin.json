@@ -1,6 +1,6 @@
 {
   "name": "trove",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A local review queue for a repo's uncommitted markdown and HTML: read each changed file rendered in your browser, accept it (git add), edit it in place, or comment and send the comments to Claude in one batch. Never commits. Skill: markdown-editor.",
   "author": { "name": "F Cary Snyder" },
   "repository": "https://github.com/fcarysnyder/trove",

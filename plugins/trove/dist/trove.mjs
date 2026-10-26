@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// trove 0.1.0: bundled CLI and engine (@trove/core, marked). Node 22+, no dependencies.
+// trove 0.2.0: bundled CLI and engine (@trove/core, marked). Node 22+, no dependencies.
 
 // bin/trove.mjs
 import { existsSync as existsSync4, realpathSync as realpathSync4 } from "node:fs";
