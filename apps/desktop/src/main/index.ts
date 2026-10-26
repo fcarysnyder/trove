@@ -283,6 +283,9 @@ app.setPath('userData', join(app.getPath('appData'), 'Trove'));
 nativeTheme.themeSource = 'system';
 
 app.whenReady().then(() => {
+  // A packaged app takes its icon from assets/icon.icns; `pnpm dev:desktop` runs the stock Electron
+  // binary, so give the Dock the same icon here.
+  if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'assets/icon.png'));
   buildMenu();
   openStart();
   app.on('activate', () => {

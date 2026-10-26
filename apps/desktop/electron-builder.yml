@@ -1,5 +1,6 @@
 appId: com.fcarysnyder.trove
 productName: Trove
+copyright: Copyright © 2026 F Cary Snyder
 directories:
   output: release
   buildResources: assets
@@ -17,5 +18,12 @@ mac:
   # icon.icns carries simplified 16/32pt art; regenerate with design/icon/src/export.py
   icon: assets/icon.icns
   category: public.app-category.developer-tools
-  identity: null
+  # Ad-hoc signed: Apple silicon will not launch an unsigned app at all. Not notarized, so the first
+  # launch needs Open Anyway (see docs/DISTRIBUTION.md).
+  identity: "-"
+  # Hardened runtime with an ad-hoc signature rejects Electron's own pre-signed frameworks at launch.
+  hardenedRuntime: false
   notarize: false
+dmg:
+  # Release asset names follow Installer-<App>-<version>-<arch>.dmg.
+  artifactName: "Installer-${productName}-${version}-${arch}.${ext}"
