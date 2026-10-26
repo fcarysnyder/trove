@@ -1,4 +1,5 @@
 import { countStates } from '@trove/core/anchor';
+import { AGENT_LABELS, attachCommand, type AgentTool } from '@trove/core/types';
 import { ChevronLeft, ChevronRight, Copy, Plug, Settings, Unplug, X } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -134,33 +135,55 @@ function Notice() {
   );
 }
 
-/** How an agent connects to this source: the events log it streams and the command it runs after each file. */
+// The desktop opens the editor with ?waiting=claude|codex after starting that agent in Terminal.
+const waiting = new URLSearchParams(location.search).get('waiting') as AgentTool | null;
+const TOOLS: [AgentTool, string][] = [['claude', 'Claude Code'], ['codex', 'Codex']];
+
+/** Who is attached, and how an agent attaches: its start command per tool, the events log it streams and the command it runs after each file. */
 function Connect() {
   const source = useStore((s) => s.source)!;
+  const n = useNames();
+  const [open, setOpen] = useState(false);
   const copy = (text: string) => navigator.clipboard.writeText(text).then(() => toast('Copied'), () => toast('Copy failed'));
-  const rows = [['Events log', source.eventsLog], ['Done command', source.doneCommand]] as const;
+  const rows = [
+    ...TOOLS.map(([tool, label]) => [label, attachCommand(tool, source.root, source.port)] as const),
+    ['Events log', source.eventsLog], ['Done command', source.doneCommand],
+  ] as const;
+  const agent = source.agentInfo;
   return (
-    <Popover>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon-xs" aria-label="Connect an agent" className="text-muted-foreground [&_svg]:size-4"><Plug /></Button>
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent>Connect an agent</TooltipContent>
-      </Tooltip>
-      <PopoverContent align="end" onOpenAutoFocus={(e) => e.preventDefault()} className="w-[420px] gap-3">
-        <div className="font-semibold text-foreground">Connect an agent</div>
-        {rows.map(([label, value]) => (
-          <div key={label} className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">{label}</span>
-            <div className="flex items-start gap-1">
-              <code className="min-w-0 flex-1 rounded-sm bg-background px-2 py-1 font-mono text-xs break-all text-foreground">{value}</code>
-              <IconButton label={`Copy ${label.toLowerCase()}`} onClick={() => copy(value)}><Copy /></IconButton>
+    <>
+      {agent?.connected && (
+        <span className="inline-flex items-center gap-1.5 text-xs text-foreground">
+          <span className="size-2 rounded-full bg-agent" aria-hidden />{n.Agent}
+        </span>
+      )}
+      {agent && !agent.connected && (
+        <Button variant="ghost" size="xs" className="h-6 rounded-full border px-2.5 text-muted-foreground" onClick={() => setOpen(true)}>
+          {waiting && AGENT_LABELS[waiting] ? `Waiting for ${AGENT_LABELS[waiting]}` : 'No agent'}
+        </Button>
+      )}
+      <Popover open={open} onOpenChange={setOpen}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon-xs" aria-label="Connect an agent" className="text-muted-foreground [&_svg]:size-4"><Plug /></Button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent>Connect an agent</TooltipContent>
+        </Tooltip>
+        <PopoverContent align="end" onOpenAutoFocus={(e) => e.preventDefault()} className="w-[420px] gap-3">
+          <div className="font-semibold text-foreground">Connect an agent</div>
+          {rows.map(([label, value]) => (
+            <div key={label} className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">{label}</span>
+              <div className="flex items-start gap-1">
+                <code className="min-w-0 flex-1 rounded-sm bg-background px-2 py-1 font-mono text-xs break-all text-foreground">{value}</code>
+                <IconButton label={`Copy ${label}`} onClick={() => copy(value)}><Copy /></IconButton>
+              </div>
             </div>
-          </div>
-        ))}
-      </PopoverContent>
-    </Popover>
+          ))}
+        </PopoverContent>
+      </Popover>
+    </>
   );
 }

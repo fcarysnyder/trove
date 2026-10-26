@@ -1,7 +1,7 @@
 // One small store for the editor. Actions (actions.ts) read and write it directly, so the 2s poll
 // always sees the latest state; components subscribe to slices with useStore.
 import type { Anchor, BlockEdit, CommentKind, Draft, FileResponse, FileRow, GitInfo, Question, Settings, SourceInfo } from '@trove/core/types';
-import { DEFAULT_SETTINGS } from '@trove/core/types';
+import { AGENT_LABELS, DEFAULT_SETTINGS } from '@trove/core/types';
 import type { AnchorHit } from '@trove/core/anchor';
 import { useSyncExternalStore } from 'react';
 import { load } from '@/lib/storage';
@@ -93,6 +93,6 @@ export function set(patch: Partial<State> | ((s: State) => Partial<State>)) {
 const subscribe = (l: () => void) => (listeners.add(l), () => void listeners.delete(l));
 export const useStore = <T,>(pick: (s: State) => T): T => useSyncExternalStore(subscribe, () => pick(state));
 
-const NAMES = { claude: names('claude'), other: names('other') };
-/** The agent's names; an old server says nothing, and it was Claude's. */
-export const useNames = (): Names => NAMES[useStore((s) => s.source?.agent ?? 'claude')];
+/** The attached agent's label; a server without agentInfo says only claude or other, and one without /api/source was Claude's. */
+const labelOf = (s: SourceInfo | null) => s?.agentInfo?.label ?? AGENT_LABELS[s?.agent ?? 'claude'];
+export const useNames = (): Names => names(useStore((s) => labelOf(s.source)));

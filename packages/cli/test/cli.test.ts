@@ -26,6 +26,12 @@ test('the bundle builds, serves a repository and prints the done command', async
     const files = await (await fetch(`http://127.0.0.1:${port}/api/files`)).json();
     expect(files.files.map((f: any) => f.path)).toEqual(['a.md', 'b.md']);
     expect((await (await fetch(`http://127.0.0.1:${port}/api/source`)).json()).kind).toBe('git');
+    const run = (...a: string[]) => spawnSync(process.execPath, [bundle, ...a, '--port', String(port)], { encoding: 'utf8' });
+    expect(run('info').stdout.trim()).toBe(line);
+    expect(run('attach', '--agent', 'codex').stdout.trim()).toBe(line);
+    expect((await (await fetch(`http://127.0.0.1:${port}/api/source`)).json()).agentInfo).toMatchObject({ id: 'codex', label: 'Codex', connected: true });
+    run('detach');
+    expect((await (await fetch(`http://127.0.0.1:${port}/api/source`)).json()).agentInfo.connected).toBe(false);
     busy = await firstLine(['serve', '--root', root, '--port', String(port)]);
     expect(busy.line).toBe(`port ${port} is busy: another session is probably serving. Stop it, or pass --port.`);
   } finally {
@@ -34,6 +40,11 @@ test('the bundle builds, serves a repository and prints the done command', async
     rmSync(root, { recursive: true, force: true });
   }
 }, 30_000);
+
+test('attach says so when nothing is serving', () => {
+  const run = spawnSync(process.execPath, [bundle, 'attach', '--port', '1', '--agent', 'codex'], { encoding: 'utf8' });
+  expect([run.stdout.trim(), run.status]).toEqual(['nothing is serving on port 1: start one with trove serve, or pass the right --port', 1]);
+});
 
 test('serve refuses a folder that is not a git repository', () => {
   const root = mkdtempSync(join(tmpdir(), 'trove-plain-'));

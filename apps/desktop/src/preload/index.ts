@@ -12,6 +12,7 @@ const trove: TroveBridge = {
   open: (req: OpenRequest) => invoke('trove:open', req),
   recents: () => invoke('trove:recents'),
   forget: (path: string) => invoke('trove:forget', path),
+  tools: () => invoke('trove:tools'),
 };
 
 contextBridge.exposeInMainWorld('trove', trove);

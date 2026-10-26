@@ -9,7 +9,7 @@ import { basename, dirname, extname, join, relative, resolve, sep } from 'node:p
 import { blocks, splice } from './anchor.js';
 import { included, kindOf, loadSettings, mergeSettings, saveSettings } from './settings.js';
 import { openSource, sha } from './source.js';
-import type { BlockEdit, Draft, FileEntry, GitInfo, GitScope, Question, Settings, SourceInfo } from './types.js';
+import { AGENT_LABELS, type AgentId, type AgentInfo, type BlockEdit, type Draft, type FileEntry, type GitInfo, type GitScope, type Question, type Settings, type SourceInfo } from './types.js';
 
 export interface AppOptions {
   root: string; // any path inside a git working tree; anything else throws `not a git repository: <root>`
@@ -19,7 +19,9 @@ export interface AppOptions {
   quietMs?: number; // the quiet-release fallback, default 5000
   log?: (line: string) => void;
   uiDir?: string | null; // built UI to serve at `/` (index.html + assets); null serves the API only
-  agent?: 'claude' | 'other'; // default: 'claude' when process.env.CLAUDECODE is set
+  // The agent serving the page, attached by definition (saved to state.json). Default: 'claude' when
+  // process.env.CLAUDECODE is set, else whatever state.json has. null: never from the environment (the desktop).
+  agent?: AgentId | null;
   doneCommand?: (port: number) => string; // what SourceInfo.doneCommand prints; the CLI and the desktop set their own
 }
 
@@ -66,10 +68,6 @@ export function createApp(o: AppOptions): App {
   const { root: top, stateDir: dir } = source;
   const log = o.log ?? console.log;
   const quietMs = o.quietMs ?? 5000;
-  // Who serves the page, for the colour of the agent's marks: Claude Code sets CLAUDECODE in the
-  // shells it starts. Anything else (Codex, Cursor, a plain terminal) is 'other'.
-  const agent = o.agent ?? (process.env.CLAUDECODE ? 'claude' : 'other');
-  const BUSY = `${agent === 'claude' ? 'Claude' : 'The agent'} is working on this file`;
   const uiDir = o.uiDir ? realpathSync(o.uiDir) : null;
   const files = { drafts: join(dir, 'drafts.json'), edits: join(dir, 'edits.json'), batches: join(dir, 'batches.jsonl'), events: join(dir, 'events.log'), state: join(dir, 'state.json') };
 
@@ -98,9 +96,20 @@ export function createApp(o: AppOptions): App {
   const skipped = new Set<string>(saved.skipped ?? []);
   // Rejected: changes the user took out of the change set, backed up so Restore can put all of it back.
   const rejected = new Map<string, Rejected>(Object.entries(saved.rejected ?? {}));
+  // The attached agent, for its colour and the name the page and the errors give it: set by `trove attach`
+  // (POST /api/agent), cleared by `trove detach`. Attached means connected.
+  // ponytail: presence is a flag, no heartbeat; an agent that quits without detaching still shows. Add a ping if that bites.
+  type Agent = { id: AgentId; label: string; at: string };
+  const attached = (id: AgentId, label?: string): Agent => ({ id, label: label || AGENT_LABELS[id], at: new Date().toISOString() });
+  const serving = o.agent === undefined ? (process.env.CLAUDECODE ? 'claude' : null) : o.agent;
+  let agent: Agent | null = serving ? attached(serving) : saved.agent ?? null;
+  const agentInfo = (): AgentInfo => agent ? { ...agent, connected: true } : { id: 'other', label: AGENT_LABELS.other, connected: false, at: null };
+  const Who = () => { const l = agentInfo().label; return l[0].toUpperCase() + l.slice(1); };
+  const BUSY = (): Result => [409, { error: `${Who()} is working on this file` }];
   const saveState = () => writeFileSync(files.state, JSON.stringify({
     working: Object.fromEntries([...working].map(([p, w]) => [p, { hash: w.hash, text: w.text }])), updated: Object.fromEntries(updated), question,
-    seen: [...seen], skipped: [...skipped], rejected: Object.fromEntries(rejected) }));
+    seen: [...seen], skipped: [...skipped], rejected: Object.fromEntries(rejected), agent }));
+  if (serving) saveState();
   const REJECTED: Result = [409, { error: 'Rejected: restore it first' }];
 
   function list(): FileEntry[] {
@@ -162,7 +171,7 @@ export function createApp(o: AppOptions): App {
   const info = (): SourceInfo => ({
     kind: 'git', root: top, name: basename(top), branch: source.branch(),
     base: current.scope === 'branch' ? source.resolveBase(current) : null,
-    scope: current.scope, agent, port: port(), stateDir: dir, eventsLog: files.events, batchesLog: files.batches,
+    scope: current.scope, agent: agent?.id === 'claude' ? 'claude' : 'other', agentInfo: agentInfo(), port: port(), stateDir: dir, eventsLog: files.events, batchesLog: files.batches,
     doneCommand: (o.doneCommand ?? ((p) => `trove done <file> --port ${p}`))(port()),
   });
 
@@ -222,7 +231,7 @@ export function createApp(o: AppOptions): App {
     'POST /api/accept': (_, { path, hash }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
-      if (working.has(rel)) return [409, { error: BUSY }];
+      if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
       const now = hashOf(rel);
       if (now !== hash) return [409, { error: 'The file changed; read it again before accepting', hash: now }];
@@ -237,7 +246,7 @@ export function createApp(o: AppOptions): App {
     'POST /api/skip': (_, { path, on }) => {
       const rel = listed(path);
       if (!rel || typeof on !== 'boolean') return [400, { error: 'path and on required' }];
-      if (working.has(rel)) return [409, { error: BUSY }];
+      if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
       if (on) skipped.add(rel);
       else skipped.delete(rel);
@@ -250,7 +259,7 @@ export function createApp(o: AppOptions): App {
     'POST /api/reject': (_, { path, hash }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
-      if (working.has(rel)) return [409, { error: BUSY }];
+      if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return [409, { error: 'Already rejected' }];
       const text = read(rel);
       if (sha(text) !== hash) return [409, { error: 'The file changed; read it again before rejecting', hash: sha(text) }];
@@ -283,7 +292,7 @@ export function createApp(o: AppOptions): App {
     'POST /api/unaccept': (_, { path }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
-      if (working.has(rel)) return [409, { error: BUSY }];
+      if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
       source.unaccept(rel);
       return [200, { ok: true }];
@@ -292,7 +301,7 @@ export function createApp(o: AppOptions): App {
       const f = find(path);
       if (!f || typeof raw !== 'string') return [400, { error: 'path and raw required' }];
       const rel = f.path;
-      if (working.has(rel)) return [409, { error: BUSY }];
+      if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
       const text = read(rel);
       if (sha(text) !== hash) return [409, { error: 'The file changed since you started editing', hash: sha(text) }];
@@ -331,7 +340,7 @@ export function createApp(o: AppOptions): App {
       const e = edits();
       const edit = rel && e[rel];
       if (!rel || !edit) return [404, { error: 'no edits to revert' }];
-      if (working.has(rel)) return [409, { error: BUSY }];
+      if (working.has(rel)) return BUSY();
       const text = read(rel);
       if (id === undefined) {
         if (sha(text) !== edit.saved) return [409, { error: 'The file changed since your edit' }];
@@ -404,6 +413,14 @@ export function createApp(o: AppOptions): App {
       return [200, { released: release(rel), updated: updated.has(rel) }];
     },
     'GET /api/source': () => [200, info()],
+    // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
+    'POST /api/agent': (_, { id, label }) => {
+      if (id !== null && !Object.hasOwn(AGENT_LABELS, id)) return [400, { error: 'id is claude, codex, other or null' }];
+      if (label !== undefined && (typeof label !== 'string' || label.length > 40)) return [400, { error: 'label is a short string' }];
+      agent = id === null ? null : attached(id, label?.trim());
+      saveState();
+      return [200, agentInfo()];
+    },
     'GET /api/git': () => [200, git()],
     // The same as running `git switch <branch>` by hand, no more: no stash, no discard. Git itself
     // refuses when uncommitted changes would be overwritten; its message is the answer.
@@ -412,7 +429,7 @@ export function createApp(o: AppOptions): App {
       if (!target) return [404, { error: `no such branch: ${branch}` }];
       if (target.current) return [200, git()];
       if (target.worktree) return [409, { error: `${branch} is checked out in ${target.worktree}`, worktree: target.worktree }];
-      if (working.size) return [409, { error: `${agent === 'claude' ? 'Claude' : 'The agent'} is working on a file` }];
+      if (working.size) return [409, { error: `${Who()} is working on a file` }];
       const failed = source.switchTo(branch);
       if (failed) return [409, { error: failed }];
       // What the review listed belongs to the branch it was on: start the committed set over from

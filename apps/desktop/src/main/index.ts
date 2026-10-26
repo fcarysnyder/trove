@@ -1,8 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type MenuItemConstructorOptions } from 'electron';
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { probeGit, serve, type App, type GitScope, type OpenRequest, type Recent } from '@trove/core';
+import { promisify } from 'node:util';
+import { attachCommand, probeGit, serve, type AgentTool, type App, type GitScope, type OpenRequest, type Recent } from '@trove/core';
 
 const uiDir = join(import.meta.dirname, '../ui'); // out/main -> out/ui, however Electron was launched
 const startHtml = join(uiDir, 'start.html');
@@ -10,7 +12,7 @@ const preload = join(import.meta.dirname, '../preload/index.cjs');
 const recentsFile = () => join(app.getPath('userData'), 'recents.json');
 const MAX_RECENTS = 20;
 
-interface SourceWindow { win: BrowserWindow; core: App; path: string; root: string }
+interface SourceWindow { win: BrowserWindow; core: App; path: string; root: string; port: number }
 const sources = new Set<SourceWindow>();
 let startWin: BrowserWindow | null = null;
 
@@ -70,6 +72,8 @@ async function openNow(req: OpenRequest): Promise<void> {
   // Exact roots only: a worktree is its own toplevel, so it gets its own window beside the main checkout's.
   const open = [...sources].find((s) => s.path === path || s.root === path);
   if (open) {
+    if (req.agent !== undefined) writeRecents(readRecents().map((r) => (r.path === open.root ? { ...r, agent: req.agent } : r)));
+    if (req.agent) await launchAgent(req.agent, open.root, open.port);
     open.win.show();
     open.win.focus();
     return;
@@ -81,10 +85,15 @@ async function openNow(req: OpenRequest): Promise<void> {
     base: req.base,
     uiDir,
     port: 0,
-    agent: 'other',
+    agent: null, // nothing serves the page; an agent attaches with `trove attach`
     doneCommand: (port) => `trove done <file> --port ${port}`,
   });
   const info = core.info();
+  // Server first (the agent needs its port), then the agent's Terminal, then the window. A Terminal that
+  // fails still gets the window, whose Connect popover has the command to paste; the start page shows why.
+  let failed: unknown = null;
+  if (req.agent) await launchAgent(req.agent, info.root, info.port).catch((e: unknown) => { failed = e; });
+  const last = readRecents().find((r) => r.path === info.root);
   writeRecents([
     {
       path: info.root,
@@ -93,6 +102,7 @@ async function openNow(req: OpenRequest): Promise<void> {
       openedAt: new Date().toISOString(),
       scope: info.scope,
       ...(req.base !== undefined ? { base: req.base } : {}),
+      agent: req.agent !== undefined ? req.agent : (last?.agent ?? null),
     },
     ...readRecents().filter((r) => r.path !== info.root),
   ]);
@@ -104,7 +114,7 @@ async function openNow(req: OpenRequest): Promise<void> {
     // The bridge here too: the editor's repository and branch menus open other worktrees and recents with it.
     webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
-  const source: SourceWindow = { win, core, path, root: info.root };
+  const source: SourceWindow = { win, core, path, root: info.root, port: info.port };
   sources.add(source);
   win.on('page-title-updated', (e) => e.preventDefault());
   win.on('closed', () => {
@@ -112,7 +122,8 @@ async function openNow(req: OpenRequest): Promise<void> {
     void core.close();
   });
   guard(win, (target) => target.origin === new URL(url).origin);
-  await win.loadURL(url);
+  await win.loadURL(req.agent ? `${url}/?waiting=${req.agent}` : url);
+  if (failed) throw failed;
   if (onlyStart) startWin?.close();
 }
 
@@ -126,6 +137,30 @@ function openOrStage(picked: ReturnType<typeof probe>): void {
   if (!picked) return;
   if (picked.git) openOrReport(() => reopen(picked.path));
   else openStart(picked.path);
+}
+
+// ---- agents ----------------------------------------------------------------------------------
+
+const run = promisify(execFile);
+const TOOLS: AgentTool[] = ['claude', 'codex'];
+
+/** Which agent CLIs the user's login shell finds: an app started from the Dock has a bare PATH. */
+async function tools(): Promise<Record<AgentTool, boolean>> {
+  const shell = process.env.SHELL || '/bin/zsh';
+  const has = (tool: AgentTool) => run(shell, ['-ilc', `which ${tool}`], { timeout: 5000 }).then(() => true, () => false);
+  const [claude, codex] = await Promise.all(TOOLS.map(has));
+  return { claude, codex };
+}
+
+/** A Terminal window running `tool` in the repository with the attach prompt for the server on `port`. */
+async function launchAgent(tool: AgentTool, root: string, port: number): Promise<void> {
+  const script = join(app.getPath('temp'), `trove-${tool}-${port}.command`);
+  writeFileSync(script, `#!/bin/sh\n${attachCommand(tool, root, port, true)}\n`);
+  chmodSync(script, 0o755);
+  // ponytail: Terminal.app only; iTerm (or the user's default terminal) or an embedded terminal when someone asks.
+  await run('open', ['-a', 'Terminal', script]).catch((e: { stderr?: string; message: string }) => {
+    throw new Error(`Terminal did not open: ${(e.stderr || e.message).trim()}`);
+  });
 }
 
 // ---- windows ---------------------------------------------------------------------------------
@@ -228,8 +263,10 @@ ipcMain.handle('trove:open', (_e, req: unknown) => {
   const r = (req ?? {}) as Partial<Record<keyof OpenRequest, unknown>>;
   if (r.scope !== undefined && !SCOPES.includes(r.scope as GitScope)) throw new Error(`unknown scope ${String(r.scope)}`);
   if (r.base !== undefined && r.base !== null && typeof r.base !== 'string') throw new Error('base must be a string');
-  return openSource({ path: str(r.path), scope: r.scope as GitScope | undefined, base: r.base as string | null | undefined });
+  if (r.agent !== undefined && r.agent !== null && !TOOLS.includes(r.agent as AgentTool)) throw new Error(`unknown agent ${String(r.agent)}`);
+  return openSource({ path: str(r.path), scope: r.scope as GitScope | undefined, base: r.base as string | null | undefined, agent: r.agent as AgentTool | null | undefined });
 });
+ipcMain.handle('trove:tools', () => tools());
 ipcMain.handle('trove:recents', () => readRecents());
 ipcMain.handle('trove:forget', (_e, path: unknown) => {
   const p = str(path);

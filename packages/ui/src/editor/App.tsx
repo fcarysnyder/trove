@@ -21,7 +21,7 @@ const WIDTH = { files: 260, changes: 300 };
 
 export function App() {
   const theme = useStore((s) => s.settings.theme);
-  const agent = useStore((s) => s.source?.agent ?? 'claude');
+  const agent = useStore((s) => s.source?.agentInfo?.id ?? s.source?.agent ?? 'claude');
   const question = useStore((s) => !!s.question);
   const name = useStore((s) => s.source?.name);
   useEffect(() => applyTheme(theme), [theme]);

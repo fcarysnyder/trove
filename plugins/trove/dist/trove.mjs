@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// trove 0.2.0: bundled CLI and engine (@trove/core, marked). Node 22+, no dependencies.
+// trove 0.3.0: bundled CLI and engine (@trove/core, marked). Node 22+, no dependencies.
 
 // bin/trove.mjs
 import { existsSync as existsSync4, realpathSync as realpathSync4 } from "node:fs";
@@ -22,6 +22,7 @@ var DEFAULT_SETTINGS = {
   base: null,
   showNew: true
 };
+var AGENT_LABELS = { claude: "Claude", codex: "Codex", other: "the agent" };
 
 // ../core/src/app.ts
 import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, realpathSync as realpathSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
@@ -1780,8 +1781,6 @@ function createApp(o) {
   const { root: top, stateDir: dir } = source;
   const log = o.log ?? console.log;
   const quietMs = o.quietMs ?? 5e3;
-  const agent = o.agent ?? (process.env.CLAUDECODE ? "claude" : "other");
-  const BUSY = `${agent === "claude" ? "Claude" : "The agent"} is working on this file`;
   const uiDir = o.uiDir ? realpathSync2(o.uiDir) : null;
   const files = { drafts: join3(dir, "drafts.json"), edits: join3(dir, "edits.json"), batches: join3(dir, "batches.jsonl"), events: join3(dir, "events.log"), state: join3(dir, "state.json") };
   let stored = loadSettings(dir);
@@ -1803,14 +1802,25 @@ function createApp(o) {
   const seen = new Set(saved.seen ?? []);
   const skipped = new Set(saved.skipped ?? []);
   const rejected = new Map(Object.entries(saved.rejected ?? {}));
+  const attached = (id, label) => ({ id, label: label || AGENT_LABELS[id], at: (/* @__PURE__ */ new Date()).toISOString() });
+  const serving = o.agent === void 0 ? process.env.CLAUDECODE ? "claude" : null : o.agent;
+  let agent = serving ? attached(serving) : saved.agent ?? null;
+  const agentInfo = () => agent ? { ...agent, connected: true } : { id: "other", label: AGENT_LABELS.other, connected: false, at: null };
+  const Who = () => {
+    const l3 = agentInfo().label;
+    return l3[0].toUpperCase() + l3.slice(1);
+  };
+  const BUSY = () => [409, { error: `${Who()} is working on this file` }];
   const saveState = () => writeFileSync2(files.state, JSON.stringify({
     working: Object.fromEntries([...working].map(([p, w]) => [p, { hash: w.hash, text: w.text }])),
     updated: Object.fromEntries(updated),
     question,
     seen: [...seen],
     skipped: [...skipped],
-    rejected: Object.fromEntries(rejected)
+    rejected: Object.fromEntries(rejected),
+    agent
   }));
+  if (serving) saveState();
   const REJECTED = [409, { error: "Rejected: restore it first" }];
   function list() {
     const before = seen.size;
@@ -1895,7 +1905,8 @@ function createApp(o) {
     branch: source.branch(),
     base: current.scope === "branch" ? source.resolveBase(current) : null,
     scope: current.scope,
-    agent,
+    agent: agent?.id === "claude" ? "claude" : "other",
+    agentInfo: agentInfo(),
     port: port(),
     stateDir: dir,
     eventsLog: files.events,
@@ -1984,7 +1995,7 @@ function createApp(o) {
     "POST /api/accept": (_2, { path, hash }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: "not in the review set" }];
-      if (working.has(rel)) return [409, { error: BUSY }];
+      if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
       const now = hashOf(rel);
       if (now !== hash) return [409, { error: "The file changed; read it again before accepting", hash: now }];
@@ -1999,7 +2010,7 @@ function createApp(o) {
     "POST /api/skip": (_2, { path, on }) => {
       const rel = listed(path);
       if (!rel || typeof on !== "boolean") return [400, { error: "path and on required" }];
-      if (working.has(rel)) return [409, { error: BUSY }];
+      if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
       if (on) skipped.add(rel);
       else skipped.delete(rel);
@@ -2012,7 +2023,7 @@ function createApp(o) {
     "POST /api/reject": (_2, { path, hash }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: "not in the review set" }];
-      if (working.has(rel)) return [409, { error: BUSY }];
+      if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return [409, { error: "Already rejected" }];
       const text = read(rel);
       if (sha(text) !== hash) return [409, { error: "The file changed; read it again before rejecting", hash: sha(text) }];
@@ -2048,7 +2059,7 @@ function createApp(o) {
     "POST /api/unaccept": (_2, { path }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: "not in the review set" }];
-      if (working.has(rel)) return [409, { error: BUSY }];
+      if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
       source.unaccept(rel);
       return [200, { ok: true }];
@@ -2057,7 +2068,7 @@ function createApp(o) {
       const f = find(path);
       if (!f || typeof raw2 !== "string") return [400, { error: "path and raw required" }];
       const rel = f.path;
-      if (working.has(rel)) return [409, { error: BUSY }];
+      if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
       const text = read(rel);
       if (sha(text) !== hash) return [409, { error: "The file changed since you started editing", hash: sha(text) }];
@@ -2102,7 +2113,7 @@ function createApp(o) {
       const e = edits();
       const edit = rel && e[rel];
       if (!rel || !edit) return [404, { error: "no edits to revert" }];
-      if (working.has(rel)) return [409, { error: BUSY }];
+      if (working.has(rel)) return BUSY();
       const text = read(rel);
       if (id === void 0) {
         if (sha(text) !== edit.saved) return [409, { error: "The file changed since your edit" }];
@@ -2176,6 +2187,14 @@ function createApp(o) {
       return [200, { released: release(rel), updated: updated.has(rel) }];
     },
     "GET /api/source": () => [200, info()],
+    // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
+    "POST /api/agent": (_2, { id, label }) => {
+      if (id !== null && !Object.hasOwn(AGENT_LABELS, id)) return [400, { error: "id is claude, codex, other or null" }];
+      if (label !== void 0 && (typeof label !== "string" || label.length > 40)) return [400, { error: "label is a short string" }];
+      agent = id === null ? null : attached(id, label?.trim());
+      saveState();
+      return [200, agentInfo()];
+    },
     "GET /api/git": () => [200, git()],
     // The same as running `git switch <branch>` by hand, no more: no stash, no discard. Git itself
     // refuses when uncommitted changes would be overwritten; its message is the answer.
@@ -2184,7 +2203,7 @@ function createApp(o) {
       if (!target) return [404, { error: `no such branch: ${branch}` }];
       if (target.current) return [200, git()];
       if (target.worktree) return [409, { error: `${branch} is checked out in ${target.worktree}`, worktree: target.worktree }];
-      if (working.size) return [409, { error: `${agent === "claude" ? "Claude" : "The agent"} is working on a file` }];
+      if (working.size) return [409, { error: `${Who()} is working on a file` }];
       const failed = source.switchTo(branch);
       if (failed) return [409, { error: failed }];
       seen.clear();
@@ -2353,6 +2372,7 @@ async function selftest() {
     await gitCase(temps);
     await branchCase(temps);
     await switchCase(temps);
+    await agentCase(temps);
     notARepo(temps);
   } finally {
     for (const t of temps) rmSync2(t, { recursive: true, force: true });
@@ -2785,6 +2805,40 @@ async function switchCase(temps) {
   await app.close();
   sh("worktree", "remove", "--force", wtDir);
 }
+async function agentCase(temps) {
+  const { root } = newRepo("trove-agent-");
+  temps.push(root);
+  writeFileSync3(join4(root, "a.md"), "# A\n\nText.\n");
+  const opts = { root, agent: null };
+  let { app, port } = await listen(opts);
+  const source = async () => (await call(port, "GET", "/api/source")).body;
+  const none = { id: "other", label: "the agent", connected: false, at: null };
+  assert.deepEqual([(await source()).agentInfo, (await source()).agent], [none, "other"], "nothing attached");
+  assert.equal((await call(port, "POST", "/api/agent", { id: "cursor" })).status, 400);
+  const codex = await call(port, "POST", "/api/agent", { id: "codex" });
+  assert.deepEqual([codex.status, codex.body.id, codex.body.label, codex.body.connected], [200, "codex", "Codex", true]);
+  assert.deepEqual([(await source()).agentInfo, (await source()).agent], [codex.body, "other"], "/api/source reflects it");
+  const anchor = { quote: "Text", prefix: "", suffix: "", path: [], raw: "" };
+  await call(port, "POST", "/api/drafts", { path: "a.md", drafts: [{ kind: "change", note: "n", anchor }] });
+  await call(port, "POST", "/api/send", {});
+  const hash = sha(readFileSync3(join4(root, "a.md"), "utf8"));
+  assert.equal((await call(port, "POST", "/api/accept", { path: "a.md", hash })).body.error, "Codex is working on this file", "BUSY names it");
+  await call(port, "POST", "/api/agent", { id: "other", label: "Cursor" });
+  assert.equal((await call(port, "POST", "/api/accept", { path: "a.md", hash })).body.error, "Cursor is working on this file", "a label of its own");
+  const claude = (await call(port, "POST", "/api/agent", { id: "claude" })).body;
+  await app.close();
+  ({ app, port } = await listen(opts));
+  assert.deepEqual([(await source()).agentInfo, (await source()).agent], [claude, "claude"], "attach survives a restart");
+  assert.deepEqual((await call(port, "POST", "/api/agent", { id: null })).body, none, "detach");
+  assert.equal((await call(port, "POST", "/api/accept", { path: "a.md", hash })).body.error, "The agent is working on this file");
+  await app.close();
+  ({ app, port } = await listen(opts));
+  assert.deepEqual((await source()).agentInfo, none, "detach survives a restart");
+  await app.close();
+  ({ app, port } = await listen({ root, agent: "claude" }));
+  assert.deepEqual([(await source()).agentInfo.label, (await source()).agentInfo.connected], ["Claude", true], "the serving agent is attached");
+  await app.close();
+}
 function notARepo(temps) {
   const root = mkdtempSync(join4(tmpdir(), "trove-plain-"));
   temps.push(root);
@@ -2795,7 +2849,7 @@ function notARepo(temps) {
 }
 
 // bin/trove.mjs
-var USAGE = 'usage: trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>] | done <file> [--port 4824] | ask "<question>" | reply "<summary>" | ask --clear [--port 4824] | --selftest';
+var USAGE = 'usage: trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>] | attach --port N [--agent claude|codex|other] | detach --port N | info --port N | done <file> [--port 4824] | ask "<question>" | reply "<summary>" | ask --clear [--port 4824] | --selftest';
 var here = dirname3(fileURLToPath(import.meta.url));
 var invoked = () => {
   const script = process.argv[1] ?? "";
@@ -2804,6 +2858,12 @@ var invoked = () => {
   return /[\s'"$`\\]/.test(path) ? `node '${path.replaceAll("'", String.raw`'\''`)}'` : `node ${path}`;
 };
 var defaultUi = () => [join5(here, "ui"), resolve2(here, "../../ui/dist")].find((d) => existsSync4(join5(d, "index.html"))) ?? null;
+async function firstLine(port) {
+  const [source, files, git] = await Promise.all(["/api/source", "/api/files", "/api/git"].map((p) => call(port, "GET", p)));
+  if ([source, files, git].some((r) => r.status !== 200) || !source.body?.eventsLog) throw new Error(`port ${port} is not a Trove server`);
+  const queued = files.body.files.filter((f) => !f.staged).length;
+  return `reviewing ${queued} files on ${git.body.branch ?? git.body.head} at http://127.0.0.1:${port}; notices in ${source.body.eventsLog}; after each file run: ${invoked()} done <file> --port ${port}`;
+}
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === "--selftest") {
@@ -2821,7 +2881,8 @@ async function main() {
       scope: { type: "string" },
       base: { type: "string" },
       ui: { type: "string" },
-      clear: { type: "boolean" }
+      clear: { type: "boolean" },
+      agent: { type: "string", default: "claude" }
     }
   });
   const port = Number(values.port);
@@ -2840,6 +2901,24 @@ async function main() {
     process.exitCode = r.status === 200 ? 0 : 1;
     return;
   }
+  if (command === "attach" || command === "detach" || command === "info") {
+    if (command === "attach" && !["claude", "codex", "other"].includes(values.agent)) {
+      console.log(USAGE);
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      if (command !== "info") {
+        const r = await call(port, "POST", "/api/agent", { id: command === "attach" ? values.agent : null });
+        if (r.status !== 200) throw new Error(`port ${port} is not a Trove server`);
+      }
+      console.log(command === "detach" ? `detached from port ${port}` : await firstLine(port));
+    } catch (error) {
+      console.log(error.code === "ECONNREFUSED" ? `nothing is serving on port ${port}: start one with trove serve, or pass the right --port` : `${command} failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
   if (command !== "serve" || values.scope && !["uncommitted", "branch"].includes(values.scope)) {
     console.log(USAGE);
     process.exitCode = 1;
@@ -2847,7 +2926,7 @@ async function main() {
   }
   const cmd = invoked();
   try {
-    const { app, url } = await serve({
+    const { port: bound } = await serve({
       root: resolve2(values.root),
       port,
       exclude: values.exclude,
@@ -2859,10 +2938,7 @@ async function main() {
       uiDir: values.ui ? resolve2(values.ui) : defaultUi(),
       doneCommand: (p) => `${cmd} done <file> --port ${p}`
     });
-    const info = app.info();
-    const queued = app.list().filter((f) => !f.staged).length;
-    const git = app.git();
-    console.log(`reviewing ${queued} files on ${git.branch ?? git.head} at ${url}; notices in ${info.eventsLog}; after each file run: ${info.doneCommand}`);
+    console.log(await firstLine(bound));
   } catch (error) {
     console.log(error.code === "EADDRINUSE" ? `port ${port} is busy: another session is probably serving. Stop it, or pass --port.` : error.message.startsWith("not a git repository") ? error.message : `server failed: ${error.message}`);
     process.exitCode = 1;

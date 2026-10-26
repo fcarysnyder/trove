@@ -1,5 +1,5 @@
 // The contract every Trove package builds against: doc types, settings, review states, the HTTP
-// API's request and response shapes, and the desktop bridge. Pure types and constants, no imports,
+// API's request and response shapes, and the desktop bridge. Pure types, constants and string helpers, no imports,
 // so the browser UI and the Electron preload can both use it.
 
 /** How a file is rendered and edited. */
@@ -110,6 +110,25 @@ export interface Question {
   at: string;
 }
 
+/** Who is on the other end of the review loop. 'other' is any agent that is not Claude Code or Codex. */
+export type AgentId = 'claude' | 'codex' | 'other';
+/** A tool the desktop can start a session in. */
+export type AgentTool = 'claude' | 'codex';
+/**
+ * The agent attached to a server, set by `trove attach` (POST /api/agent) and kept in state.json.
+ * With nothing attached: {id: 'other', label: 'the agent', connected: false, at: null}.
+ */
+export interface AgentInfo { id: AgentId; label: string; connected: boolean; at: string | null }
+/** The label an agent gets when attach names none. */
+export const AGENT_LABELS: Record<AgentId, string> = { claude: 'Claude', codex: 'Codex', other: 'the agent' };
+
+/** The one-line prompt that starts an agent session attached to the server on `port`. */
+export const attachPrompt = (port: number | string) =>
+  `Start the markdown-editor skill attached to the Trove server already running on port ${port}: run its attach command instead of serve, stream the events log it prints, and handle batches as the skill says.`;
+/** The shell command that starts `tool` in `root` with attachPrompt; `exec` replaces the shell (the desktop's Terminal script). */
+export const attachCommand = (tool: AgentTool, root: string, port: number | string, exec = false) =>
+  `cd '${root.replaceAll("'", "'\\''")}' && ${exec ? 'exec ' : ''}${tool} "${attachPrompt(port)}"`;
+
 export interface SourceInfo {
   kind: 'git';
   root: string; // absolute path of the git toplevel
@@ -117,7 +136,8 @@ export interface SourceInfo {
   branch: string | null; // current branch (null when detached)
   base: string | null; // branch scope: the resolved base ref
   scope: GitScope;
-  agent: 'claude' | 'other'; // who serves the page: Claude Code sets CLAUDECODE
+  agent: 'claude' | 'other'; // compatibility: agentInfo.id === 'claude' ? 'claude' : 'other'
+  agentInfo: AgentInfo;
   port: number;
   stateDir: string; // where drafts, edits, batches and state live
   eventsLog: string;
@@ -158,6 +178,7 @@ export interface SendBody { paths?: string[]; kind?: CommentKind } // POST /api/
 export interface SendResponse { id: string; comments: number; files: number; locked: string[] }
 export interface AskBody { text: string; kind?: 'question' | 'reply' } // POST /api/ask -> {question}
 export interface ReleaseBody { path: string } // POST /api/release -> {released, updated}
+export interface AgentBody { id: AgentId | null; label?: string } // POST /api/agent -> AgentInfo; id null detaches
 export type SourceResponse = SourceInfo; // GET /api/source
 export type SettingsResponse = Settings; // GET /api/settings; POST /api/settings takes Partial<Settings>, returns Settings
 
@@ -203,9 +224,11 @@ export interface Recent {
   openedAt: string;
   scope?: GitScope;
   base?: string | null;
+  agent?: AgentTool | null; // the last agent choice on the start page's Agent step
 }
 
-export interface OpenRequest { path: string; scope?: GitScope; base?: string | null }
+/** `agent`: start the server, then a Terminal session of that tool attached to it, then the window. */
+export interface OpenRequest { path: string; scope?: GitScope; base?: string | null; agent?: AgentTool | null }
 
 export interface TroveBridge {
   /** Native folder picker. null when cancelled; `git` null when the folder is not in a git repository (it cannot be opened). */
@@ -216,6 +239,8 @@ export interface TroveBridge {
   open(req: OpenRequest): Promise<void>;
   recents(): Promise<Recent[]>;
   forget(path: string): Promise<void>;
+  /** Which agent CLIs are on the user's login-shell PATH. */
+  tools(): Promise<Record<AgentTool, boolean>>;
 }
 
 declare global {

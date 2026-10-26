@@ -1,8 +1,9 @@
-// The desktop zero state: open a git repository (with a scope), or a recent one. A folder that is
-// not a repository stays here with the reason. In a plain browser there is no bridge, so it says
-// how to run the server instead.
-import type { GitProbe, GitScope, Recent } from '@trove/core/types';
-import { GitBranch, X } from 'lucide-react';
+// The desktop start page, a three-step wizard: 1 Repository (open a git repository with a scope, or a
+// recent one; a folder that is not a repository stays here with the reason), 2 Agent (start Claude Code
+// or Codex in Terminal, attached to the repository's server), 3 Editor (the repository's own window).
+// In a plain browser there is no bridge, so it says how to run the server instead.
+import { attachCommand, type AgentTool, type GitProbe, type GitScope, type Recent } from '@trove/core/types';
+import { Copy, GitBranch, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -54,12 +55,26 @@ function NoBridge() {
 
 const NOT_A_REPO = 'Not a git repository. Try again.';
 type Picked = { path: string; git: GitProbe | null };
+/** What step 1 chose: the window to open, and the agent the repository had last time. */
+type Target = { path: string; scope?: GitScope; base?: string | null; agent?: AgentTool | null };
+const nameOf = (path: string) => path.split('/').at(-1);
+
+function Steps({ current }: { current: 1 | 2 }) {
+  return (
+    <ol className="flex gap-4 text-sm text-muted-foreground" aria-label="Steps">
+      {['Repository', 'Agent', 'Editor'].map((label, i) => (
+        <li key={label} aria-current={i + 1 === current ? 'step' : undefined} className={cn(i + 1 === current && 'font-medium text-foreground')}>{`${i + 1} ${label}`}</li>
+      ))}
+    </ol>
+  );
+}
 
 function Picker() {
   const bridge = window.trove!;
   const [recents, setRecents] = useState<Recent[]>([]);
   const [notRepos, setNotRepos] = useState<Set<string>>(new Set());
   const [picked, setPicked] = useState<Picked | null>(null);
+  const [target, setTarget] = useState<Target | null>(null);
   const [dragging, setDragging] = useState(false);
   const reload = async () => {
     const list = await bridge.recents().catch(() => []);
@@ -73,7 +88,7 @@ function Picker() {
     const stage = () => {
       const path = decodeURIComponent(location.hash.slice(1));
       history.replaceState(null, '', location.pathname); // so staging the same path again is a change
-      if (path) void bridge.probe(path).then((res) => setPicked(res ?? { path, git: null }), (e) => toast(errText(e)));
+      if (path) void bridge.probe(path).then((res) => { setTarget(null); setPicked(res ?? { path, git: null }); }, (e) => toast(errText(e)));
     };
     stage();
     addEventListener('hashchange', stage);
@@ -88,6 +103,7 @@ function Picker() {
     }
   };
   const repo = picked?.git ? { path: picked.path, git: picked.git } : null;
+  const next = (t: Target) => setTarget({ agent: recents.find((r) => r.path === t.path)?.agent, ...t });
   return (
     <div
       className={cn('flex w-full max-w-lg flex-col gap-4 rounded-xl outline-2 outline-offset-8 outline-transparent transition-[outline-color]', dragging && 'outline-dashed outline-border')}
@@ -97,9 +113,13 @@ function Picker() {
       onDrop={() => setDragging(false)}
     >
       <Card>
-        <CardHeader><CardTitle className="text-foreground">{picked ? picked.path.split('/').at(-1) : 'Trove'}</CardTitle></CardHeader>
+        <CardHeader className="gap-3">
+          <Steps current={target ? 2 : 1} />
+          <CardTitle className="text-foreground">{target ? nameOf(target.path) : picked ? nameOf(picked.path) : 'Trove'}</CardTitle>
+        </CardHeader>
         <CardContent>
-          {repo ? <RepoStep repo={repo} onBack={() => setPicked(null)} /> : (
+          {target ? <AgentStep key={target.path} target={target} onBack={() => setTarget(null)} />
+            : repo ? <RepoStep repo={repo} onBack={() => setPicked(null)} onNext={next} /> : (
             <div className="flex flex-col items-start gap-3">
               {picked && (
                 <div className="flex w-full min-w-0 flex-col gap-1">
@@ -112,7 +132,7 @@ function Picker() {
           )}
         </CardContent>
       </Card>
-      {!repo && recents.length > 0 && (
+      {!repo && !target && recents.length > 0 && (
         <Card className="gap-0 py-2">
           <CardHeader className="px-4 py-2"><CardTitle className="text-sm text-foreground">Recent</CardTitle></CardHeader>
           <ul>
@@ -136,7 +156,7 @@ function Picker() {
                   <div className="group flex items-center gap-2 px-2">
                     {bad ? <div className={cn(row, 'opacity-60')} aria-disabled>{body}</div> : (
                       <button className={cn(row, 'outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring')}
-                        onClick={() => bridge.open({ path: r.path, scope: r.scope, base: r.base }).catch((e) => toast(errText(e)))}>
+                        onClick={() => setTarget({ path: r.path, scope: r.scope, base: r.base, agent: r.agent })}>
                         {body}
                       </button>
                     )}
@@ -152,7 +172,7 @@ function Picker() {
   );
 }
 
-function RepoStep({ repo, onBack }: { repo: { path: string; git: GitProbe }; onBack: () => void }) {
+function RepoStep({ repo, onBack, onNext }: { repo: { path: string; git: GitProbe }; onBack: () => void; onNext: (t: Target) => void }) {
   const { git } = repo;
   const [scope, setScope] = useState<GitScope>('uncommitted');
   const [base, setBase] = useState(git.defaultBase ?? git.branches[0] ?? '');
@@ -194,7 +214,53 @@ function RepoStep({ repo, onBack }: { repo: { path: string; git: GitProbe }; onB
       </RadioGroup>
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={onBack}>Back</Button>
-        <Button onClick={() => window.trove!.open({ path, scope, base: scope === 'branch' ? base || null : null }).catch((e) => toast(errText(e)))}>Open</Button>
+        <Button onClick={() => onNext({ path, scope, base: scope === 'branch' ? base || null : null })}>Next</Button>
+      </div>
+    </div>
+  );
+}
+
+type Choice = AgentTool | 'none';
+const CHOICES: [Choice, string, string][] = [['claude', 'Claude Code', 'bg-agent-claude'], ['codex', 'Codex', 'bg-agent-codex'], ['none', 'None for now', 'bg-muted-foreground']];
+
+/** Step 2: which agent to start beside the editor. The server picks its port on open, so the command shows <port> until then. */
+function AgentStep({ target, onBack }: { target: Target; onBack: () => void }) {
+  const bridge = window.trove!;
+  const [choice, setChoice] = useState<Choice>(target.agent === null ? 'none' : target.agent ?? 'claude');
+  const [tools, setTools] = useState<Record<AgentTool, boolean> | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { void bridge.tools().then(setTools, () => {}); }, []);
+  const go = (agent: AgentTool | null) => {
+    setBusy(true);
+    bridge.open({ path: target.path, scope: target.scope, base: target.base, agent }).catch((e) => toast(errText(e))).finally(() => setBusy(false));
+  };
+  const command = choice === 'none' ? null : attachCommand(choice, target.path, '<port>');
+  const copy = (text: string) => navigator.clipboard.writeText(text).then(() => toast('Copied'), () => toast('Copy failed'));
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
+        <RadioGroup value={choice} onValueChange={(v) => setChoice(v as Choice)} className="gap-3" aria-label="Agent">
+          {CHOICES.map(([value, label, dot]) => (
+            <div key={value} className="flex items-center gap-2">
+              <RadioGroupItem id={`agent-${value}`} value={value} />
+              <Label htmlFor={`agent-${value}`} className="font-normal text-foreground">
+                <span className={cn('size-2 rounded-full', dot)} aria-hidden />{label}
+              </Label>
+            </div>
+          ))}
+        </RadioGroup>
+        {choice !== 'none' && tools && !tools[choice] && <span role="status" className="text-sm text-muted-foreground">{`${choice} is not installed`}</span>}
+      </div>
+      {command && (
+        <div className="flex items-start gap-1">
+          <code className="min-w-0 flex-1 rounded-sm bg-background px-2 py-1 font-mono text-xs break-all text-foreground">{command}</code>
+          <IconButton label="Copy command" onClick={() => copy(command)}><Copy /></IconButton>
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" className="text-muted-foreground" disabled={busy} onClick={() => go(null)}>Skip</Button>
+        <Button variant="ghost" className="ml-auto" onClick={onBack}>Back</Button>
+        <Button disabled={busy} onClick={() => go(choice === 'none' ? null : choice)}>{choice === 'none' ? 'Open editor' : 'Launch'}</Button>
       </div>
     </div>
   );

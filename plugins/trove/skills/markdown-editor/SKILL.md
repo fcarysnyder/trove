@@ -26,6 +26,13 @@ own server there.
 
 ## Start
 
+**Attach to a running Trove** (the desktop app starts one and opens you with a prompt naming its
+port): if the prompt names a port, or `node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" info --port <port>`
+answers, run `node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" attach --port <port> --agent claude`
+instead of step 1. Its line is the one `serve` prints: take the URL, the events log and the `done`
+command from it, then go on from step 2. The page shows you as connected and in your colour. Run
+`... detach --port <port>` when you stop for good. Everything else below is unchanged.
+
 1. Run `node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" serve --root <repo>` in the background, so it
    outlives your notification stream. In Claude Code, Bash with `run_in_background`; elsewhere a
    background terminal. Its first line gives the URL, the events log path and the exact `done`
@@ -42,7 +49,7 @@ own server there.
    `Show new` (N), on by default, marks what changed since the staged copy (or since HEAD once
    accepted): a green gutter bar beside each changed line, its new words tinted, a red one where a
    block was removed. On a file you updated, what you changed since the comments were sent shows
-   the same way in your colour (Claude's orange under Claude Code, teal for any other agent); the
+   the same way in your colour (Claude's orange once attached or serving from Claude Code, violet for Codex, teal for any other agent); the
    user's own saved edits show in white;
    hovering a tint or bar shows that block's word diff. Markdown only.
    Selecting text shows a toolbar: C comments, E asks for an explanation, plus edit-block and
@@ -59,8 +66,8 @@ own server there.
 
 `port 4824 is busy` means another session is serving: pass `--port`. Drafts, locks, settings and
 your before-update snapshots survive a restart (`<git-dir>/trove/`; an older `<git-dir>/doc-review/`
-is moved there on first run). Labels use your name when Claude Code serves the page, `the agent`
-otherwise.
+is moved there on first run). Labels use your name when Claude Code serves the page or you
+attached, `the agent` otherwise.
 
 ## Handle a batch
 

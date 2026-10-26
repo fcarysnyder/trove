@@ -342,7 +342,12 @@ export async function init() {
   const waiting = (f: FileRow) => f.state === 'queue' || f.state === 'working';
   const first = visible().find(waiting) ?? get().files.find(waiting); // the remembered filters may hide every waiting file
   if (first) await open(first.path);
-  setInterval(() => { void refresh(); void loadGit(); }, 2000);
+  setInterval(() => { void refresh(); void loadGit(); void loadSource(); }, 2000);
+}
+/** The attached agent changes under the page (`trove attach`, `detach`): its colour and name follow. */
+async function loadSource() {
+  const source = await optional<SourceInfo>('source').catch(() => null);
+  if (source && JSON.stringify(source) !== JSON.stringify(get().source)) set({ source });
 }
 function localStorageHas(key: string) {
   try { return localStorage.getItem(`trove:${key}`) != null; } catch { return false; }

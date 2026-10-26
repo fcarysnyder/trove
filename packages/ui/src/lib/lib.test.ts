@@ -8,7 +8,7 @@ import { resolveTheme } from './theme';
 const row = (o: Partial<FileRow>): FileRow => ({ path: 'a.md', kind: 'markdown', untracked: false, staged: false, state: 'queue', updated: false, edited: false, drafts: 0, ...o });
 
 describe('status', () => {
-  const claude = names('claude');
+  const claude = names('Claude');
   it('maps each state to its icon and label, first match wins', () => {
     expect(status(row({ state: 'working', drafts: 2 }), claude)).toMatchObject({ icon: 'loader-circle', label: 'Claude is working' });
     expect(status(row({ state: 'accepted', updated: true }), claude)).toMatchObject({ icon: 'circle-check', label: 'Accepted (staged)', tone: 'accepted' });
@@ -24,8 +24,9 @@ describe('status', () => {
     expect(PROGRESS).toEqual(['accepted', 'updated', 'edited', 'drafts', 'working', 'skipped', 'pending', 'rejected']);
   });
   it('names another agent generically', () => {
-    expect(status(row({ state: 'working' }), names('other')).label).toBe('The agent is working');
-    expect(status(row({ updated: true }), names('other')).label).toBe('Updated by the agent');
+    expect(status(row({ state: 'working' }), names('the agent')).label).toBe('The agent is working');
+    expect(status(row({ updated: true }), names('the agent')).label).toBe('Updated by the agent');
+    expect([names('Codex').who, names('the agent').who]).toEqual(['Codex', 'Your agent']);
   });
 });
 

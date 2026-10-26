@@ -41,6 +41,7 @@ export async function selftest(): Promise<void> {
     await gitCase(temps);
     await branchCase(temps);
     await switchCase(temps);
+    await agentCase(temps);
     notARepo(temps);
   } finally {
     for (const t of temps) rmSync(t, { recursive: true, force: true });
@@ -519,6 +520,43 @@ async function switchCase(temps: string[]) {
   assert.equal((await sw('free')).status, 200, 'the current branch is a no-op');
   await app.close();
   sh('worktree', 'remove', '--force', wtDir);
+}
+
+// The attached agent: attach names it and picks its colour id, the errors use its label, detach
+// clears it, and both survive a restart. A serving agent (CLAUDECODE) is attached by definition.
+async function agentCase(temps: string[]) {
+  const { root } = newRepo('trove-agent-');
+  temps.push(root);
+  writeFileSync(join(root, 'a.md'), '# A\n\nText.\n');
+  const opts = { root, agent: null };
+  let { app, port } = await listen(opts);
+  const source = async () => (await call(port, 'GET', '/api/source')).body;
+  const none = { id: 'other', label: 'the agent', connected: false, at: null };
+  assert.deepEqual([(await source()).agentInfo, (await source()).agent], [none, 'other'], 'nothing attached');
+  assert.equal((await call(port, 'POST', '/api/agent', { id: 'cursor' })).status, 400);
+  const codex = await call(port, 'POST', '/api/agent', { id: 'codex' });
+  assert.deepEqual([codex.status, codex.body.id, codex.body.label, codex.body.connected], [200, 'codex', 'Codex', true]);
+  assert.deepEqual([(await source()).agentInfo, (await source()).agent], [codex.body, 'other'], '/api/source reflects it');
+  const anchor = { quote: 'Text', prefix: '', suffix: '', path: [], raw: '' };
+  await call(port, 'POST', '/api/drafts', { path: 'a.md', drafts: [{ kind: 'change', note: 'n', anchor }] });
+  await call(port, 'POST', '/api/send', {});
+  const hash = sha(readFileSync(join(root, 'a.md'), 'utf8'));
+  assert.equal((await call(port, 'POST', '/api/accept', { path: 'a.md', hash })).body.error, 'Codex is working on this file', 'BUSY names it');
+  await call(port, 'POST', '/api/agent', { id: 'other', label: 'Cursor' });
+  assert.equal((await call(port, 'POST', '/api/accept', { path: 'a.md', hash })).body.error, 'Cursor is working on this file', 'a label of its own');
+  const claude = (await call(port, 'POST', '/api/agent', { id: 'claude' })).body;
+  await app.close();
+  ({ app, port } = await listen(opts));
+  assert.deepEqual([(await source()).agentInfo, (await source()).agent], [claude, 'claude'], 'attach survives a restart');
+  assert.deepEqual((await call(port, 'POST', '/api/agent', { id: null })).body, none, 'detach');
+  assert.equal((await call(port, 'POST', '/api/accept', { path: 'a.md', hash })).body.error, 'The agent is working on this file');
+  await app.close();
+  ({ app, port } = await listen(opts));
+  assert.deepEqual((await source()).agentInfo, none, 'detach survives a restart');
+  await app.close();
+  ({ app, port } = await listen({ root, agent: 'claude' }));
+  assert.deepEqual([(await source()).agentInfo.label, (await source()).agentInfo.connected], ['Claude', true], 'the serving agent is attached');
+  await app.close();
 }
 
 // A folder outside any git repository is refused, and the probe says so.

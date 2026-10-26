@@ -106,6 +106,28 @@ toplevel), the CLI page shows the `trove serve --root <path>` command. After a s
 committed-file memory (`seen`) starts over from git status. The start page's branch select opens
 the worktree a branch is checked out in.
 
+### Agent attach
+
+The agent on the other end of the loop is live state, not a constant: `state.json` keeps
+`agent: {id: 'claude'|'codex'|'other', label, at} | null`, and `SourceInfo.agentInfo` serves it as
+`{id, label, connected, at}` (`SourceInfo.agent` stays `claude|other` for older pages).
+`POST /api/agent {id, label?}` attaches (labels default to Claude, Codex, "the agent");
+`{id: null}` detaches. The CLI's `trove attach --port N --agent claude|codex|other` posts it and
+prints the same first line as `serve` (count, branch, URL, events log, this binary's done
+command), so an agent joins a running server instead of starting one; `trove detach` clears it and
+`trove info` prints the line without changing anything. `serve` under Claude Code (CLAUDECODE)
+attaches Claude, since the serving agent is there by definition; the desktop serves with nobody
+attached. Presence is that flag: no heartbeat, so an agent that quits without detaching still
+shows, and a restart keeps whatever state.json says. The page follows `agentInfo` on its 2s poll:
+`data-agent` and `--agent` (Claude orange, Codex violet, other teal), every label that names the
+agent, and a top-bar chip (the agent's dot and name, or a muted "No agent" / "Waiting for Claude"
+that opens Connect, which lists the Claude Code and Codex start commands). The desktop start page
+is a three-step wizard: 1 Repository (as before), 2 Agent (Claude Code, Codex or None; the command
+it will run; a note when the CLI is not on the login shell's PATH; recents remember the choice),
+3 Editor (the window). Launch starts the server, writes a `.command` script to the temp folder
+(`cd '<repo>' && exec claude "<attach prompt>"`) and opens it with `open -a Terminal`, then opens
+the window with `?waiting=<tool>`. Terminal.app only for now; iTerm or an embedded terminal later.
+
 ### Agent protocol (unchanged)
 
 A send appends one line to `batches.jsonl` and one notice to `events.log`
@@ -134,6 +156,7 @@ shadcn neutral tokens, values tuned to today's page so it looks the same in dark
 | custom: cool | #04b9fb | #0276a1 |
 | custom: agent (Claude) | #d97757 | #c2410c |
 | custom: agent (other) | #2dd4bf | #0f766e |
+| custom: agent (Codex) | #8b5cf6 | #6d28d9 |
 
 Radius 0.5rem (small 0.25rem). Inter, system-ui fallback. Body text is the secondary colour;
 headings and names use the foreground. Buttons are ghosts unless primary (Accept and next, Save) or

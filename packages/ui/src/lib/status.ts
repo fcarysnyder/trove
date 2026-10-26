@@ -1,12 +1,14 @@
 // Review state -> label, icon and words, one rule for the tree, the footer and the progress pill.
 import { stateOf, type ReviewState } from '@trove/core/anchor';
-import type { FileRow } from '@trove/core/types';
+import { AGENT_LABELS, type FileRow } from '@trove/core/types';
 
 export type IconName = 'circle-check' | 'sparkles' | 'file-pen' | 'message-square' | 'loader-circle' | 'circle' | 'file-plus' | 'circle-dashed' | 'circle-x';
 
-/** The agent serving the page, as said mid-sentence (agent), to start one (Agent), and as a sender (who). */
-export const names = (agent: 'claude' | 'other') =>
-  agent === 'claude' ? { agent: 'Claude', Agent: 'Claude', who: 'Claude' } : { agent: 'the agent', Agent: 'The agent', who: 'Your agent' };
+/** The attached agent's label (AgentInfo.label), as said mid-sentence (agent), to start one (Agent), and as a sender (who). */
+export const names = (label: string) => {
+  const Agent = label.charAt(0).toUpperCase() + label.slice(1);
+  return { agent: label, Agent, who: label === AGENT_LABELS.other ? 'Your agent' : Agent };
+};
 export type Names = ReturnType<typeof names>;
 
 /** The pill's order. Only Accepted names its git state: Accept is the one action that stages. */
