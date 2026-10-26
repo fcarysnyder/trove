@@ -25,9 +25,9 @@ gh attestation verify Installer-Trove-0.5.0-arm64.dmg --repo fcarysnyder/trove
 
 ## Signing
 
-The Mac app is signed ad hoc (`identity: "-"` in `apps/desktop/electron-builder.yml`) and is not notarized. Apple silicon refuses to launch an app with no signature at all; an ad-hoc signature is enough to run, but Gatekeeper still blocks the first launch of a downloaded copy. Users open System Settings › Privacy & Security and choose **Open Anyway** once. Hardened runtime is off, because with an ad-hoc signature it rejects Electron's own pre-signed frameworks.
+The Mac app is signed ad hoc and is not notarized. electron-builder does no signing (`identity: null`); its `afterPack` hook, `apps/desktop/scripts/adhoc-sign.cjs`, signs the whole assembled bundle ad hoc before the disk image is made, and the release workflow checks that the signature verifies. Apple silicon refuses to launch code without a valid signature, and Electron's own ad-hoc signature stops covering the bundle once Trove's files are added, which a downloaded copy reports as "damaged". An ad-hoc signature is enough to run, but Gatekeeper still blocks the first launch of a downloaded copy: users open System Settings › Privacy & Security and choose **Open Anyway** once.
 
-Moving to a Developer ID signature and notarization needs an Apple Developer account. When there is one: add the certificate as `CSC_LINK` / `CSC_KEY_PASSWORD` secrets and the notarization credentials as `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`; remove `identity: "-"`; set `hardenedRuntime: true` and `notarize: true`; and drop the Open Anyway notes from the README and the release notes script.
+Moving to a Developer ID signature and notarization needs an Apple Developer account. When there is one: add the certificate as `CSC_LINK` / `CSC_KEY_PASSWORD` secrets and the notarization credentials as `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`; remove `identity: null` and the `afterPack` hook; set `hardenedRuntime: true` and `notarize: true`; and drop the Open Anyway notes from the README and the release notes script.
 
 ## Releasing
 
