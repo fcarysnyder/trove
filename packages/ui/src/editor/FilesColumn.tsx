@@ -15,7 +15,7 @@ import { countKeys, FILTERS, isPendingOnly, markRange, matches, PENDING_OFF, tog
 import { stateInfo } from '@/lib/status';
 import { dirOf, nameOf } from '@/lib/text';
 import { cn } from '@/lib/utils';
-import { open, reveal, setFilters, shown, togglePanel, visible } from './actions';
+import { acceptAll, open, reveal, setFilters, shown, togglePanel, visible } from './actions';
 import { Count, IconButton } from './bits';
 import { StateIcons } from './StateIcon';
 import { get, set, useNames, useStore } from './store';
@@ -38,6 +38,7 @@ export function FilesColumn() {
   const committed = files.filter((f) => f.committed && shown(s)(f));
   const rejected = files.filter((f) => !f.committed && f.state === 'rejected' && shown(s)(f));
   const none = files.length > 0 && !folders.length && !committed.length && !rejected.length;
+  const pending = folders.filter((f) => f.state === 'queue').length;
   const onSearchKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -53,6 +54,7 @@ export function FilesColumn() {
     <section aria-label="Files" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-1 border-b pr-2 pl-4">
         <span className="flex-1 font-semibold text-foreground">Files</span>
+        {pending > 0 && <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={() => void acceptAll()}>Accept all</Button>}
         <Filters off={off} />
         <IconButton label="Hide files" tip="Hide files ([)" onClick={() => togglePanel('files', true)}><PanelLeftClose /></IconButton>
       </div>

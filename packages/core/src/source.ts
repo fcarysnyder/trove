@@ -114,7 +114,7 @@ export function openSource(root: string) {
     },
     unstage,
     unaccept: unstage,
-    accept: (rel: string) => { git('add', '--', rel); },
+    accept: (...rels: string[]) => { if (rels.length) git('add', '--', ...rels); },
     /** The index copy (`:path`), or null when untracked. */
     indexed: (rel: string) => show(`:${rel}`),
     /** Take the file out of the change set: back to HEAD in index and worktree, or, if HEAD lacks it, out of the index and off disk. */

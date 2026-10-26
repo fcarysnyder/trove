@@ -176,6 +176,7 @@ export interface FileResponse { // GET /api/file?path=
 export interface SaveDraftsBody { path: string; drafts: Draft[] } // POST /api/drafts -> {ok}
 export interface AcceptBody { path: string; hash: string } // POST /api/accept -> {ok}
 export interface UnacceptBody { path: string } // POST /api/unaccept -> {ok}
+export interface AcceptAllBody { paths: string[] } // POST /api/accept-all -> {accepted: n}; unlisted, working and rejected paths are passed over; no hash
 export interface SkipBody { path: string; on: boolean } // POST /api/skip -> {ok}; no git write
 export interface RejectBody { path: string; hash: string } // POST /api/reject -> {ok}; tracked: back to HEAD, new: deleted; backed up first
 export interface RestoreBody { path: string } // POST /api/restore -> {ok}; the index copy, the working text and the drafts come back

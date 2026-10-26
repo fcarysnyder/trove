@@ -290,6 +290,16 @@ export function createApp(o: AppOptions): App {
       saveState();
       return [200, { ok: true }];
     },
+    // Accept all: the listed, free (not working, not rejected) paths given, in one git add. No hash check:
+    // the user chose to accept files as they are now, seen or not.
+    'POST /api/accept-all': (_, { paths }) => {
+      if (!Array.isArray(paths)) return [400, { error: 'paths required' }];
+      const rels = [...new Set(paths.map(listed).filter((r): r is string => !!r && !working.has(r) && !rejected.has(r)))];
+      source.accept(...rels);
+      for (const rel of rels) { updated.delete(rel); skipped.delete(rel); dropEdit(rel); }
+      saveState();
+      return [200, { accepted: rels.length }];
+    },
     'POST /api/unaccept': (_, { path }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];

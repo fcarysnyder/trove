@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// trove 0.4.0: bundled CLI and engine (@trove/core, marked). Node 22+, no dependencies.
+// trove 0.5.0: bundled CLI and engine (@trove/core, marked). Node 22+, no dependencies.
 
 // bin/trove.mjs
 import { existsSync as existsSync4, realpathSync as realpathSync4 } from "node:fs";
@@ -1694,8 +1694,8 @@ function openSource(root) {
     },
     unstage,
     unaccept: unstage,
-    accept: (rel) => {
-      git("add", "--", rel);
+    accept: (...rels) => {
+      if (rels.length) git("add", "--", ...rels);
     },
     /** The index copy (`:path`), or null when untracked. */
     indexed: (rel) => show(`:${rel}`),
@@ -2066,6 +2066,20 @@ function createApp(o) {
       rejected.delete(rel);
       saveState();
       return [200, { ok: true }];
+    },
+    // Accept all: the listed, free (not working, not rejected) paths given, in one git add. No hash check:
+    // the user chose to accept files as they are now, seen or not.
+    "POST /api/accept-all": (_2, { paths }) => {
+      if (!Array.isArray(paths)) return [400, { error: "paths required" }];
+      const rels = [...new Set(paths.map(listed).filter((r) => !!r && !working.has(r) && !rejected.has(r)))];
+      source.accept(...rels);
+      for (const rel of rels) {
+        updated.delete(rel);
+        skipped.delete(rel);
+        dropEdit(rel);
+      }
+      saveState();
+      return [200, { accepted: rels.length }];
     },
     "POST /api/unaccept": (_2, { path }) => {
       const rel = listed(path);
@@ -2523,6 +2537,11 @@ async function gitCase(temps) {
   assert.equal((await states())["c.html"], "accepted");
   assert.equal((await post("/api/unaccept", { path: "c.html" })).status, 200);
   assert.equal((await states())["c.html"], "queue", "undo accept unstages");
+  assert.equal(staged(), "");
+  const all = await post("/api/accept-all", { paths: ["a.md", "c.html", "c.html", "nope.md", "../etc/passwd"] });
+  assert.deepEqual([all.status, all.body], [200, { accepted: 2 }], "accept all: listed paths once, the rest passed over");
+  assert.deepEqual(await states(), { "a.md": "accepted", "b.md": "queue", "c.html": "accepted", "r \xE9 \xF1.md": "accepted" });
+  for (const path of ["a.md", "c.html"]) assert.equal((await post("/api/unaccept", { path })).status, 200);
   assert.equal(staged(), "");
   assert.equal((await post("/api/accept", { path: "a.md" }, { host: "evil.example" })).status, 403);
   assert.equal((await post("/api/accept", { path: "a.md" }, { origin: "https://evil.example" })).status, 403);

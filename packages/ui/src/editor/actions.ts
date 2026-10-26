@@ -122,6 +122,19 @@ export async function accept(andNext: boolean) {
   else await refresh();
 }
 
+/** Accept every pending file in view at once; skipped, locked and rejected files stay as they are. */
+export async function acceptAll() {
+  const paths = visible(get()).filter((f) => f.state === 'queue').map((f) => f.path);
+  if (!paths.length) return;
+  try {
+    const { accepted } = await api<{ accepted: number }>('accept-all', { paths });
+    toast(`Accepted ${accepted} ${accepted === 1 ? 'file' : 'files'}`);
+  } catch (e) {
+    toast(errText(e));
+  }
+  await refresh();
+}
+
 /** Skip: come back to it later, moving on to the next pending file. Unskip stays. No git effect. */
 export async function skip(on: boolean) {
   const { current } = get();

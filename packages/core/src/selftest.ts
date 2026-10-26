@@ -198,6 +198,11 @@ async function gitCase(temps: string[]) {
   assert.equal((await post('/api/unaccept', { path: 'c.html' })).status, 200);
   assert.equal((await states())['c.html'], 'queue', 'undo accept unstages');
   assert.equal(staged(), '');
+  const all = await post('/api/accept-all', { paths: ['a.md', 'c.html', 'c.html', 'nope.md', '../etc/passwd'] });
+  assert.deepEqual([all.status, all.body], [200, { accepted: 2 }], 'accept all: listed paths once, the rest passed over');
+  assert.deepEqual(await states(), { 'a.md': 'accepted', 'b.md': 'queue', 'c.html': 'accepted', 'r é ñ.md': 'accepted' });
+  for (const path of ['a.md', 'c.html']) assert.equal((await post('/api/unaccept', { path })).status, 200);
+  assert.equal(staged(), '');
 
   // Security: foreign Host, foreign or missing Origin, non-JSON, paths outside the set.
   assert.equal((await post('/api/accept', { path: 'a.md' }, { host: 'evil.example' })).status, 403);
