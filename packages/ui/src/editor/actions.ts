@@ -135,6 +135,15 @@ export async function acceptAll() {
   await refresh();
 }
 
+/** Whether Create PR applies: nothing waits for review and something staged is not yet committed. */
+export const prReady = (files: FileRow[]) =>
+  files.some((f) => f.state === 'accepted' && !f.committed) && !files.some((f) => f.state === 'queue' || f.state === 'working');
+
+/** Ask the agent to commit the staged files and open a pull request; Trove itself never commits. */
+export async function createPr(agent: string) {
+  await api('pr', {}).then(() => toast(`Asked ${agent} to open a pull request`), (e) => toast(errText(e)));
+}
+
 /** Skip: come back to it later, moving on to the next pending file. Unskip stays. No git effect. */
 export async function skip(on: boolean) {
   const { current } = get();

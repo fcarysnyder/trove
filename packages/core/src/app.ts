@@ -417,6 +417,19 @@ export function createApp(o: AppOptions): App {
       log(notice);
       return [200, { id, comments: items.length, files: sentPaths.size, locked: changed }];
     },
+    // Create PR: once nothing waits for review, ask the agent to commit what is staged and open a pull
+    // request. Trove itself never commits; this is one line in the events log, like a batch's notice.
+    'POST /api/pr': () => {
+      const rows = list();
+      if (rows.some((f) => working.has(f.path) || (!f.staged && !f.rejected && !f.skipped))) return [409, { error: 'Files are still waiting for review' }];
+      const staged = rows.filter((f) => f.staged && !f.committed).length;
+      if (!staged) return [400, { error: 'nothing staged' }];
+      const id = randomUUID().slice(0, 8);
+      const notice = `pr ${id}: the review is done; commit the ${staged} staged ${staged === 1 ? 'file' : 'files'} and open a pull request.`;
+      appendFileSync(files.events, `${notice}\n`);
+      log(notice);
+      return [200, { id, files: staged }];
+    },
     // `ask` (kind 'question') or `reply` (kind 'reply') from the agent: the page shows that something
     // waits for the user in the agent's session. An empty text (`ask --clear`, or the page's dismiss)
     // takes it down.
