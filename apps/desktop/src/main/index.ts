@@ -158,7 +158,20 @@ async function tools(): Promise<Record<AgentTool, boolean>> {
   return { claude, codex };
 }
 
-const TERMINALS: TerminalApp[] = ['Terminal', 'iTerm', 'Ghostty'];
+/**
+ * How each terminal app is handed the agent's script: Terminal and iTerm run a .command file opened with
+ * them; the others take a command on their own command line, in a new instance (-n). Warp and Hyper are
+ * left out: neither documents a way to start a window running a given command.
+ */
+const TERMINAL_ARGS: Record<TerminalApp, (script: string) => string[]> = {
+  Terminal: (s) => ['-a', 'Terminal', s],
+  iTerm: (s) => ['-a', 'iTerm', s],
+  Ghostty: (s) => ['-na', 'Ghostty', '--args', '-e', s],
+  WezTerm: (s) => ['-na', 'WezTerm', '--args', 'start', '--', s],
+  kitty: (s) => ['-na', 'kitty', '--args', s],
+  Alacritty: (s) => ['-na', 'Alacritty', '--args', '-e', s],
+};
+const TERMINALS = Object.keys(TERMINAL_ARGS) as TerminalApp[];
 const installed = (name: TerminalApp) =>
   [`/Applications/${name}.app`, join(homedir(), 'Applications', `${name}.app`), `/System/Applications/Utilities/${name}.app`].some((p) => existsSync(p));
 /** The terminal apps on this Mac that an agent can start in, Terminal first. */
@@ -174,9 +187,8 @@ async function launchAgent(tool: AgentTool, root: string, port: number): Promise
   const script = join(app.getPath('temp'), `trove-${tool}-${port}.command`);
   writeFileSync(script, `#!/bin/sh\n${attachCommand(tool, root, port, true)}\n`);
   chmodSync(script, 0o755);
-  // Terminal and iTerm run a .command file they are handed; Ghostty takes the command with -e (a new instance, -n).
   const t = terminal();
-  await run('open', t === 'Ghostty' ? ['-na', t, '--args', '-e', script] : ['-a', t, script]).catch((e: { stderr?: string; message: string }) => {
+  await run('open', TERMINAL_ARGS[t](script)).catch((e: { stderr?: string; message: string }) => {
     throw new Error(`${t} did not open: ${(e.stderr || e.message).trim()}`);
   });
 }

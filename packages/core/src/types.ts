@@ -115,7 +115,7 @@ export type AgentId = 'claude' | 'codex' | 'other';
 /** A tool the desktop can start a session in. */
 export type AgentTool = 'claude' | 'codex';
 /** A macOS terminal app the desktop starts an agent in. */
-export type TerminalApp = 'Terminal' | 'iTerm' | 'Ghostty';
+export type TerminalApp = 'Terminal' | 'iTerm' | 'Ghostty' | 'WezTerm' | 'kitty' | 'Alacritty';
 /**
  * The agent attached to a server, set by `trove attach` (POST /api/agent) and kept in state.json.
  * With nothing attached: {id: 'other', label: 'the agent', connected: false, at: null}.
