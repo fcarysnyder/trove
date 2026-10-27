@@ -184,6 +184,7 @@ export interface SaveBody { path: string; hash: string; index?: number; raw: str
 export interface RevertBody { path: string; edit?: string; hash?: string } // POST /api/revert -> {hash}
 export interface SendBody { paths?: string[]; kind?: CommentKind } // POST /api/send
 export interface SendResponse { id: string; comments: number; files: number; locked: string[] }
+export interface PrResponse { id: string; files: number } // POST /api/pr {} -> 409 while a file waits for review (queue or working)
 export interface AskBody { text: string; kind?: 'question' | 'reply' } // POST /api/ask -> {question}
 export interface ReleaseBody { path: string } // POST /api/release -> {released, updated}
 export interface AgentBody { id: AgentId | null; label?: string } // POST /api/agent -> AgentInfo; id null detaches

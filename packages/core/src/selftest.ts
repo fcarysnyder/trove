@@ -421,6 +421,16 @@ async function gitCase(temps: string[]) {
   assert.equal((await states())['b.md'], 'queue');
   assert.equal((await post('/api/restore', { path: 'b.md' })).status, 404);
 
+  // Create PR: refused while a file waits; then one line for the agent, and no commit by Trove.
+  assert.equal((await post('/api/pr', {})).status, 409, 'pending files: no PR');
+  await post('/api/accept-all', { paths: Object.keys(await states()) });
+  const head = sh('rev-parse', 'HEAD');
+  const pr = await post('/api/pr', {});
+  assert.equal(pr.status, 200);
+  assert.equal(lines.at(-1), `pr ${pr.body.id}: the review is done; commit the ${pr.body.files} staged files and open a pull request.`);
+  assert.equal(readFileSync(join(stateDir, 'events.log'), 'utf8').trim().split('\n').at(-1), lines.at(-1), 'the request goes to the events log');
+  assert.equal(sh('rev-parse', 'HEAD'), head, 'Trove never commits');
+
   await app.close();
   rmSync(join(tmpdir(), 'trove-outside.txt'), { force: true });
 }
