@@ -9,6 +9,16 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-10-27
+
+Trove 0.5.4 lets you write a comment where you are reading. Comment and
+Explain now open right under the passage you selected, instead of at the top
+of the Changes column.
+
+### Changed
+
+- Comment and Explain open a card under the selected passage, with the whole quote and the field for your note. The passage stays highlighted while you type, and once added the comment joins the Changes column as before.
+
 ## [0.5.3] - 2026-10-27
 
 Trove 0.5.3 adds Create PR. When you have finished a review, one button asks
