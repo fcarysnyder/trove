@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type Men
 import { execFile } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { attachCommand, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type OpenRequest, type Recent } from '@trove/core';
@@ -211,6 +211,32 @@ async function clone(url: string, parent: string) {
 
 const cloneDir = () => (isDir(join(homedir(), 'code')) ? join(homedir(), 'code') : homedir());
 
+// ---- worktrees ------------------------------------------------------------------------------
+
+/**
+ * `branch` in its own worktree beside the main checkout, `<repo>-<branch>`, so the main checkout and
+ * whatever is open there stay as they are. With `base`, a new branch off it (`--no-track`: a branch off
+ * origin/main must not push to main); with null, an existing local branch no worktree has checked out.
+ * Then that folder, probed.
+ */
+async function addWorktree(path: string, branch: string, base: string | null) {
+  const git = probeGit(path);
+  if (!git) throw new Error(`not a git repository: ${path}`);
+  const valid = !branch.startsWith('-') && await run('git', ['check-ref-format', '--branch', branch]).then(() => true, () => false);
+  if (!valid) throw new Error(`Not a branch name: ${branch}`);
+  const local = git.local.find((b) => b.name === branch);
+  if (base !== null && local) throw new Error(`${branch} already exists`);
+  if (base === null && !local) throw new Error(`No branch ${branch}`);
+  if (base === null && (local!.current || local!.worktree)) throw new Error(`${branch} is already checked out`);
+  const dest = join(dirname(git.repo.root), `${git.repo.name}-${branch.replaceAll('/', '-')}`);
+  if (existsSync(dest)) throw new Error(`${dest} already exists`);
+  const args = base === null ? ['--', dest, branch] : ['--no-track', '-b', branch, '--', dest, base];
+  await run('git', ['-C', git.repo.root, 'worktree', 'add', ...args]).catch((e: { stderr?: string; message: string }) => {
+    throw new Error((e.stderr || e.message).trim().split('\n').at(-1));
+  });
+  return probe(dest);
+}
+
 // ---- windows ---------------------------------------------------------------------------------
 
 /** Navigation stays on the window's own page; external links go to the system browser. */
@@ -330,6 +356,7 @@ ipcMain.handle('trove:home', (e) => {
 ipcMain.handle('trove:githubRepos', () => githubRepos());
 ipcMain.handle('trove:clone', (_e, url: unknown, parent: unknown) => clone(str(url).trim(), str(parent)));
 ipcMain.handle('trove:cloneDir', () => cloneDir());
+ipcMain.handle('trove:addWorktree', (_e, path: unknown, branch: unknown, base: unknown) => addWorktree(str(path), str(branch).trim(), base === null ? null : str(base)));
 ipcMain.handle('trove:drop', (_e, path: unknown) => openOrStage(probe(str(path))));
 
 // ---- lifecycle -------------------------------------------------------------------------------

@@ -267,6 +267,8 @@ export interface TroveBridge {
   clone(url: string, parent: string): Promise<{ path: string; git: GitProbe | null }>;
   /** Where a clone goes when the user has not picked: ~/code when it exists, else home. */
   cloneDir(): Promise<string>;
+  /** `branch` in a new worktree at `<repo>-<branch>` beside the main checkout: a new branch off `base`, or with null an existing one no worktree has checked out. Then that folder, probed. Rejects with git's message. */
+  addWorktree(path: string, branch: string, base: string | null): Promise<{ path: string; git: GitProbe | null }>;
 }
 
 declare global {

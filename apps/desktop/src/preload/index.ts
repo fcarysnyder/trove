@@ -17,6 +17,7 @@ const trove: TroveBridge = {
   githubRepos: () => invoke('trove:githubRepos'),
   clone: (url: string, parent: string) => invoke('trove:clone', url, parent),
   cloneDir: () => invoke('trove:cloneDir'),
+  addWorktree: (path: string, branch: string, base: string | null) => invoke('trove:addWorktree', path, branch, base),
 };
 
 contextBridge.exposeInMainWorld('trove', trove);
