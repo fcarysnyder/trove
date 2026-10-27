@@ -7,7 +7,6 @@ import { load, save } from '@/lib/storage';
 import { applyTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 import { init, togglePanel } from './actions';
-import { AgentDrawer } from './AgentDrawer';
 import { ChangesColumn } from './ChangesColumn';
 import { DocColumn } from './DocColumn';
 import { FilesColumn } from './FilesColumn';
@@ -19,8 +18,7 @@ import { TitleStrip } from './bits';
 import { TopBar } from './TopBar';
 import { ModalEditor } from './doc/Editors';
 
-const WIDTH = { files: 260, changes: 300, agent: 200 }; // agent: the drawer's height
-const RAIL = 45; // the agent drawer shut: its header (44px) and the border above it
+const WIDTH = { files: 260, changes: 300 };
 
 export function App() {
   const theme = useStore((s) => s.settings.theme);
@@ -56,13 +54,11 @@ export function App() {
   );
 }
 
-/**
- * Files | file | Changes over the agent drawer. Sides stay within 180-420px and leave the centre at least 360px; the
- * drawer stays within 120px and 60%, shut until opened; sizes and hidden panels are remembered.
- */
+/** Files | file | Changes. Sides stay within 180-420px and leave the centre at least 360px; widths and hidden columns are remembered. */
 function Columns() {
   const hidden = useStore((s) => s.hidden);
-  const panels = { files: useRef<PanelImperativeHandle>(null), changes: useRef<PanelImperativeHandle>(null), agent: useRef<PanelImperativeHandle>(null) };
+  const files = useRef<PanelImperativeHandle>(null);
+  const changes = useRef<PanelImperativeHandle>(null);
   const [widths] = useState(() => ({ ...WIDTH, ...load<Partial<typeof WIDTH>>('widths', {}) }));
   const [animate, setAnimate] = useState(false);
   useEffect(() => {
@@ -71,16 +67,16 @@ function Columns() {
     return () => cancelAnimationFrame(id);
   }, []);
   useEffect(() => {
-    for (const name of ['files', 'changes', 'agent'] as const) {
-      const p = panels[name].current;
+    for (const [name, ref] of [['files', files], ['changes', changes]] as const) {
+      const p = ref.current;
       if (!p) continue;
       if (hidden[name] && !p.isCollapsed()) p.collapse();
-      if (!hidden[name] && p.isCollapsed()) p.resize(widths[name]); // back to the remembered size, not the minimum
+      if (!hidden[name] && p.isCollapsed()) p.resize(widths[name]); // back to the remembered width, not the minimum
     }
   }, [hidden]);
   const side = (name: 'files' | 'changes') => ({
     id: name,
-    panelRef: panels[name],
+    panelRef: name === 'files' ? files : changes,
     collapsible: true,
     collapsedSize: 0,
     minSize: 180,
@@ -88,11 +84,11 @@ function Columns() {
     defaultSize: hidden[name] ? 0 : widths[name],
     groupResizeBehavior: 'preserve-pixel-size' as const,
   });
-  // A drag or the keyboard: dragging a panel shut hides it like its button does; an open panel's size is remembered.
-  const changed = (names: (keyof typeof panels)[]) => (_: unknown, meta: { isUserInteraction: boolean }) => {
+  // A drag or the keyboard: dragging a side shut hides it like its button does; an open side's width is remembered.
+  const changed = (_: unknown, meta: { isUserInteraction: boolean }) => {
     if (!meta.isUserInteraction) return;
-    for (const name of names) {
-      const px = panels[name].current?.getSize().inPixels ?? 0;
+    for (const [name, ref] of [['files', files], ['changes', changes]] as const) {
+      const px = ref.current?.getSize().inPixels ?? 0;
       if (!px !== get().hidden[name]) togglePanel(name, !px);
       if (px) widths[name] = Math.round(px);
     }
@@ -101,22 +97,14 @@ function Columns() {
   // The drawers draw their own borders, so a collapsed drawer takes its line with it; the handle is an
   // invisible strip over that border that lights up on hover and while dragging.
   const handle = 'z-10 w-0 bg-transparent hover:after:bg-foreground/50 data-[separator=active]:after:bg-foreground/50';
-  const reset = (name: keyof typeof panels) => () => panels[name].current?.resize(WIDTH[name]);
+  const reset = (name: 'files' | 'changes') => () => (name === 'files' ? files : changes).current?.resize(WIDTH[name]);
   return (
-    <ResizablePanelGroup orientation="vertical" onLayoutChanged={changed(['agent'])} className={cn('row-start-3 min-h-0', animate && 'animate')}>
-      <ResizablePanel id="columns" minSize={200}>
-        <ResizablePanelGroup orientation="horizontal" onLayoutChanged={changed(['files', 'changes'])} className={cn(animate && 'animate')}>
-          <ResizablePanel {...side('files')}><div inert={hidden.files} className="h-full border-r">{<FilesColumn />}</div></ResizablePanel>
-          <ResizableHandle aria-label="Resize files" disableDoubleClick onDoubleClick={reset('files')} className={handle} />
-          <ResizablePanel id="doc" minSize={360}><DocColumn /></ResizablePanel>
-          <ResizableHandle aria-label="Resize changes" disableDoubleClick onDoubleClick={reset('changes')} className={handle} />
-          <ResizablePanel {...side('changes')}><div inert={hidden.changes} className="h-full border-l">{<ChangesColumn />}</div></ResizablePanel>
-        </ResizablePanelGroup>
-      </ResizablePanel>
-      <ResizableHandle aria-label="Resize agent" disableDoubleClick onDoubleClick={reset('agent')} className={handle} />
-      <ResizablePanel id="agent" panelRef={panels.agent} collapsible collapsedSize={RAIL} minSize={120} maxSize="60%" defaultSize={hidden.agent ? RAIL : widths.agent} groupResizeBehavior="preserve-pixel-size">
-        <div className="h-full overflow-hidden border-t"><AgentDrawer /></div>
-      </ResizablePanel>
+    <ResizablePanelGroup orientation="horizontal" onLayoutChanged={changed} className={cn('min-h-0', animate && 'animate')}>
+      <ResizablePanel {...side('files')}><div inert={hidden.files} className="h-full border-r">{<FilesColumn />}</div></ResizablePanel>
+      <ResizableHandle aria-label="Resize files" disableDoubleClick onDoubleClick={reset('files')} className={handle} />
+      <ResizablePanel id="doc" minSize={360}><DocColumn /></ResizablePanel>
+      <ResizableHandle aria-label="Resize changes" disableDoubleClick onDoubleClick={reset('changes')} className={handle} />
+      <ResizablePanel {...side('changes')}><div inert={hidden.changes} className="h-full border-l">{<ChangesColumn />}</div></ResizablePanel>
     </ResizablePanelGroup>
   );
 }

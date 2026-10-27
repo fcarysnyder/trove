@@ -14,6 +14,8 @@ import { loadAll, open, revertEdit, saveDrafts, send, sendable, setScope, toggle
 import { Count, IconButton, PathLabel } from './bits';
 import { get, set, useNames, useStore } from './store';
 import { showBlock, showPassage } from './doc/commands';
+import { ActivityList, activityFor } from './Activity';
+import { Notice } from './TopBar';
 
 export function ChangesColumn() {
   const current = useStore((s) => s.current);
@@ -41,10 +43,12 @@ export function ChangesColumn() {
     ].sort((a, b) => a[0] - b[0]).map(([, r]) => r);
   };
 
+  // The thread: what went back and forth with the agent, oldest first, then the comments and edits still to send.
+  const activity = useStore((s) => s.activity);
   let body: ReactNode;
   if (!current) body = <p className="px-4 py-3 text-muted-foreground">No file open</p>;
   else if (scope === 'file') {
-    body = own ? rowsOf(current) : <p className="px-4 py-3 text-muted-foreground">No comments or edits on this file</p>;
+    body = own ? rowsOf(current) : activityFor(activity, current.path).length ? null : <p className="px-4 py-3 text-muted-foreground">No comments or edits on this file</p>;
   } else {
     // Every file's comments and edits in tree order; files the agent is working on last, read-only.
     const count = (f: FileRow) => (f.path === current.path ? own : (allDrafts[f.path]?.length ?? 0) + (allEdits[f.path]?.length ?? 0));
@@ -56,7 +60,7 @@ export function ChangesColumn() {
     const live = withAny.filter((f) => f.state !== 'working');
     const locked = withAny.filter((f) => f.state === 'working');
     body = [
-      ...(live.length ? live.flatMap((f) => group(f)) : [<p key="empty" className="px-4 py-3 text-muted-foreground">No comments or edits</p>]),
+      ...(live.length ? live.flatMap((f) => group(f)) : activity.length ? [] : [<p key="empty" className="px-4 py-3 text-muted-foreground">No comments or edits</p>]),
       ...(locked.length ? [<div key="locked" className="px-4 pt-4 text-xs text-muted-foreground">{n.Agent} is working</div>, ...locked.flatMap((f) => group(f, true))] : []),
     ];
   }
@@ -67,6 +71,7 @@ export function ChangesColumn() {
         <span className="flex flex-1 items-center gap-1.5 font-semibold text-foreground" aria-label={shown ? `Changes, ${plural(shown, 'change')}` : 'Changes'}>
           Changes{shown > 0 && <Count n={shown} />}
         </span>
+        <Notice />
         <IconButton side="bottom" label="Hide changes" tip="Hide changes (])" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
       </div>
       <ToggleGroup type="single" value={scope} onValueChange={(v) => v && setScope(v as 'file' | 'all')} aria-label="Comments shown" spacing={0}
@@ -78,6 +83,7 @@ export function ChangesColumn() {
         ))}
       </ToggleGroup>
       <ScrollArea className="min-h-0 flex-1">
+        {current && <ActivityList path={scope === 'file' ? current.path : undefined} />}
         {body}
       </ScrollArea>
       <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">

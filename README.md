@@ -152,7 +152,6 @@ Highlight API.
 | `/` | focus the Files search; in it, `Enter` opens the first match, `Esc` clears |
 | `Enter` | Accept and next (from the page or a tree row) |
 | `[` / `]` | hide or show Files / Changes |
-| `A` | hide or show the agent drawer |
 | `N` | show new files on or off |
 | `S` | skip the open file, or unskip it |
 | `X` | reject the open file (asks first) |

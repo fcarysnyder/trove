@@ -48,8 +48,8 @@ export interface State {
   query: string; // the Files search (page state, not persisted)
   scope: 'file' | 'all';
   showNew: boolean;
-  hidden: { files: boolean; changes: boolean; agent: boolean };
-  activity: Activity[]; // the agent drawer's list, loaded while it is open
+  hidden: { files: boolean; changes: boolean };
+  activity: Activity[]; // the top of the Changes thread, loaded while the column shows
   committedOpen: boolean;
   rejectedOpen: boolean;
   rejecting: boolean; // the open file's Reject confirm is showing
@@ -81,7 +81,7 @@ let state: State = {
   query: '',
   scope: load<'file' | 'all'>('scope', 'file') === 'all' ? 'all' : 'file',
   showNew: load<boolean | null>('show-new', null) ?? true,
-  hidden: { files: load<boolean>('hide-files', false) === true, changes: load<boolean>('hide-changes', false) === true, agent: load<boolean>('hide-agent', true) !== false },
+  hidden: { files: load<boolean>('hide-files', false) === true, changes: load<boolean>('hide-changes', false) === true},
   activity: [],
   committedOpen: false,
   rejectedOpen: false,

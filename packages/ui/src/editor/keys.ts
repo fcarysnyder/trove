@@ -27,7 +27,6 @@ export function onKey(e: KeyboardEvent) {
   }
   if (e.key === '[') togglePanel('files');
   else if (e.key === ']') togglePanel('changes');
-  else if (e.key.toLowerCase() === 'a') togglePanel('agent');
   else if (e.key.toLowerCase() === 'n') toggleNew();
   if (s.editing) return; // stepping away would drop the open edit
   if (e.key === '/') { e.preventDefault(); return focusSearch(); }

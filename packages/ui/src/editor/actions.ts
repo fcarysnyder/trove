@@ -381,9 +381,10 @@ export async function init() {
   const waiting = (f: FileRow) => f.state === 'queue' || f.state === 'working';
   const first = visible().find(waiting) ?? get().files.find(waiting); // the remembered filters may hide every waiting file
   if (first) await open(first.path);
-  setInterval(() => { void refresh(); void loadGit(); void loadSource(); if (!get().hidden.agent) void loadActivity(); }, 2000);
+  if (!get().hidden.changes) void loadActivity();
+  setInterval(() => { void refresh(); void loadGit(); void loadSource(); if (!get().hidden.changes) void loadActivity(); }, 2000);
 }
-/** The agent drawer's list; an old server without /api/activity has none. */
+/** The Changes thread's activity; an old server without /api/activity has none. */
 export async function loadActivity() {
   const res = await optional<ActivityResponse>('activity').catch(() => undefined);
   if (res !== undefined && JSON.stringify(res?.entries ?? []) !== JSON.stringify(get().activity)) set({ activity: res?.entries ?? [] });

@@ -113,7 +113,7 @@ function Progress() {
   );
 }
 
-/** What the agent left in its session: a question or a reply, and the files it changed. Only the X dismisses it. Shown on the agent rail. */
+/** What the agent left in its session: a question or a reply, and the files it changed. Only the X dismisses it. Shown in the Changes header. */
 export function Notice() {
   const q = useStore((s) => s.question);
   const files = useStore((s) => s.files);
@@ -133,7 +133,7 @@ export function Notice() {
             {changed.length > 0 && <Count n={changed.length} className="bg-agent text-black" />}
           </Button>
         </PopoverTrigger>
-        <PopoverContent side="top" align="center" onOpenAutoFocus={(e) => e.preventDefault()} className="max-h-[60vh] w-80 gap-0 overflow-auto p-1" aria-label={`What ${n.agent} left for you`}>
+        <PopoverContent align="end" onOpenAutoFocus={(e) => e.preventDefault()} className="max-h-[60vh] w-80 gap-0 overflow-auto p-1" aria-label={`What ${n.agent} left for you`}>
           {q.text && <p className="p-2 text-[13px] text-body [overflow-wrap:anywhere]">{q.text}</p>}
           {changed.map((f) => (
             <button key={f.path} className="flex w-full flex-col items-start rounded-sm px-2 py-1.5 text-left text-foreground outline-none hover:bg-accent focus-visible:bg-accent"
