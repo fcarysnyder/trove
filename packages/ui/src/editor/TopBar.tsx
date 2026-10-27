@@ -123,13 +123,13 @@ export function Notice() {
   const changed = files.filter((f) => f.updated);
   const label = q.kind === 'reply' ? `${n.who} replied` : `${n.who} has a question`;
   return (
-    <span className="inline-flex items-center rounded-full border bg-card">
+    <span className="inline-flex min-w-0 items-center rounded-full border bg-card">
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="sm" className="h-8 gap-1.5 rounded-l-full rounded-r-none pr-1.5 pl-2.5 text-foreground"
+          <Button title={label} variant="ghost" size="sm" className="h-8 min-w-0 shrink gap-1.5 rounded-l-full rounded-r-none pr-1.5 pl-2.5 text-foreground"
             aria-label={`${label}${changed.length ? `, ${plural(changed.length, 'file')} changed` : ''}`}>
-            <span className="size-2 rounded-full bg-agent" aria-hidden />
-            {label}
+            <span className="size-2 shrink-0 rounded-full bg-agent" aria-hidden />
+            <span className="truncate">{label}</span>
             {changed.length > 0 && <Count n={changed.length} className="bg-agent text-black" />}
           </Button>
         </PopoverTrigger>

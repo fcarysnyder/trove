@@ -68,10 +68,10 @@ export function ChangesColumn() {
   return (
     <section aria-label="Changes" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">
-        <span className="flex flex-1 items-center gap-1.5 font-semibold text-foreground" aria-label={shown ? `Changes, ${plural(shown, 'change')}` : 'Changes'}>
+        <span className="flex shrink-0 items-center gap-1.5 font-semibold text-foreground" aria-label={shown ? `Changes, ${plural(shown, 'change')}` : 'Changes'}>
           Changes{shown > 0 && <Count n={shown} />}
         </span>
-        <Notice />
+        <span className="flex min-w-0 flex-1 justify-end"><Notice /></span>
         <IconButton side="bottom" label="Hide changes" tip="Hide changes (])" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
       </div>
       <ToggleGroup type="single" value={scope} onValueChange={(v) => v && setScope(v as 'file' | 'all')} aria-label="Comments shown" spacing={0}
