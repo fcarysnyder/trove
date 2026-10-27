@@ -20,6 +20,7 @@ import { TopBar } from './TopBar';
 import { ModalEditor } from './doc/Editors';
 
 const WIDTH = { files: 260, changes: 300, agent: 200 }; // agent: the drawer's height
+const RAIL = 45; // the agent drawer shut: its header (44px) and the border above it
 
 export function App() {
   const theme = useStore((s) => s.settings.theme);
@@ -113,8 +114,8 @@ function Columns() {
         </ResizablePanelGroup>
       </ResizablePanel>
       <ResizableHandle aria-label="Resize agent" disableDoubleClick onDoubleClick={reset('agent')} className={handle} />
-      <ResizablePanel id="agent" panelRef={panels.agent} collapsible collapsedSize={0} minSize={120} maxSize="60%" defaultSize={hidden.agent ? 0 : widths.agent} groupResizeBehavior="preserve-pixel-size">
-        <div inert={hidden.agent} className="h-full border-t"><AgentDrawer /></div>
+      <ResizablePanel id="agent" panelRef={panels.agent} collapsible collapsedSize={RAIL} minSize={120} maxSize="60%" defaultSize={hidden.agent ? RAIL : widths.agent} groupResizeBehavior="preserve-pixel-size">
+        <div className="h-full overflow-hidden border-t"><AgentDrawer /></div>
       </ResizablePanel>
     </ResizablePanelGroup>
   );

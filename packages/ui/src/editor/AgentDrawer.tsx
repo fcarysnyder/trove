@@ -1,12 +1,14 @@
-// The agent drawer: who is attached and since when, then what went back and forth, oldest first.
+// The agent drawer: who is attached and since when, then what went back and forth, oldest first. Shut, it
+// is a one-line rail along the bottom: the agent's state, and centred in it what the agent left for you.
 import type { Activity } from '@trove/core/types';
-import { CircleCheck, Dot, MessageCircleQuestion, MessageSquareReply, PanelBottomClose, Plug, Send, Unplug } from 'lucide-react';
+import { CircleCheck, Dot, MessageCircleQuestion, MessageSquareReply, PanelBottomClose, PanelBottomOpen, Plug, Send, Unplug } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ago, nameOf, plural } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { loadActivity, reveal, togglePanel } from './actions';
 import { IconButton } from './bits';
+import { Notice } from './TopBar';
 import { useNames, useStore } from './store';
 
 const KIND: Record<Activity['kind'], [typeof Send, string]> = {
@@ -29,11 +31,15 @@ export function AgentDrawer() {
   );
   return (
     <section aria-label="Agent" className="flex h-full min-h-0 flex-col">
-      <div className="flex min-h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">
-        <span className={cn('size-2 rounded-full', agent?.connected ? 'bg-agent' : 'border border-muted-foreground')} aria-hidden />
-        <span className="font-semibold text-foreground">{agent?.at ? n.Agent : 'No agent connected'}</span>
-        {agent?.at && <span className="flex-1 text-xs text-muted-foreground">{agent.connected ? 'connected' : 'disconnected'} · attached {ago(agent.at)}</span>}
-        <IconButton side="top" label="Hide agent" tip="Hide agent (A)" className="ml-auto" onClick={() => togglePanel('agent', true)}><PanelBottomClose /></IconButton>
+      <div className={cn('grid min-h-11 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3', !hidden && 'border-b')}>
+        <span className="flex min-w-0 items-center gap-2">
+          <span className={cn('size-2 shrink-0 rounded-full', agent?.connected ? 'bg-agent' : 'border border-muted-foreground')} aria-hidden />
+          <span className="shrink-0 font-semibold text-foreground">{agent?.at ? n.Agent : 'No agent connected'}</span>
+          {agent?.at && <span className="truncate text-xs text-muted-foreground">{agent.connected ? 'connected' : 'disconnected'} · attached {ago(agent.at)}</span>}
+        </span>
+        <Notice />
+        <IconButton side="top" label={hidden ? 'Show agent' : 'Hide agent'} tip={`${hidden ? 'Show' : 'Hide'} agent (A)`} className="justify-self-end"
+          onClick={() => togglePanel('agent', !hidden)}>{hidden ? <PanelBottomOpen /> : <PanelBottomClose />}</IconButton>
       </div>
       <ScrollArea className="min-h-0 flex-1">
         {!entries.length && <p className="px-4 py-3 text-muted-foreground">No activity</p>}

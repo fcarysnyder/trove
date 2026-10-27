@@ -1,6 +1,6 @@
 import { countStates } from '@trove/core/anchor';
 import { attachCommand, type AgentTool } from '@trove/core/types';
-import { ChevronLeft, ChevronRight, Copy, House, PanelBottom, Settings, Unplug, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Copy, House, Settings, Unplug, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -26,7 +26,6 @@ export function TopBar() {
   const source = useStore((s) => s.source);
   const offline = useStore((s) => s.offline);
   const hasSettings = useStore((s) => s.hasSettings);
-  const drawer = useStore((s) => s.hidden.agent);
   const current = useStore((s) => s.current?.path);
   useStore((s) => s.filterOff);
   useStore((s) => s.query);
@@ -61,9 +60,7 @@ export function TopBar() {
             <Unplug className="size-4" aria-hidden />Disconnected
           </span>
         )}
-        <Notice />
         {source && <Connect />}
-        <IconButton label={drawer ? 'Show agent' : 'Hide agent'} tip={`${drawer ? 'Show' : 'Hide'} agent (A)`} aria-pressed={!drawer} onClick={() => togglePanel('agent')}><PanelBottom /></IconButton>
         {hasSettings && <IconButton label="Settings" onClick={() => set({ settingsOpen: true })}><Settings /></IconButton>}
       </div>
     </header>
@@ -116,8 +113,8 @@ function Progress() {
   );
 }
 
-/** What the agent left in its session: a question or a reply, and the files it changed. Only the X dismisses it. */
-function Notice() {
+/** What the agent left in its session: a question or a reply, and the files it changed. Only the X dismisses it. Shown on the agent rail. */
+export function Notice() {
   const q = useStore((s) => s.question);
   const files = useStore((s) => s.files);
   const n = useNames();
@@ -136,7 +133,7 @@ function Notice() {
             {changed.length > 0 && <Count n={changed.length} className="bg-agent text-black" />}
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="end" onOpenAutoFocus={(e) => e.preventDefault()} className="max-h-[60vh] w-80 gap-0 overflow-auto p-1" aria-label={`What ${n.agent} left for you`}>
+        <PopoverContent side="top" align="center" onOpenAutoFocus={(e) => e.preventDefault()} className="max-h-[60vh] w-80 gap-0 overflow-auto p-1" aria-label={`What ${n.agent} left for you`}>
           {q.text && <p className="p-2 text-[13px] text-body [overflow-wrap:anywhere]">{q.text}</p>}
           {changed.map((f) => (
             <button key={f.path} className="flex w-full flex-col items-start rounded-sm px-2 py-1.5 text-left text-foreground outline-none hover:bg-accent focus-visible:bg-accent"
