@@ -4,7 +4,7 @@
 // runs it (`trove --selftest`) with no devDependencies; vitest calls it too.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -584,7 +584,7 @@ async function agentCase(temps: string[]) {
   assert.deepEqual([(await source()).agentInfo, (await source()).agent], [codex.body, 'other'], '/api/source reflects it');
   const anchor = { quote: 'Text', prefix: '', suffix: '', path: [], raw: '' };
   await call(port, 'POST', '/api/drafts', { path: 'a.md', drafts: [{ kind: 'change', note: 'n', anchor }] });
-  await call(port, 'POST', '/api/send', {});
+  const sent = (await call(port, 'POST', '/api/send', {})).body;
   const hash = sha(readFileSync(join(root, 'a.md'), 'utf8'));
   assert.equal((await call(port, 'POST', '/api/accept', { path: 'a.md', hash })).body.error, 'Codex is working on this file', 'BUSY names it');
   await call(port, 'POST', '/api/agent', { id: 'other', label: 'Cursor' });
@@ -595,6 +595,11 @@ async function agentCase(temps: string[]) {
   assert.deepEqual([(await source()).agentInfo, (await source()).agent], [{ ...claude, connected: false }, 'claude'],
     'who attached survives a restart; with no process to follow, connected does not');
   assert.deepEqual((await call(port, 'POST', '/api/agent', { id: null })).body, none, 'detach');
+  // Activity: past sends from the batches log, then this run's moves; any other events-log line as written.
+  appendFileSync((await source()).eventsLog, 'pr 7: opened\n');
+  const activity = (await call(port, 'GET', '/api/activity')).body.entries.map((e: any) => [e.kind, e.text, e.comments]);
+  assert.deepEqual(activity, [['batch', sent.id, 1], ['detach', 'Claude', undefined], ['event', 'pr 7: opened', undefined]]);
+  assert.equal((await call(port, 'GET', '/api/activity', undefined, { host: 'evil.example' })).status, 403);
   assert.equal((await call(port, 'POST', '/api/accept', { path: 'a.md', hash })).body.error, 'The agent is working on this file');
   await app.close();
   ({ app, port } = await listen(opts));

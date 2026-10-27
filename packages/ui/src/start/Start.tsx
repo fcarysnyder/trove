@@ -17,21 +17,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { tilde } from '@/lib/text';
+import { ago, tilde } from '@/lib/text';
 import { applyTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 import { Count, IconButton, TitleStrip } from '@/editor/bits';
 import mark from '../../../../design/icon/mark/favicon.svg';
 import { toast } from 'sonner';
 
-const ago = (iso: string) => {
-  const s = (Date.now() - Date.parse(iso)) / 1000;
-  const f = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-  if (!Number.isFinite(s)) return '';
-  if (s < 3600) return f.format(-Math.round(s / 60), 'minute');
-  if (s < 86400) return f.format(-Math.round(s / 3600), 'hour');
-  return f.format(-Math.round(s / 86400), 'day');
-};
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function Start() {

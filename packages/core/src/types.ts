@@ -161,6 +161,20 @@ export interface SourceInfo {
 // take a JSON body and require Origin to match the page's own origin. Errors are {error: string}
 // with 400, 404, 409 (hash or lock conflict; may carry `hash`), 413, 415 or 500.
 
+/**
+ * One line of what the agent drawer lists. batch: a send (text: its id); release: a locked file let go
+ * (`done`, Unlock or the quiet release); question / reply: `ask` / `reply`; attach / detach: text is the
+ * agent's label; event: any other events-log line, as written.
+ */
+export interface Activity {
+  at: string;
+  kind: 'batch' | 'release' | 'question' | 'reply' | 'attach' | 'detach' | 'event';
+  text: string;
+  paths?: string[];
+  comments?: number;
+}
+export interface ActivityResponse { entries: Activity[] } // GET /api/activity: newest last, at most 100
+
 export interface FilesResponse { files: FileRow[]; question: Question | null } // GET /api/files
 export interface DraftsResponse { drafts: Record<string, Draft[]>; edits: Record<string, BlockEdit[]> } // GET /api/drafts
 export interface FileResponse { // GET /api/file?path=

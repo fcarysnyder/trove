@@ -1,6 +1,6 @@
 import { countStates } from '@trove/core/anchor';
 import { attachCommand, type AgentTool } from '@trove/core/types';
-import { ChevronLeft, ChevronRight, Copy, House, Settings, Unplug, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Copy, House, PanelBottom, Settings, Unplug, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { PROGRESS, stateInfo } from '@/lib/status';
 import { dirOf, folderText, nameOf, plural } from '@/lib/text';
 import { cn } from '@/lib/utils';
-import { dismissQuestion, reveal, step, visible } from './actions';
+import { dismissQuestion, reveal, step, togglePanel, visible } from './actions';
 import { Count, IconButton } from './bits';
 import { Icon } from './StateIcon';
 import { get, set, useNames, useStore } from './store';
@@ -26,6 +26,7 @@ export function TopBar() {
   const source = useStore((s) => s.source);
   const offline = useStore((s) => s.offline);
   const hasSettings = useStore((s) => s.hasSettings);
+  const drawer = useStore((s) => s.hidden.agent);
   const current = useStore((s) => s.current?.path);
   useStore((s) => s.filterOff);
   useStore((s) => s.query);
@@ -62,6 +63,7 @@ export function TopBar() {
         )}
         <Notice />
         {source && <Connect />}
+        <IconButton label={drawer ? 'Show agent' : 'Hide agent'} tip={`${drawer ? 'Show' : 'Hide'} agent (A)`} aria-pressed={!drawer} onClick={() => togglePanel('agent')}><PanelBottom /></IconButton>
         {hasSettings && <IconButton label="Settings" onClick={() => set({ settingsOpen: true })}><Settings /></IconButton>}
       </div>
     </header>

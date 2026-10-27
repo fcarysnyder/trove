@@ -1882,6 +1882,16 @@ function createApp(o) {
   }));
   if (serving) saveState();
   const REJECTED = [409, { error: "Rejected: restore it first" }];
+  const activity = [];
+  const note = (kind, text, more = {}) => {
+    activity.push({ at: (/* @__PURE__ */ new Date()).toISOString(), kind, text, ...more });
+    activity.splice(0, activity.length - 100);
+  };
+  const sentEntry = (b) => ({ at: b.sentAt, kind: "batch", text: b.id, comments: b.items.length, paths: [...new Set(b.items.map((c) => c.path))] });
+  try {
+    activity.push(...readFileSync2(files.batches, "utf8").trim().split("\n").slice(-100).map((l3) => sentEntry(JSON.parse(l3))));
+  } catch {
+  }
   function list() {
     const before = seen.size;
     const out2 = source.list(current, seen, new Set(rejected.keys()));
@@ -1944,6 +1954,7 @@ function createApp(o) {
     working.delete(rel);
     if (hashOf(rel) !== w.hash) updated.set(rel, w.text);
     saveState();
+    note("release", rel);
     return true;
   }
   function tick(now = Date.now()) {
@@ -1953,6 +1964,24 @@ function createApp(o) {
       if (h2 !== w.last) Object.assign(w, { last: h2, at: now });
       else if (now - w.at >= quietMs) release(rel);
     }
+    follow();
+  }
+  const size = (f) => {
+    try {
+      return statSync2(f).size;
+    } catch {
+      return 0;
+    }
+  };
+  let eventsAt = size(files.events);
+  function follow() {
+    const n = size(files.events);
+    if (n === eventsAt) return;
+    if (n < eventsAt) eventsAt = 0;
+    const tail = readFileSync2(files.events).subarray(eventsAt);
+    const end = tail.lastIndexOf(10) + 1;
+    eventsAt += end;
+    for (const line of tail.subarray(0, end).toString("utf8").split("\n")) if (line && !line.startsWith("batch ")) note("event", line);
   }
   const port = () => {
     const a = server.address();
@@ -2244,6 +2273,7 @@ function createApp(o) {
       const sentPaths = new Set(items.map((c) => c.path));
       appendFileSync(files.batches, `${JSON.stringify({ id, sentAt: (/* @__PURE__ */ new Date()).toISOString(), items })}
 `);
+      note("batch", id, { comments: items.length, paths: [...sentPaths] });
       saveDrafts(keep);
       const notice = `batch ${id}: ${items.length} ${items.length === 1 ? "comment" : "comments"} on ${sentPaths.size} ${sentPaths.size === 1 ? "file" : "files"}. Read it with: grep -F ${id} '${files.batches}'`;
       appendFileSync(files.events, `${notice}
@@ -2272,6 +2302,7 @@ function createApp(o) {
       if (typeof text !== "string" || !["question", "reply"].includes(kind)) return [400, { error: "text, and kind question or reply" }];
       question = text.trim() ? { text: text.trim().slice(0, 300), kind, at: (/* @__PURE__ */ new Date()).toISOString() } : null;
       saveState();
+      if (question) note(kind, question.text);
       return [200, { question }];
     },
     // `done <file>` from the agent and the page's Unlock button.
@@ -2281,13 +2312,16 @@ function createApp(o) {
       return [200, { released: release(rel), updated: updated.has(rel) }];
     },
     "GET /api/source": () => [200, info()],
+    "GET /api/activity": () => (follow(), [200, { entries: activity }]),
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
     "POST /api/agent": (_2, { id, label }, req) => {
       if (id !== null && !Object.hasOwn(AGENT_LABELS, id)) return [400, { error: "id is claude, codex, other or null" }];
       if (label !== void 0 && (typeof label !== "string" || label.length > 40)) return [400, { error: "label is a short string" }];
+      if (id === null && agent) note("detach", agent.label);
       agent = id === null ? null : attached(id, label?.trim(), agentAbove(peerOf(req.socket.remotePort), id));
       attachedHere = id !== null;
       saveState();
+      if (agent) note("attach", agent.label);
       return [200, agentInfo()];
     },
     "GET /api/git": () => [200, git()],
@@ -2437,7 +2471,7 @@ function call(port, method, path, body, headers = {}) {
 // ../core/src/selftest.ts
 import assert from "node:assert/strict";
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync as mkdirSync3, mkdtempSync, readFileSync as readFileSync3, realpathSync as realpathSync3, rmSync as rmSync2, symlinkSync, writeFileSync as writeFileSync3 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync3, mkdirSync as mkdirSync3, mkdtempSync, readFileSync as readFileSync3, realpathSync as realpathSync3, rmSync as rmSync2, symlinkSync, writeFileSync as writeFileSync3 } from "node:fs";
 import { request as request2 } from "node:http";
 import { tmpdir } from "node:os";
 import { basename as basename4, join as join4 } from "node:path";
@@ -2956,7 +2990,7 @@ async function agentCase(temps) {
   assert.deepEqual([(await source()).agentInfo, (await source()).agent], [codex.body, "other"], "/api/source reflects it");
   const anchor = { quote: "Text", prefix: "", suffix: "", path: [], raw: "" };
   await call(port, "POST", "/api/drafts", { path: "a.md", drafts: [{ kind: "change", note: "n", anchor }] });
-  await call(port, "POST", "/api/send", {});
+  const sent = (await call(port, "POST", "/api/send", {})).body;
   const hash = sha(readFileSync3(join4(root, "a.md"), "utf8"));
   assert.equal((await call(port, "POST", "/api/accept", { path: "a.md", hash })).body.error, "Codex is working on this file", "BUSY names it");
   await call(port, "POST", "/api/agent", { id: "other", label: "Cursor" });
@@ -2970,6 +3004,10 @@ async function agentCase(temps) {
     "who attached survives a restart; with no process to follow, connected does not"
   );
   assert.deepEqual((await call(port, "POST", "/api/agent", { id: null })).body, none, "detach");
+  appendFileSync2((await source()).eventsLog, "pr 7: opened\n");
+  const activity = (await call(port, "GET", "/api/activity")).body.entries.map((e) => [e.kind, e.text, e.comments]);
+  assert.deepEqual(activity, [["batch", sent.id, 1], ["detach", "Claude", void 0], ["event", "pr 7: opened", void 0]]);
+  assert.equal((await call(port, "GET", "/api/activity", void 0, { host: "evil.example" })).status, 403);
   assert.equal((await call(port, "POST", "/api/accept", { path: "a.md", hash })).body.error, "The agent is working on this file");
   await app.close();
   ({ app, port } = await listen(opts));
