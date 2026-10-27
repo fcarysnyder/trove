@@ -18,7 +18,9 @@ import { TitleStrip } from './bits';
 import { TopBar } from './TopBar';
 import { ModalEditor } from './doc/Editors';
 
-const WIDTH = { files: 260, changes: 300 };
+const WIDTH = { files: 260, changes: 440 };
+// The Agent pane (`changes`) holds the history and the comments, so it gets more room than the file tree.
+const RANGE = { files: [180, 420], changes: [400, '50%'] } as const;
 
 export function App() {
   const theme = useStore((s) => s.settings.theme);
@@ -79,8 +81,8 @@ function Columns() {
     panelRef: name === 'files' ? files : changes,
     collapsible: true,
     collapsedSize: 0,
-    minSize: 180,
-    maxSize: 420,
+    minSize: RANGE[name][0],
+    maxSize: RANGE[name][1],
     defaultSize: hidden[name] ? 0 : widths[name],
     groupResizeBehavior: 'preserve-pixel-size' as const,
   });

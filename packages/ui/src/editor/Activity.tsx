@@ -23,7 +23,9 @@ export function ActivityList({ path }: { path?: string }) {
     <button key={p} title={p} className="text-foreground outline-none hover:underline focus-visible:underline" onClick={() => void reveal(p)}>{nameOf(p)}</button>
   );
   return (
-    <ol aria-label="Activity" className="border-b py-2">
+    <section aria-labelledby="history" className="border-b pb-2">
+    <h3 id="history" className="px-4 pt-4 pb-1 text-xs text-muted-foreground">History</h3>
+      <ol>
       {entries.map((e, k) => {
         // Create PR's line on the events log (`pr <id>: …`) reads as the request it is.
         const pr = e.kind === 'event' && /^pr \w+:/.test(e.text);
@@ -43,5 +45,6 @@ export function ActivityList({ path }: { path?: string }) {
         );
       })}
     </ol>
+    </section>
   );
 }

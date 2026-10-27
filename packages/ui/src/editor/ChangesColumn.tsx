@@ -66,13 +66,11 @@ export function ChangesColumn() {
   }
 
   return (
-    <section aria-label="Changes" className="flex h-full min-w-0 flex-col">
+    <section aria-label="Agent" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">
-        <span className="flex shrink-0 items-center gap-1.5 font-semibold text-foreground" aria-label={shown ? `Changes, ${plural(shown, 'change')}` : 'Changes'}>
-          Changes{shown > 0 && <Count n={shown} />}
-        </span>
-        <span className="flex min-w-0 flex-1 justify-end"><Notice /></span>
-        <IconButton side="bottom" label="Hide changes" tip="Hide changes (])" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
+        <span className="font-semibold text-foreground">Agent</span>
+        <Notice />
+        <IconButton side="bottom" label="Hide agent" tip="Hide agent (])" className="ml-auto" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
       </div>
       <ToggleGroup type="single" value={scope} onValueChange={(v) => v && setScope(v as 'file' | 'all')} aria-label="Comments shown" spacing={0}
         className="mx-4 my-2 w-auto shrink-0 gap-0.5 rounded-lg bg-card p-0.5">
@@ -84,6 +82,12 @@ export function ChangesColumn() {
       </ToggleGroup>
       <ScrollArea className="min-h-0 flex-1">
         {current && <ActivityList path={scope === 'file' ? current.path : undefined} />}
+        {/* Under the history, the comments and edits still to send. */}
+        {current && (
+          <h3 className="flex items-center gap-1.5 px-4 pt-4 text-xs text-muted-foreground" aria-label={shown ? `Changes, ${plural(shown, 'change')}` : 'Changes'}>
+            Changes{shown > 0 && <Count n={shown} />}
+          </h3>
+        )}
         {body}
       </ScrollArea>
       <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
