@@ -1,7 +1,7 @@
 // Commands shared by the document, the selection toolbar, Changes and the keyboard.
 import { makeAnchor } from '@trove/core/anchor';
 import { toast } from 'sonner';
-import { flash, open, setShowNew, togglePanel } from '../actions';
+import { flash, open, setShowNew } from '../actions';
 import { get, set } from '../store';
 import { toRange } from './layers';
 import { docModel } from './model';
@@ -67,8 +67,7 @@ export function pickAction(act: 'change' | 'explain' | 'edit' | 'copy') {
   if (!pick) return;
   set({ pick: null });
   if (act === 'change' || act === 'explain') {
-    set({ composer: { kind: act, anchor: pick.anchor } });
-    togglePanel('changes', false);
+    set({ composer: { kind: act, anchor: pick.anchor, range: pick.range } });
   } else if (act === 'edit') editBlock(pick.block);
   else navigator.clipboard.writeText(pick.text).then(() => toast('Copied'), () => toast('Copy failed'));
 }

@@ -11,7 +11,7 @@ import { ChangesColumn } from './ChangesColumn';
 import { DocColumn } from './DocColumn';
 import { FilesColumn } from './FilesColumn';
 import { onKey } from './keys';
-import { SelectionToolbar } from './SelectionToolbar';
+import { CommentPopover, SelectionToolbar } from './SelectionToolbar';
 import { SettingsDialog } from './SettingsDialog';
 import { get, set, useStore } from './store';
 import { TitleStrip } from './bits';
@@ -46,6 +46,7 @@ export function App() {
         <Columns />
       </div>
       <SelectionToolbar />
+      <CommentPopover />
       <ModalEditor />
       <SettingsDialog />
       <Toaster theme={theme} position="bottom-right" />

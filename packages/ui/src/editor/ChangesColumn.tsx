@@ -10,7 +10,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { mod, plural, reducedMotion } from '@/lib/text';
 import { cn } from '@/lib/utils';
-import { addComment, loadAll, open, revertEdit, saveDrafts, send, sendable, setScope, togglePanel } from './actions';
+import { loadAll, open, revertEdit, saveDrafts, send, sendable, setScope, togglePanel } from './actions';
 import { Count, IconButton, PathLabel } from './bits';
 import { get, set, useNames, useStore } from './store';
 import { showBlock, showPassage } from './doc/commands';
@@ -22,7 +22,6 @@ export function ChangesColumn() {
   const allDrafts = useStore((s) => s.allDrafts);
   const allEdits = useStore((s) => s.allEdits);
   const hits = useStore((s) => s.hits);
-  const composer = useStore((s) => s.composer);
   useStore((s) => s.noteEdit);
   const n = useNames();
   const [total] = sendable();
@@ -45,7 +44,7 @@ export function ChangesColumn() {
   let body: ReactNode;
   if (!current) body = <p className="px-4 py-3 text-muted-foreground">No file open</p>;
   else if (scope === 'file') {
-    body = composer || own ? rowsOf(current) : <p className="px-4 py-3 text-muted-foreground">No comments or edits on this file</p>;
+    body = own ? rowsOf(current) : <p className="px-4 py-3 text-muted-foreground">No comments or edits on this file</p>;
   } else {
     // Every file's comments and edits in tree order; files the agent is working on last, read-only.
     const count = (f: FileRow) => (f.path === current.path ? own : (allDrafts[f.path]?.length ?? 0) + (allEdits[f.path]?.length ?? 0));
@@ -79,7 +78,6 @@ export function ChangesColumn() {
         ))}
       </ToggleGroup>
       <ScrollArea className="min-h-0 flex-1">
-        {composer && current && <Composer kind={composer.kind} anchor={composer.anchor} />}
         {body}
       </ScrollArea>
       <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
@@ -112,7 +110,7 @@ function Row({ kind, anchor, n, found, tools, children, locked, onClick, rowRef 
 }
 
 /** A note field that grows with its text; Cmd/Ctrl+Enter submits, Escape cancels. */
-function NoteField({ value, placeholder, verb, submit, cancel }: { value: string; placeholder: string; verb: string; submit: (t: string) => void; cancel: () => void }) {
+export function NoteField({ value, placeholder, verb, submit, cancel }: { value: string; placeholder: string; verb: string; submit: (t: string) => void; cancel: () => void }) {
   const [text, setText] = useState(value);
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
@@ -129,16 +127,6 @@ function NoteField({ value, placeholder, verb, submit, cancel }: { value: string
         <Button variant="ghost" size="sm" onClick={cancel}>Cancel</Button>
       </div>
     </>
-  );
-}
-
-function Composer({ kind, anchor }: { kind: CommentKind; anchor: Anchor }) {
-  const n = useNames();
-  return (
-    <Row kind={kind} anchor={anchor} n={null} found>
-      <NoteField value="" placeholder={kind === 'explain' ? `What should ${n.agent} explain?` : 'What should change?'} verb="Add"
-        submit={addComment} cancel={() => set({ composer: null })} />
-    </Row>
   );
 }
 
