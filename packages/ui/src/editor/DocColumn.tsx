@@ -321,14 +321,14 @@ function DocFooter() {
   const n = useNames();
   useStore((s) => s.files);
   const f = entry();
-  if (!current || !f) return <div className="min-h-11 shrink-0 border-t" />;
+  if (!current || !f) return <div className="min-h-12 shrink-0 border-t" />;
   const s = status(f, n);
   // The second click of a double-click lands on the next file's buttons; ignore it.
   const act = (fn: () => unknown) => (e: ReactMouseEvent) => { if (e.detail <= 1) void fn(); };
   const busy = !!editing;
   const next = nextPending();
   return (
-    <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 border-t px-4 py-1.5">
+    <div className="flex min-h-12 shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 border-t px-4 py-1.5">
       <span className="flex min-w-0 flex-[1_1_auto] cursor-default items-center gap-1.5 overflow-hidden text-xs whitespace-nowrap text-muted-foreground select-none">
         <StateIcons file={f} names={n} className="size-3.5" />{s.label}
       </span>

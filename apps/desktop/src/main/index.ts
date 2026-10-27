@@ -2,10 +2,10 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type Men
 import { execFile } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { attachCommand, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type OpenRequest, type Recent } from '@trove/core';
+import { attachCommand, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type TerminalApp, type OpenRequest, type Recent } from '@trove/core';
 
 const uiDir = join(import.meta.dirname, '../ui'); // out/main -> out/ui, however Electron was launched
 const startHtml = join(uiDir, 'start.html');
@@ -158,14 +158,38 @@ async function tools(): Promise<Record<AgentTool, boolean>> {
   return { claude, codex };
 }
 
-/** A Terminal window running `tool` in the repository with the attach prompt for the server on `port`. */
+/**
+ * How each terminal app is handed the agent's script: Terminal and iTerm run a .command file opened with
+ * them; the others take a command on their own command line, in a new instance (-n). Warp and Hyper are
+ * left out: neither documents a way to start a window running a given command.
+ */
+const TERMINAL_ARGS: Record<TerminalApp, (script: string) => string[]> = {
+  Terminal: (s) => ['-a', 'Terminal', s],
+  iTerm: (s) => ['-a', 'iTerm', s],
+  Ghostty: (s) => ['-na', 'Ghostty', '--args', '-e', s],
+  WezTerm: (s) => ['-na', 'WezTerm', '--args', 'start', '--', s],
+  kitty: (s) => ['-na', 'kitty', '--args', s],
+  Alacritty: (s) => ['-na', 'Alacritty', '--args', '-e', s],
+};
+const TERMINALS = Object.keys(TERMINAL_ARGS) as TerminalApp[];
+const installed = (name: TerminalApp) =>
+  [`/Applications/${name}.app`, join(homedir(), 'Applications', `${name}.app`), `/System/Applications/Utilities/${name}.app`].some((p) => existsSync(p));
+/** The terminal apps on this Mac that an agent can start in, Terminal first. */
+const terminals = () => TERMINALS.filter(installed);
+/** The app setting, while that app is still installed; else Terminal. */
+function terminal(): TerminalApp {
+  const t = readAppSettings().terminal as TerminalApp;
+  return TERMINALS.includes(t) && installed(t) ? t : 'Terminal';
+}
+
+/** A window of the chosen terminal app running `tool` in the repository with the attach prompt for the server on `port`. */
 async function launchAgent(tool: AgentTool, root: string, port: number): Promise<void> {
   const script = join(app.getPath('temp'), `trove-${tool}-${port}.command`);
   writeFileSync(script, `#!/bin/sh\n${attachCommand(tool, root, port, true)}\n`);
   chmodSync(script, 0o755);
-  // ponytail: Terminal.app only; iTerm (or the user's default terminal) or an embedded terminal when someone asks.
-  await run('open', ['-a', 'Terminal', script]).catch((e: { stderr?: string; message: string }) => {
-    throw new Error(`Terminal did not open: ${(e.stderr || e.message).trim()}`);
+  const t = terminal();
+  await run('open', TERMINAL_ARGS[t](script)).catch((e: { stderr?: string; message: string }) => {
+    throw new Error(`${t} did not open: ${(e.stderr || e.message).trim()}`);
   });
 }
 
@@ -213,13 +237,61 @@ const cloneDir = () => (isDir(join(homedir(), 'code')) ? join(homedir(), 'code')
 
 // ---- worktrees ------------------------------------------------------------------------------
 
+// The app's own settings (userData/settings.json), for what is not per repository.
+const appSettingsFile = () => join(app.getPath('userData'), 'settings.json');
+const readAppSettings = (): { worktreeDir?: unknown; terminal?: unknown } => { try { return JSON.parse(readFileSync(appSettingsFile(), 'utf8')) ?? {}; } catch { return {}; } };
+function writeAppSettings(patch: { worktreeDir?: string; terminal?: TerminalApp }): void {
+  mkdirSync(app.getPath('userData'), { recursive: true });
+  writeFileSync(appSettingsFile(), JSON.stringify({ ...readAppSettings(), ...patch }, null, 2));
+}
+
+/** Where new worktrees go: the folder picked with the dialog's cog, else one folder for all of them, out of the user's code. */
+function worktreeDir(): string {
+  const d = readAppSettings().worktreeDir;
+  return typeof d === 'string' && d ? d : join(homedir(), '.trove', 'worktrees');
+}
+
+function setWorktreeDir(path: string): string {
+  if (!isDir(path)) throw new Error(`No folder at ${path}`);
+  writeAppSettings({ worktreeDir: path });
+  return path;
+}
+
 /**
- * `branch` in its own worktree beside the main checkout, `<repo>-<branch>`, so the main checkout and
- * whatever is open there stay as they are. With `base`, a new branch off it (`--no-track`: a branch off
- * origin/main must not push to main); with null, an existing local branch no worktree has checked out.
- * Then that folder, probed.
+ * `branch` in its own worktree at `<parent>/<repo>/<name>`, so the main checkout and whatever is open
+ * there stay as they are. With `base`, a new branch off it (`--no-track`: a branch off origin/main must
+ * not push to main); with null, an existing local branch no worktree has checked out. Then that folder, probed.
  */
-async function addWorktree(path: string, branch: string, base: string | null) {
+async function addWorktree(path: string, branch: string, base: string | null, parent: string, name: string) {
+  if (!/^[\w.-]+$/.test(name) || /^\.+$/.test(name)) throw new Error(`Not a folder name: ${name}`);
+  const git = await checkable(path, branch, base);
+  const dest = join(parent, git.repo.name, name);
+  if (existsSync(dest)) throw new Error(`${dest} already exists`);
+  mkdirSync(dirname(dest), { recursive: true });
+  const args = base === null ? ['--', dest, branch] : ['--no-track', '-b', branch, '--', dest, base];
+  await run('git', ['-C', git.repo.root, 'worktree', 'add', ...args]).catch((e: { stderr?: string; message: string }) => {
+    throw new Error((e.stderr || e.message).trim().split('\n').at(-1));
+  });
+  return probe(dest);
+}
+
+/**
+ * `git switch` this checkout to `branch`: a new one off `base` (`-c`, `--no-track`), or with null an
+ * existing one no worktree has checked out. Uncommitted changes come along, as git carries them;
+ * when they are in the way git refuses and nothing changes. Never stashes, never discards.
+ */
+async function switchBranch(path: string, branch: string, base: string | null) {
+  const git = await checkable(path, branch, base);
+  const args = base === null ? ['--no-guess', branch] : ['--no-track', '-c', branch, base];
+  await run('git', ['-C', git.worktree.path, 'switch', ...args]).catch((e: { stderr?: string; message: string }) => {
+    // git's reason is its first line ("error: Your local changes ... would be overwritten"); the rest lists files.
+    throw new Error((e.stderr || e.message).trim().split('\n')[0].replace(/^error: /, ''));
+  });
+  return probe(git.worktree.path);
+}
+
+/** The repository at `path` when `branch` can be checked out: new with a `base`, else existing and checked out nowhere. */
+async function checkable(path: string, branch: string, base: string | null) {
   const git = probeGit(path);
   if (!git) throw new Error(`not a git repository: ${path}`);
   const valid = !branch.startsWith('-') && await run('git', ['check-ref-format', '--branch', branch]).then(() => true, () => false);
@@ -228,13 +300,24 @@ async function addWorktree(path: string, branch: string, base: string | null) {
   if (base !== null && local) throw new Error(`${branch} already exists`);
   if (base === null && !local) throw new Error(`No branch ${branch}`);
   if (base === null && (local!.current || local!.worktree)) throw new Error(`${branch} is already checked out`);
-  const dest = join(dirname(git.repo.root), `${git.repo.name}-${branch.replaceAll('/', '-')}`);
-  if (existsSync(dest)) throw new Error(`${dest} already exists`);
-  const args = base === null ? ['--', dest, branch] : ['--no-track', '-b', branch, '--', dest, base];
-  await run('git', ['-C', git.repo.root, 'worktree', 'add', ...args]).catch((e: { stderr?: string; message: string }) => {
-    throw new Error((e.stderr || e.message).trim().split('\n').at(-1));
+  return git;
+}
+
+/**
+ * `git worktree remove` a linked worktree: its folder goes, its branch stays. git refuses while it has
+ * uncommitted or untracked files, so nothing unsaved is lost. Its window closes and it leaves the recents.
+ */
+async function removeWorktree(path: string) {
+  const git = probeGit(path);
+  if (!git || git.worktree.main) throw new Error(`not a linked worktree: ${path}`);
+  const top = git.worktree.path;
+  await run('git', ['-C', git.repo.root, 'worktree', 'remove', '--', top]).catch((e: { stderr?: string; message: string }) => {
+    const why = (e.stderr || e.message).trim().split('\n')[0].replace(/^fatal: /, '');
+    // git suggests --force here; Trove never forces, so say what to do instead.
+    throw new Error(/modified or untracked files/.test(why) ? `${basename(top)} has uncommitted or untracked files. Commit or remove them first.` : why);
   });
-  return probe(dest);
+  for (const s of sources) if (s.root === top) s.win.close();
+  writeRecents(readRecents().filter((r) => r.path !== top));
 }
 
 // ---- windows ---------------------------------------------------------------------------------
@@ -266,8 +349,8 @@ function openStart(staged?: string): void {
     return;
   }
   const win = new BrowserWindow({
-    width: 720,
-    height: 640,
+    width: 1170,
+    height: 792,
     title: 'Trove',
     ...frame,
     webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
@@ -342,6 +425,11 @@ ipcMain.handle('trove:open', (_e, req: unknown) => {
   return openSource({ path: str(r.path), scope: r.scope as GitScope | undefined, base: r.base as string | null | undefined, agent: r.agent as AgentTool | null | undefined });
 });
 ipcMain.handle('trove:tools', () => tools());
+ipcMain.handle('trove:terminals', () => ({ installed: terminals(), current: terminal() }));
+ipcMain.handle('trove:setTerminal', (_e, t: unknown) => {
+  if (!terminals().includes(t as TerminalApp)) throw new Error(`${String(t)} is not installed`);
+  writeAppSettings({ terminal: t as TerminalApp });
+});
 ipcMain.handle('trove:recents', () => readRecents());
 ipcMain.handle('trove:forget', (_e, path: unknown) => {
   const p = str(path);
@@ -356,7 +444,12 @@ ipcMain.handle('trove:home', (e) => {
 ipcMain.handle('trove:githubRepos', () => githubRepos());
 ipcMain.handle('trove:clone', (_e, url: unknown, parent: unknown) => clone(str(url).trim(), str(parent)));
 ipcMain.handle('trove:cloneDir', () => cloneDir());
-ipcMain.handle('trove:addWorktree', (_e, path: unknown, branch: unknown, base: unknown) => addWorktree(str(path), str(branch).trim(), base === null ? null : str(base)));
+ipcMain.handle('trove:addWorktree', (_e, path: unknown, branch: unknown, base: unknown, parent: unknown, name: unknown) =>
+  addWorktree(str(path), str(branch).trim(), base === null ? null : str(base), str(parent), str(name).trim()));
+ipcMain.handle('trove:switchBranch', (_e, path: unknown, branch: unknown, base: unknown) => switchBranch(str(path), str(branch).trim(), base === null ? null : str(base)));
+ipcMain.handle('trove:removeWorktree', (_e, path: unknown) => removeWorktree(str(path)));
+ipcMain.handle('trove:worktreeDir', () => worktreeDir());
+ipcMain.handle('trove:setWorktreeDir', (_e, path: unknown) => setWorktreeDir(str(path)));
 ipcMain.handle('trove:drop', (_e, path: unknown) => openOrStage(probe(str(path))));
 
 // ---- lifecycle -------------------------------------------------------------------------------
