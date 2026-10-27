@@ -1,6 +1,6 @@
 // One small store for the editor. Actions (actions.ts) read and write it directly, so the 2s poll
 // always sees the latest state; components subscribe to slices with useStore.
-import type { Anchor, BlockEdit, CommentKind, Draft, FileResponse, FileRow, GitInfo, Question, Recent, Settings, SourceInfo } from '@trove/core/types';
+import type { Activity, Anchor, BlockEdit, CommentKind, Draft, FileResponse, FileRow, GitInfo, Question, Recent, Settings, SourceInfo } from '@trove/core/types';
 import { AGENT_LABELS, DEFAULT_SETTINGS } from '@trove/core/types';
 import type { AnchorHit } from '@trove/core/anchor';
 import { useSyncExternalStore } from 'react';
@@ -48,7 +48,8 @@ export interface State {
   query: string; // the Files search (page state, not persisted)
   scope: 'file' | 'all';
   showNew: boolean;
-  hidden: { files: boolean; changes: boolean };
+  hidden: { files: boolean; changes: boolean; agent: boolean };
+  activity: Activity[]; // the agent drawer's list, loaded while it is open
   committedOpen: boolean;
   rejectedOpen: boolean;
   rejecting: boolean; // the open file's Reject confirm is showing
@@ -80,7 +81,8 @@ let state: State = {
   query: '',
   scope: load<'file' | 'all'>('scope', 'file') === 'all' ? 'all' : 'file',
   showNew: load<boolean | null>('show-new', null) ?? true,
-  hidden: { files: load<boolean>('hide-files', false) === true, changes: load<boolean>('hide-changes', false) === true },
+  hidden: { files: load<boolean>('hide-files', false) === true, changes: load<boolean>('hide-changes', false) === true, agent: load<boolean>('hide-agent', true) !== false },
+  activity: [],
   committedOpen: false,
   rejectedOpen: false,
   rejecting: false,
