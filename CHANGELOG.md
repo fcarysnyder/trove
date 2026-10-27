@@ -9,6 +9,29 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-27
+
+Trove 0.5.1 lets you start work on a branch from the start screen. Open a
+repository, pick any branch or name a new one, and Trove checks it out in a
+worktree of its own and starts your agent there, so you no longer need a
+Claude Code session open first. The open dialog is redesigned to match the
+rest of the app.
+
+### Added
+
+- Create a branch from the open dialog: choose New, name it and pick what it branches from. Trove creates it in its own worktree beside the repository, `<repo>-<branch>`, opens it and starts Claude Code or Codex there. The branch does not track its base, so a plain `git push` cannot land on `main`.
+- Open any local branch from the open dialog. A branch already checked out in a worktree opens that worktree; any other is checked out in a new one. Your main checkout is never switched.
+
+### Changed
+
+- The open dialog has labels over its fields, switches for Branch, Review and Agent, the agent command on one line with Copy, and Cancel beside Open. Options that do not apply are disabled rather than hidden, so the dialog keeps its shape as you change them. The Worktree and Branch menus are one Branch menu.
+- The start screen has more room around it, and Recent scrolls inside its card instead of running off the window.
+- Long paths are shortened in the middle, keeping the repository's folder, with `~` for your home folder.
+
+### Fixed
+
+- Dialogs no longer grow past the window when they show a long path or command.
+
 ## [0.5.0] - 2026-10-26
 
 Trove 0.5 is the first release you can download. The Mac app comes as a disk
