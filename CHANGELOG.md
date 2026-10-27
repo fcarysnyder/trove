@@ -9,6 +9,24 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-10-27
+
+Trove 0.5.5 keeps itself up to date. It checks GitHub for a new release while
+it runs, downloads and verifies it in the background, and installs it when you
+restart. This is the last version you need to install by hand.
+
+### Added
+
+- Trove checks for a new release at launch and every six hours. When it finds one, it downloads it, checks it against the SHA-256 published with the release, and offers Restart to Update in the app menu and on the start screen. Check for Updates… in the app menu checks by hand.
+
+### Changed
+
+- The Dock icon follows light and dark mode while Trove is running. Finder still shows the dark icon, until the macOS 26 icon format can be packaged.
+
+### Upgrading
+
+- Earlier versions cannot update themselves, so install 0.5.5 by hand once: download it from the release and drag it to Applications. Every release after it arrives on its own.
+
 ## [0.5.4] - 2026-10-27
 
 Trove 0.5.4 lets you write a comment where you are reading. Comment and
