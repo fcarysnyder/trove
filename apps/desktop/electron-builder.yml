@@ -9,6 +9,9 @@ directories:
 files:
   - out/**
   - package.json
+  # The Dock icon's two appearances, which the app swaps between while it runs.
+  - assets/icon.png
+  - assets/icon-light.png
   - "!node_modules/**"
 # Package the Electron binary in node_modules. Electron 45 no longer downloads it on install, so the
 # package and dist scripts run install-electron first (a no-op once it is there).

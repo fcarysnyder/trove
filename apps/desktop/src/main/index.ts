@@ -459,9 +459,11 @@ app.setPath('userData', join(app.getPath('appData'), 'Trove'));
 nativeTheme.themeSource = 'system';
 
 app.whenReady().then(() => {
-  // A packaged app takes its icon from assets/icon.icns; `pnpm dev:desktop` runs the stock Electron
-  // binary, so give the Dock the same icon here.
-  if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'assets/icon.png'));
+  // The bundle's icon.icns is the dark one (an .icns holds one appearance; design/icon/README.md says
+  // why there is no switching .icon yet), so while Trove runs the Dock follows light and dark mode.
+  // In `pnpm dev:desktop` this also replaces the stock Electron icon.
+  const dockIcon = () => app.dock?.setIcon(join(app.getAppPath(), 'assets', nativeTheme.shouldUseDarkColors ? 'icon.png' : 'icon-light.png'));
+  if (process.platform === 'darwin') { dockIcon(); nativeTheme.on('updated', dockIcon); }
   buildMenu();
   openStart();
   app.on('activate', () => {
