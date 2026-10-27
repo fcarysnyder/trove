@@ -9,6 +9,15 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-10-27
+
+Trove 0.5.3 adds Create PR. When you have finished a review, one button asks
+your agent to commit what you accepted and open a pull request for it.
+
+### Added
+
+- Create PR in the Files header, once nothing is waiting for review and something you accepted is not yet committed. It asks the agent to commit only the staged files, on a new branch if you are on the default branch, push it and open the pull request with `gh`, then reply with its link. Trove itself still never commits.
+
 ## [0.5.2] - 2026-10-27
 
 Trove 0.5.2 changes how the start screen opens a branch. Picking one now
