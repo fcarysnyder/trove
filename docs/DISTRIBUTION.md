@@ -25,9 +25,30 @@ gh attestation verify Installer-Trove-0.5.0-arm64.dmg --repo fcarysnyder/trove
 
 ## Signing
 
-The Mac app is signed ad hoc and is not notarized. electron-builder does no signing (`identity: null`); its `afterPack` hook, `apps/desktop/scripts/adhoc-sign.cjs`, signs the whole assembled bundle ad hoc before the disk image is made, and the release workflow checks that the signature verifies. Apple silicon refuses to launch code without a valid signature, and Electron's own ad-hoc signature stops covering the bundle once Trove's files are added, which a downloaded copy reports as "damaged". An ad-hoc signature is enough to run, but Gatekeeper still blocks the first launch of a downloaded copy: users open System Settings › Privacy & Security and choose **Open Anyway** once.
+Release tags are signed with a Developer ID certificate and notarized by Apple, so a downloaded copy opens with no Gatekeeper prompt.
+- **Config:** `apps/desktop/electron-builder.yml` turns on the hardened runtime, with `assets/entitlements.mac.plist` holding the exceptions Electron needs, and sets `notarize: true`.
+- **Workflow:** passes the secrets below to electron-builder on tags only.
+- **Stapling:** electron-builder staples the notarization ticket to the app.
+- **Checks:** the workflow checks that the app is signed with the Developer ID and that Gatekeeper accepts it as notarized.
 
-Moving to a Developer ID signature and notarization needs an Apple Developer account. When there is one: add the certificate as `CSC_LINK` / `CSC_KEY_PASSWORD` secrets and the notarization credentials as `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`; remove `identity: null` and the `afterPack` hook; set `hardenedRuntime: true` and `notarize: true`; and drop the Open Anyway notes from the README and the release notes script.
+Pull requests and local builds have no certificate. electron-builder skips signing, and `apps/desktop/scripts/adhoc-sign.cjs` signs the bundle ad hoc instead, because Apple silicon will not launch unsigned code. A tag pushed without the secrets still releases, ad hoc, with a warning on the run.
+
+### Secrets
+
+Add these under the repository's **Settings › Secrets and variables › Actions**:
+
+| Secret | What it is |
+| --- | --- |
+| `CSC_LINK` | The Developer ID Application certificate and its private key, exported as a `.p12` and base64-encoded (`base64 -i cert.p12 \| pbcopy`) |
+| `CSC_KEY_PASSWORD` | The password set when exporting the `.p12` |
+| `APPLE_ID` | The Apple ID email of the developer account |
+| `APPLE_APP_SPECIFIC_PASSWORD` | An app-specific password for that Apple ID, from [account.apple.com](https://account.apple.com) › Sign-In and Security |
+| `APPLE_TEAM_ID` | The team's 10-character ID, from the developer account's Membership details |
+
+To make the certificate:
+1. In Xcode, go to **Settings › Accounts**, select the team, choose **Manage Certificates…**, then **+** › **Developer ID Application**.
+2. In Keychain Access, find "Developer ID Application: …" under **My Certificates**.
+3. Export it, with its key, as a `.p12`.
 
 ## Releasing
 

@@ -52,7 +52,18 @@ jobs:
       - run: pnpm build
 
       - name: Build the installer
+        # Tags sign with the Developer ID and notarize; pull requests build ad hoc, quickly and without secrets.
+        env:
+          CSC_LINK: ${{ github.ref_type == 'tag' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ github.ref_type == 'tag' && secrets.CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ github.ref_type == 'tag' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ github.ref_type == 'tag' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ github.ref_type == 'tag' && secrets.APPLE_TEAM_ID || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ -z "$CSC_LINK" ]; then
+            echo "::warning title=Not signed::The CSC_LINK secret is missing, so this release is signed ad hoc and not notarized."
+          fi
           set -o pipefail
           if ! pnpm --filter @trove/desktop dist 2>&1 | tee "$RUNNER_TEMP/dist.log"; then
             # Put the end of the output in the check's annotation, which the checks API returns
@@ -66,6 +77,7 @@ jobs:
         working-directory: apps/desktop/release
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          SIGNED: ${{ github.ref_type == 'tag' && secrets.CSC_LINK != '' }}
         run: |
           # Every check runs and reports by name, so one failure doesn't hide the rest.
           app=mac-arm64/Trove.app
@@ -82,11 +94,19 @@ jobs:
             cmp "$file" ../assets/icon.icns || { echo "CFBundleIconFile=$icon; $(ls -l "$app/Contents/Resources" | grep -i icns)"; return 1; }
           }
           adhoc() { d="$(codesign -dv "$app" 2>&1)"; grep -q 'Signature=adhoc' <<<"$d" || { echo "$d"; return 1; }; }
+          developer_id() { d="$(codesign -dv --verbose=2 "$app" 2>&1)"; grep -q 'Authority=Developer ID Application' <<<"$d" || { echo "$d"; return 1; }; }
+          notarized() { o="$(spctl --assess --type execute -vv "$app" 2>&1)"; grep -q 'source=Notarized Developer ID' <<<"$o" || { echo "$o"; return 1; }; }
           arm64() { a="$(lipo -archs "$app/Contents/MacOS/Trove")"; [ "$a" = arm64 ] || { echo "archs: $a"; return 1; }; }
           check "Version is $VERSION" version_is
           check "Icon is assets/icon.icns" icon_is_ours
           check "Signature verifies" codesign --verify --deep --strict "$app"
-          check "Signed ad hoc" adhoc
+          if [ "$SIGNED" = true ]; then
+            check "Signed with the Developer ID" developer_id
+            check "Notarized and stapled" notarized
+            check "Ticket stapled" xcrun stapler validate "$app"
+          else
+            check "Signed ad hoc" adhoc
+          fi
           check "Built for arm64" arm64
           check "Installer is named for the release" test -f "Installer-Trove-$VERSION-arm64.dmg"
           ls -l . "$app/Contents/Resources" | head -40
