@@ -87,7 +87,7 @@ export function FilesColumn() {
           )}
         </nav>
       </ScrollArea>
-      <div className="flex min-h-11 shrink-0 items-center gap-2 border-t px-4">
+      <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
         <Switch id="pending-only" size="default" checked={isPendingOnly(off)} onCheckedChange={(v) => setFilters(v ? PENDING_OFF : [])} />
         <Label htmlFor="pending-only" className="text-xs font-normal text-muted-foreground">Pending only</Label>
       </div>

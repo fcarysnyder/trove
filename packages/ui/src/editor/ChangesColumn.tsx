@@ -82,7 +82,7 @@ export function ChangesColumn() {
         {composer && current && <Composer kind={composer.kind} anchor={composer.anchor} />}
         {body}
       </ScrollArea>
-      <div className="flex min-h-11 shrink-0 items-center gap-2 border-t px-4">
+      <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
         <SendButton />
       </div>
     </section>

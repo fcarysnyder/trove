@@ -114,6 +114,8 @@ export interface Question {
 export type AgentId = 'claude' | 'codex' | 'other';
 /** A tool the desktop can start a session in. */
 export type AgentTool = 'claude' | 'codex';
+/** A macOS terminal app the desktop starts an agent in. */
+export type TerminalApp = 'Terminal' | 'iTerm' | 'Ghostty';
 /**
  * The agent attached to a server, set by `trove attach` (POST /api/agent) and kept in state.json.
  * With nothing attached: {id: 'other', label: 'the agent', connected: false, at: null}.
@@ -259,6 +261,10 @@ export interface TroveBridge {
   forget(path: string): Promise<void>;
   /** Which agent CLIs are on the user's login-shell PATH. */
   tools(): Promise<Record<AgentTool, boolean>>;
+  /** The terminal apps installed, and the one agents start in (the app setting, else Terminal). */
+  terminals(): Promise<{ installed: TerminalApp[]; current: TerminalApp }>;
+  /** Start agents in `t` from now on, in every window. Rejects when it is not installed. */
+  setTerminal(t: TerminalApp): Promise<void>;
   /** Back to the start page: it opens (fresh) and the calling repository window closes. */
   home(): Promise<void>;
   /** Your GitHub repositories, most recently pushed first, from the gh CLI; empty without it. */
@@ -267,8 +273,16 @@ export interface TroveBridge {
   clone(url: string, parent: string): Promise<{ path: string; git: GitProbe | null }>;
   /** Where a clone goes when the user has not picked: ~/code when it exists, else home. */
   cloneDir(): Promise<string>;
-  /** `branch` in a new worktree at `<repo>-<branch>` beside the main checkout: a new branch off `base`, or with null an existing one no worktree has checked out. Then that folder, probed. Rejects with git's message. */
-  addWorktree(path: string, branch: string, base: string | null): Promise<{ path: string; git: GitProbe | null }>;
+  /** `branch` in a new worktree at `<parent>/<repo>/<name>`: a new branch off `base`, or with null an existing one no worktree has checked out. Then that folder, probed. Rejects with git's message. */
+  addWorktree(path: string, branch: string, base: string | null, parent: string, name: string): Promise<{ path: string; git: GitProbe | null }>;
+  /** `git switch` the checkout at `path` to `branch`, a new one off `base` or with null an existing one checked out nowhere; uncommitted changes come along. Then that checkout, probed. Rejects with git's reason. */
+  switchBranch(path: string, branch: string, base: string | null): Promise<{ path: string; git: GitProbe | null }>;
+  /** `git worktree remove` the linked worktree at `path` (its branch stays); its window closes and it leaves the recents. Rejects while it has uncommitted files. */
+  removeWorktree(path: string): Promise<void>;
+  /** Where new worktrees go: the app setting, else ~/.trove/worktrees. */
+  worktreeDir(): Promise<string>;
+  /** Make `path` (an existing folder) where new worktrees go, for every window; then that path. */
+  setWorktreeDir(path: string): Promise<string>;
 }
 
 declare global {

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { OpenRequest, TroveBridge } from '@trove/core';
+import type { OpenRequest, TerminalApp, TroveBridge } from '@trove/core';
 
 // invoke rejects with "Error invoking remote method '<channel>': Error: <message>"; the page shows <message>.
 const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args).catch((e: Error) => {
@@ -13,11 +13,17 @@ const trove: TroveBridge = {
   recents: () => invoke('trove:recents'),
   forget: (path: string) => invoke('trove:forget', path),
   tools: () => invoke('trove:tools'),
+  terminals: () => invoke('trove:terminals'),
+  setTerminal: (t: TerminalApp) => invoke('trove:setTerminal', t),
   home: () => invoke('trove:home'),
   githubRepos: () => invoke('trove:githubRepos'),
   clone: (url: string, parent: string) => invoke('trove:clone', url, parent),
   cloneDir: () => invoke('trove:cloneDir'),
-  addWorktree: (path: string, branch: string, base: string | null) => invoke('trove:addWorktree', path, branch, base),
+  addWorktree: (path: string, branch: string, base: string | null, parent: string, name: string) => invoke('trove:addWorktree', path, branch, base, parent, name),
+  switchBranch: (path: string, branch: string, base: string | null) => invoke('trove:switchBranch', path, branch, base),
+  removeWorktree: (path: string) => invoke('trove:removeWorktree', path),
+  worktreeDir: () => invoke('trove:worktreeDir'),
+  setWorktreeDir: (path: string) => invoke('trove:setWorktreeDir', path),
 };
 
 contextBridge.exposeInMainWorld('trove', trove);

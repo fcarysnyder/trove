@@ -2,11 +2,12 @@
 // with what to review (worktree, branch, scope) and the agent to start in Terminal beside it; Open starts
 // the server and the repository's own window. A folder that is not a repository stays here with the
 // reason. In a plain browser there is no bridge, so it says how to run the server instead.
-import { attachCommand, recentName, type AgentTool, type GitProbe, type GitScope, type Recent } from '@trove/core/types';
-import { Copy, FolderOpen, Globe, X } from 'lucide-react';
+import { attachCommand, recentName, type AgentTool, type GitProbe, type GitScope, type Recent, type TerminalApp } from '@trove/core/types';
+import { Copy, FolderOpen, Globe, Settings, X } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Kbd } from '@/components/ui/kbd';
@@ -40,7 +41,7 @@ export function Start() {
     <TooltipProvider delayDuration={300}>
       <div className="fixed inset-x-0 top-0 z-10 [&>div]:border-b-0"><TitleStrip /></div>
       <main className="grid min-h-screen place-items-center px-12 py-16">
-        <div className="flex w-full max-w-xl flex-col gap-8">
+        <div className="flex w-full max-w-2xl flex-col gap-8">
           <h1 className="flex items-center gap-3 text-3xl font-semibold tracking-tight text-foreground">
             <img src={mark} alt="" className="size-12" />Trove
           </h1>
@@ -98,6 +99,7 @@ function Picker() {
   const [notRepo, setNotRepo] = useState<string | null>(null);
   const [cloning, setCloning] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [deleting, setDeleting] = useState<Recent | null>(null);
   const reload = async () => {
     const list = await bridge.recents().catch(() => []);
     const probes = await Promise.all(list.map((r) => bridge.probe(r.path).catch(() => null)));
@@ -169,18 +171,20 @@ function Picker() {
                     </span>
                     <Path path={r.path} className="w-full text-xs text-muted-foreground" />
                   </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">{ago(r.openedAt)}</span>
                 </>
               );
-              // Rows run edge to edge; each reserves room on the right for Remove, which shows on hover or focus.
-              const row = 'flex w-full min-w-0 items-center gap-4 py-3 pr-14 pl-4 text-left outline-none';
+              // Rows run edge to edge. The whole row opens the repository (the button's ::after covers it); Delete
+              // and Remove sit above that, and the time stays in one column whatever actions a row has.
+              const row = "flex min-w-0 flex-1 items-center py-3 pl-4 text-left outline-none after:absolute after:inset-0";
+              const reveal = 'relative opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none';
               return (
-                <li key={r.path} className="group relative border-t transition-colors hover:bg-secondary has-[:focus-visible]:bg-secondary">
+                <li key={r.path} className="group relative flex items-center gap-3 border-t pr-3 transition-colors hover:bg-secondary has-[:focus-visible]:bg-secondary">
                   {bad ? <div className={cn(row, 'opacity-60')} aria-disabled>{body}</div> : (
                     <button className={row} onClick={() => git && setOpen({ path: r.path, git, last: r })}>{body}</button>
                   )}
-                  <IconButton label={`Remove ${recentName(r)} from recents`} tip="Remove"
-                    className="absolute top-1/2 right-3 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none"
+                  {r.worktree && <Button variant="ghost" size="sm" className={cn('text-muted-foreground', reveal)} onClick={() => setDeleting(r)}>Delete</Button>}
+                  <span className="shrink-0 text-xs text-muted-foreground">{ago(r.openedAt)}</span>
+                  <IconButton label={`Remove ${recentName(r)} from recents`} tip="Remove" className={reveal}
                     onClick={() => bridge.forget(r.path).then(reload)}><X /></IconButton>
                 </li>
               );
@@ -189,10 +193,17 @@ function Picker() {
         </Card>
       )}
       {open && <OpenDialog key={open.path} repo={open} onClose={() => setOpen(null)} />}
+      {deleting && <DeleteDialog recent={deleting} branch={probes.get(deleting.path)?.branch ?? null} onClose={() => setDeleting(null)} onDeleted={() => { setDeleting(null); void reload(); }} />}
       {cloning && <CloneDialog onClose={() => setCloning(false)} onCloned={(res) => { setCloning(false); take(res); }} />}
     </div>
   );
 }
+
+/** Two-part rows (a field and its select, a switch and its select) split at the same line all the way down. */
+const PAIR = 'grid grid-cols-2 gap-2';
+
+/** Start-page dialogs sit a fixed distance from the top, so a section that opens grows them downward only. */
+const PINNED = 'top-[8vh] max-h-[84vh] translate-y-0 overflow-y-auto';
 
 /** The Settings dialog's footer: a rule over the actions, edge to edge. */
 const FOOTER = '-mx-6 -mb-6 gap-2.5 border-t px-6 py-3';
@@ -207,13 +218,13 @@ function Field({ label, aside, children }: { label: string; aside?: ReactNode; c
   );
 }
 
-/** A segmented control in the editor's style (the Changes column's This file / All files). */
-function Segmented({ label, value, options, onChange, disabled }: { label: string; value: string; options: [string, ReactNode][]; onChange: (v: string) => void; disabled?: boolean }) {
+/** A segmented control in the editor's style (the Changes column's This file / All files). `fill`: its grid cell's width, options sharing it. */
+function Segmented({ label, value, options, onChange, disabled, fill }: { label: string; value: string; options: [string, ReactNode][]; onChange: (v: string) => void; disabled?: boolean; fill?: boolean }) {
   return (
     <ToggleGroup type="single" value={value} onValueChange={(v) => v && onChange(v)} aria-label={label} spacing={0} disabled={disabled}
-      className="shrink-0 gap-0.5 rounded-lg bg-secondary p-0.5">
+      className={cn('shrink-0 gap-0.5 rounded-lg bg-secondary p-0.5', fill && 'w-full')}>
       {options.map(([v, text]) => (
-        <ToggleGroupItem key={v} value={v} size="sm" className="h-8 gap-1.5 rounded-md! px-2 text-xs text-muted-foreground data-[state=on]:bg-accent data-[state=on]:text-foreground">
+        <ToggleGroupItem key={v} value={v} size="sm" className={cn('h-8 gap-1.5 rounded-md! px-2 text-xs text-muted-foreground data-[state=on]:bg-accent data-[state=on]:text-foreground', fill && 'flex-1')}>
           {text}
         </ToggleGroupItem>
       ))}
@@ -240,7 +251,20 @@ function OpenDialog({ repo, onClose }: { repo: Repo; onClose: () => void }) {
   const [fresh, setFresh] = useState<{ name: string; from: string } | null>(null);
   // A local branch no worktree has checked out: Open checks it out in a worktree of its own first.
   const [pick, setPick] = useState<string | null>(null);
-  useEffect(() => { void bridge.tools().then(setTools, () => {}); }, []);
+  // A new branch: this checkout switches to it (git switch -c), or it gets a worktree of its own under `dir`.
+  const [worktree, setWorktree] = useState(false);
+  const [dir, setDir] = useState('');
+  useEffect(() => { void bridge.worktreeDir().then(setDir, () => {}); }, []);
+  const changeDir = async () => {
+    const picked = await bridge.pickFolder().catch(() => null);
+    if (picked) bridge.setWorktreeDir(picked.path).then(setDir, (e) => toast(errText(e)));
+  };
+  const slug = (fresh?.name.trim() ?? '').replaceAll('/', '-');
+  // The worktree's folder name: the branch's until the user types their own.
+  const [folder, setFolder] = useState<string | null>(null);
+  const [terms, setTerms] = useState<{ installed: TerminalApp[]; current: TerminalApp } | null>(null);
+  useEffect(() => { void bridge.tools().then(setTools, () => {}); void bridge.terminals().then(setTerms, () => {}); }, []);
+  const pickTerminal = (t: string) => bridge.setTerminal(t as TerminalApp).then(() => setTerms((x) => x && { ...x, current: t as TerminalApp }), (e) => toast(errText(e)));
   const here = git.worktree.path;
   const toWorktree = (path: string) => {
     if (path === here) return;
@@ -259,16 +283,18 @@ function OpenDialog({ repo, onClose }: { repo: Repo; onClose: () => void }) {
     setBusy(true);
     const agent = choice === 'none' ? null : choice;
     const review = { scope, base: scope === 'branch' ? base || null : null, agent };
+    const name = fresh?.name.trim() ?? '';
     (fresh
-      ? bridge.addWorktree(cur.path, fresh.name.trim(), fresh.from).then((res) => bridge.open({ path: res.path, scope: 'uncommitted', agent }))
+      ? (worktree ? bridge.addWorktree(cur.path, name, fresh.from, dir, folder ?? slug) : bridge.switchBranch(cur.path, name, fresh.from))
+          .then((res) => bridge.open({ path: res.path, scope: 'uncommitted', agent }))
       : pick
-        ? bridge.addWorktree(cur.path, pick, null).then((res) => bridge.open({ path: res.path, ...review }))
+        ? bridge.switchBranch(cur.path, pick, null).then((res) => bridge.open({ path: res.path, ...review }))
         : bridge.open({ path: cur.path, ...review }))
       .catch((e) => toast(errText(e))).finally(() => setBusy(false));
   };
   return (
     <Dialog open onOpenChange={(on) => { if (!on) onClose(); }}>
-      <DialogContent className="sm:max-w-lg" onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go(); } }}>
+      <DialogContent className={cn(PINNED, "sm:max-w-2xl")} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go(); } }}>
         <DialogHeader>
           <DialogTitle className="text-foreground">{nameOf(cur.path)}</DialogTitle>
           <DialogDescription><Path path={cur.path} className="font-mono text-xs" /></DialogDescription>
@@ -279,18 +305,18 @@ function OpenDialog({ repo, onClose }: { repo: Repo; onClose: () => void }) {
               onChange={(v) => setFresh(v === 'new' ? { name: '', from: git.defaultBase ?? git.branch ?? git.branches[0] ?? 'HEAD' } : null)} />
           }>
             {fresh ? (
-              <div className="flex gap-2">
+              <div className={PAIR}>
                 <Input autoFocus aria-label="New branch name" placeholder="docs/new-branch" value={fresh.name} onChange={(e) => setFresh({ ...fresh, name: e.target.value })}
                   className="font-mono text-xs" autoComplete="off" spellCheck={false} />
                 <Select value={fresh.from} onValueChange={(from) => setFresh({ ...fresh, from })}>
-                  <SelectTrigger size="default" className="w-[200px] shrink-0 font-mono text-xs" aria-label="From">
+                  <SelectTrigger size="default" className="w-full min-w-0 font-mono text-xs" aria-label="From">
                     <span className="font-sans text-muted-foreground">from</span><span className="mr-auto truncate"><SelectValue /></span>
                   </SelectTrigger>
                   <SelectContent>{git.branches.map((b) => <SelectItem key={b} value={b} className="font-mono text-xs">{b}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
             ) : (
-              // Checked out here: stay. In another worktree: that worktree. Anywhere else: a new worktree on Open.
+              // Checked out here: stay. In another worktree: that worktree. Anywhere else: this checkout switches to it on Open.
               <Select value={pick ?? git.branch ?? ''} onValueChange={(name) => {
                 const b = git.local.find((l) => l.name === name);
                 setPick(b && !b.current && !b.worktree ? name : null);
@@ -303,28 +329,53 @@ function OpenDialog({ repo, onClose }: { repo: Repo; onClose: () => void }) {
                     return (
                       <SelectItem key={b.name} value={b.name} title={at ?? undefined} className="text-xs">
                         <span className="font-mono text-foreground">{b.name}</span>
-                        <span className="text-muted-foreground">{!at ? 'new worktree' : at === git.repo.root ? 'main checkout' : nameOf(at)}</span>
+                        {at && <span className="text-muted-foreground">{at === git.repo.root ? 'main checkout' : nameOf(at)}</span>}
                       </SelectItem>
                     );
                   })}
                 </SelectContent>
               </Select>
             )}
+            {/* A new branch can go in a worktree of its own; an existing one is switched to here. */}
+            {fresh && (
+              <div className="flex items-center gap-2">
+                <Checkbox id="open-worktree" checked={worktree} onCheckedChange={(v) => setWorktree(v === true)} />
+                <Label htmlFor="open-worktree" className="font-normal text-foreground">Worktree</Label>
+              </div>
+            )}
+            {fresh && worktree && (
+              <div className={PAIR}>
+                <Button variant="outline" onClick={() => void changeDir()} title={`Change where worktrees go (${dir})`}
+                  className="w-full min-w-0 justify-between gap-2 font-mono text-xs font-normal">
+                  <Path path={`${dir}/${git.repo.name}/`} /><Settings className="text-muted-foreground" />
+                </Button>
+                <Input aria-label="Worktree folder name" placeholder="docs-new-branch" value={folder ?? slug} onChange={(e) => setFolder(e.target.value)}
+                  className="font-mono text-xs" autoComplete="off" spellCheck={false} />
+              </div>
+            )}
           </Field>
-          {/* Always laid out, disabled when it does not apply, so switching modes never moves the dialog. A new branch has nothing committed to review. */}
-          <Field label="Review">
-            <div className="flex gap-2">
-              <Segmented label="Review" value={fresh ? 'uncommitted' : scope} onChange={(v) => setScope(v as GitScope)} disabled={!!fresh}
-                options={[['uncommitted', 'Uncommitted'], ...(bases.length ? [['branch', 'Branch vs base'] as [string, string]] : [])]} />
-              <Select value={base} onValueChange={setBase} disabled={!!fresh || scope !== 'branch'}>
-                <SelectTrigger size="default" className="min-w-0 flex-1 font-mono text-xs" aria-label="Base"><SelectValue /></SelectTrigger>
-                <SelectContent>{bases.map((b) => <SelectItem key={b} value={b} className="font-mono text-xs">{b}</SelectItem>)}</SelectContent>
+          {/* A new branch has nothing committed to review; the dialog is pinned to the top, so this only moves what is below. */}
+          {!fresh && (
+            <Field label="Review">
+              <div className={PAIR}>
+                <Segmented fill label="Review" value={scope} onChange={(v) => setScope(v as GitScope)}
+                  options={[['uncommitted', 'Uncommitted'], ...(bases.length ? [['branch', 'Branch vs base'] as [string, string]] : [])]} />
+                <Select value={base} onValueChange={setBase} disabled={scope !== 'branch'}>
+                  <SelectTrigger size="default" className="w-full min-w-0 font-mono text-xs" aria-label="Base"><SelectValue /></SelectTrigger>
+                  <SelectContent>{bases.map((b) => <SelectItem key={b} value={b} className="font-mono text-xs">{b}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </Field>
+          )}
+          <Field label="Agent">
+            <div className={PAIR}>
+              <Segmented fill label="Agent" value={choice} onChange={(v) => setChoice(v as Choice)}
+                options={CHOICES.map(([value, text, dot]) => [value, <><span className={cn('size-2 shrink-0 rounded-full', dot)} aria-hidden />{text}</>])} />
+              <Select value={terms?.current ?? 'Terminal'} onValueChange={pickTerminal} disabled={choice === 'none' || (terms?.installed.length ?? 0) < 2}>
+                <SelectTrigger size="default" className="w-full min-w-0 text-xs" aria-label="Terminal app"><SelectValue /></SelectTrigger>
+                <SelectContent>{(terms?.installed ?? ['Terminal']).map((t) => <SelectItem key={t} value={t} className="text-xs">{t}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-          </Field>
-          <Field label="Agent">
-            <Segmented label="Agent" value={choice} onChange={(v) => setChoice(v as Choice)}
-              options={CHOICES.map(([value, text, dot]) => [value, <><span className={cn('size-2 rounded-full', dot)} aria-hidden />{text}</>])} />
             {choice !== 'none' && tools && !tools[choice] && <span role="status" className="text-sm text-muted-foreground">{`${choice} is not installed`}</span>}
             {command && (
               <div className="flex items-center gap-1 rounded-md bg-secondary py-0.5 pr-0.5 pl-2">
@@ -343,6 +394,31 @@ function OpenDialog({ repo, onClose }: { repo: Repo; onClose: () => void }) {
               <span className={cn(!fresh && 'invisible')}>Create and open</span>
             </span>
             <Kbd className="bg-transparent text-current opacity-60">⌘↵</Kbd></Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Delete a linked worktree's folder (`git worktree remove`); its branch stays. git refuses while it has uncommitted files. */
+function DeleteDialog({ recent, branch, onClose, onDeleted }: { recent: Recent; branch: string | null; onClose: () => void; onDeleted: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const go = () => {
+    if (busy) return;
+    setBusy(true);
+    window.trove!.removeWorktree(recent.path).then(onDeleted, (e) => toast(errText(e))).finally(() => setBusy(false));
+  };
+  return (
+    <Dialog open onOpenChange={(on) => { if (!on && !busy) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-foreground">{`Delete ${recentName(recent)}?`}</DialogTitle>
+          <DialogDescription><Path path={recent.path} className="font-mono text-xs" /></DialogDescription>
+        </DialogHeader>
+        <p className="text-sm text-body">{branch ? <>The folder goes; the branch <code className="font-mono text-xs">{branch}</code> stays.</> : 'The folder goes; its commits stay.'}</p>
+        <DialogFooter className={FOOTER}>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button variant="destructive" disabled={busy} onClick={go}>Delete folder</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -378,7 +454,7 @@ function CloneDialog({ onClose, onCloned }: { onClose: () => void; onCloned: (re
   };
   return (
     <Dialog open onOpenChange={(on) => { if (!on && !busy) onClose(); }}>
-      <DialogContent className="sm:max-w-lg" onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go(); } }}>
+      <DialogContent className={cn(PINNED, "sm:max-w-lg")} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go(); } }}>
         <DialogHeader><DialogTitle className="text-foreground">Clone GitHub repo</DialogTitle></DialogHeader>
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-2">
