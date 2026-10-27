@@ -41,7 +41,7 @@ export interface State {
   allEdits: Record<string, BlockEdit[]>;
   hits: (AnchorHit | null)[]; // where each of the open file's comments sits, from the document view
   editing: Editing | null;
-  composer: { kind: CommentKind; anchor: Anchor } | null;
+  composer: { kind: CommentKind; anchor: Anchor; range: Range } | null; // range: where the popover sits
   noteEdit: Draft | null; // the comment whose note is being edited, by identity
   pick: Pick | null;
   filterOff: FilterKey[]; // filters turned off: those files leave the tree (persisted)

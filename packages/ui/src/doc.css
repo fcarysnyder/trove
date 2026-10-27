@@ -50,6 +50,7 @@
 ::highlight(agent) { background: color-mix(in srgb, var(--agent) 28%, transparent); }
 ::highlight(mine) { background: var(--hl-mine); }
 ::highlight(comment) { background: var(--hl-comment); }
+::highlight(composing) { background: var(--hl-comment); }
 ::highlight(flash) { background: var(--hl-flash); }
 /* Run badges: the number is CSS content, so the block's text (what anchors measure) is untouched. */
 .new-n { display: inline-flex; align-items: center; justify-content: center; min-width: 12px; height: 12px; margin: 0 2px; padding: 0 2px;
