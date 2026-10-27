@@ -9,6 +9,27 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-27
+
+Trove 0.5.2 changes how the start screen opens a branch. Picking one now
+switches the checkout you are in, as `git switch` would, and a new branch can
+go in a worktree of its own, kept in one folder you choose instead of beside
+your code. Agents can start in the terminal app you use.
+
+### Added
+
+- Tick Worktree when you create a branch to put it in a worktree of its own, at `<folder>/<repo>/<name>`. The folder is `~/.trove/worktrees` until you pick another with the cog, and the name starts as the branch's and can be changed.
+- Delete a worktree's folder from Recent. The branch stays, and git refuses while the folder has uncommitted or untracked files, so nothing unsaved is lost.
+- Start agents in Terminal, iTerm2, Ghostty, WezTerm, kitty or Alacritty: the Agent row lists the ones you have installed.
+
+### Changed
+
+- Picking an existing branch on the start screen switches this checkout to it instead of making a new folder. A branch already checked out in another worktree opens that worktree.
+- Creating a branch without Worktree runs `git switch -c`, which carries your uncommitted edits onto the new branch.
+- The open dialog's fields line up on one grid, the dialog stays pinned near the top as it grows, and Review is hidden while you create a branch.
+- The start window opens larger, and Recent keeps every time in one column.
+- The editor's three footers are the same height.
+
 ## [0.5.1] - 2026-10-27
 
 Trove 0.5.1 lets you start work on a branch from the start screen. Open a
