@@ -5,7 +5,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { attachCommand, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type TerminalApp, type OpenRequest, type Recent } from '@trove/core';
+import { attachCommand, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
+import { checkForUpdate, installUpdate, updateState, watchForUpdates } from './update';
 
 const uiDir = join(import.meta.dirname, '../ui'); // out/main -> out/ui, however Electron was launched
 const startHtml = join(uiDir, 'start.html');
@@ -371,11 +372,33 @@ async function pickFolder(parent?: BrowserWindow | null) {
   return path ? probe(path) : null;
 }
 
+/** The app menu's update item: what the updater is doing, or a check by hand (packaged apps only). */
+function updateItem(): MenuItemConstructorOptions[] {
+  if (!app.isPackaged) return [];
+  const u = updateState();
+  if (u.state === 'ready') return [{ label: `Restart to Update to ${u.version}`, click: installUpdate }];
+  if (u.state === 'downloading') return [{ label: `Downloading ${u.version}…`, enabled: false }];
+  return [{
+    label: 'Check for Updates…',
+    click: () => void checkForUpdate().then((s) => {
+      if (s.state === 'none') void dialog.showMessageBox({ message: `Trove ${app.getVersion()} is the latest version.` });
+      if (s.state === 'error') dialog.showErrorBox('Trove could not check for updates', s.message);
+    }),
+  }];
+}
+
 function buildMenu(): void {
   const recents = readRecents();
   const isMac = process.platform === 'darwin';
+  const appMenu: MenuItemConstructorOptions = {
+    label: app.name,
+    submenu: [
+      { role: 'about' }, ...updateItem(), { type: 'separator' }, { role: 'services' }, { type: 'separator' },
+      { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' },
+    ],
+  };
   const template: MenuItemConstructorOptions[] = [
-    ...(isMac ? [{ role: 'appMenu' as const }] : []),
+    ...(isMac ? [appMenu] : []),
     {
       label: 'File',
       submenu: [
@@ -425,6 +448,8 @@ ipcMain.handle('trove:open', (_e, req: unknown) => {
   return openSource({ path: str(r.path), scope: r.scope as GitScope | undefined, base: r.base as string | null | undefined, agent: r.agent as AgentTool | null | undefined });
 });
 ipcMain.handle('trove:tools', () => tools());
+ipcMain.handle('trove:update', () => updateState());
+ipcMain.handle('trove:installUpdate', () => installUpdate());
 ipcMain.handle('trove:terminals', () => ({ installed: terminals(), current: terminal() }));
 ipcMain.handle('trove:setTerminal', (_e, t: unknown) => {
   if (!terminals().includes(t as TerminalApp)) throw new Error(`${String(t)} is not installed`);
@@ -464,6 +489,11 @@ app.whenReady().then(() => {
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), 'assets/icon.png'));
   buildMenu();
   openStart();
+  // Each change redraws the menu's update item and reaches every window's start page.
+  watchForUpdates((u: UpdateState) => {
+    buildMenu();
+    for (const w of BrowserWindow.getAllWindows()) w.webContents.send('trove:update', u);
+  });
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) openStart();
   });

@@ -114,6 +114,8 @@ export interface Question {
 export type AgentId = 'claude' | 'codex' | 'other';
 /** A tool the desktop can start a session in. */
 export type AgentTool = 'claude' | 'codex';
+/** The desktop's own update: none newer, one downloading, one ready to install on restart, or why the last check failed. */
+export type UpdateState = { state: 'none' } | { state: 'downloading'; version: string } | { state: 'ready'; version: string } | { state: 'error'; message: string };
 /** A macOS terminal app the desktop starts an agent in. */
 export type TerminalApp = 'Terminal' | 'iTerm' | 'Ghostty' | 'WezTerm' | 'kitty' | 'Alacritty';
 /**
@@ -266,6 +268,11 @@ export interface TroveBridge {
   terminals(): Promise<{ installed: TerminalApp[]; current: TerminalApp }>;
   /** Start agents in `t` from now on, in every window. Rejects when it is not installed. */
   setTerminal(t: TerminalApp): Promise<void>;
+  /** The update the app has found, and `onUpdate` for each change. */
+  update(): Promise<UpdateState>;
+  onUpdate(cb: (s: UpdateState) => void): void;
+  /** Quit, install the downloaded update and relaunch. */
+  installUpdate(): Promise<void>;
   /** Back to the start page: it opens (fresh) and the calling repository window closes. */
   home(): Promise<void>;
   /** Your GitHub repositories, most recently pushed first, from the gh CLI; empty without it. */
