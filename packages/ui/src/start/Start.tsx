@@ -2,7 +2,7 @@
 // with what to review (worktree, branch, scope) and the agent to start in Terminal beside it; Open starts
 // the server and the repository's own window. A folder that is not a repository stays here with the
 // reason. In a plain browser there is no bridge, so it says how to run the server instead.
-import { attachCommand, recentName, type AgentTool, type GitProbe, type GitScope, type Recent, type TerminalApp } from '@trove/core/types';
+import { attachCommand, recentName, type AgentTool, type GitProbe, type GitScope, type Recent, type TerminalApp, type UpdateState } from '@trove/core/types';
 import { Copy, FolderOpen, Globe, Settings, X } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
@@ -42,15 +42,27 @@ export function Start() {
       <div className="fixed inset-x-0 top-0 z-10 [&>div]:border-b-0"><TitleStrip /></div>
       <main className="grid min-h-screen place-items-center px-12 py-16">
         <div className="flex w-full max-w-2xl flex-col gap-8">
-          <h1 className="flex items-center gap-3 text-3xl font-semibold tracking-tight text-foreground">
-            <img src={mark} alt="" className="size-12" />Trove
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="flex items-center gap-3 text-3xl font-semibold tracking-tight text-foreground">
+              <img src={mark} alt="" className="size-12" />Trove
+            </h1>
+            {window.trove && <UpdateButton />}
+          </div>
           {window.trove ? <Picker /> : <NoBridge />}
         </div>
       </main>
       <Toaster position="bottom-right" />
     </TooltipProvider>
   );
+}
+
+/** Once an update is downloaded and checked, a button to install it; nothing while there is none. */
+function UpdateButton() {
+  const bridge = window.trove!;
+  const [u, setU] = useState<UpdateState | null>(null);
+  useEffect(() => { void bridge.update().then(setU, () => {}); bridge.onUpdate(setU); }, []);
+  if (u?.state !== 'ready') return null;
+  return <Button className="ml-auto" onClick={() => void bridge.installUpdate()}>{`Restart to update to ${u.version}`}</Button>;
 }
 
 function NoBridge() {
