@@ -94,6 +94,7 @@ async function openNow(req: OpenRequest): Promise<void> {
     uiDir,
     port: 0,
     agent: null, // nothing serves the page; an agent attaches with `trove attach`
+    by: 'desktop',
     doneCommand: (port) => `trove done <file> --port ${port}`,
   });
   const info = core.info();

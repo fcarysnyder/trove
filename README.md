@@ -76,14 +76,18 @@ The plugin's bundle is a single file with no dependencies beyond Node 22, so
 `node plugins/trove/dist/trove.mjs serve` works from a plain clone with no install at all.
 
 ```
-trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>]
-trove attach --port N --agent claude|codex|other     join a running server as the agent
-trove detach --port N
-trove info --port N                                  the server's status line
-trove done <file> --port N                           release a file back to the reviewer
+trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--force]
+trove attach [--root <repo> | --port N] --agent claude|codex|other   join a running server as the agent
+trove detach [--root <repo> | --port N]
+trove info [--root <repo> | --port N]                the server's status line
+trove done <file> [--root <repo> | --port N]         release a file back to the reviewer
 trove ask "<question>"                               show a question on the page
 trove reply "<summary>"                              answer a question the reviewer asked
 ```
+
+A running server records itself in `<git-dir>/trove/server.json`, so without `--port` these
+commands find the server on `--root`'s repository (default: the current directory's), and a second
+`serve` on that repository refuses with the first one's address unless you pass `--force`.
 
 ### Desktop app
 

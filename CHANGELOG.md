@@ -13,6 +13,7 @@ summary paragraph and sections are what readers see there.
 
 - On the desktop, Claude Code or Codex runs in a terminal inside the window, at the top of the Agent pane, instead of in a separate terminal app. Its height is remembered, it folds to its header, and it stops when the window closes. "In Trove" is the new default in the start page's terminal choice; Terminal, iTerm2 and the others are still there.
 - The Agent pane can be widened to 60% of the window.
+- A second `trove serve` on a repository that the desktop app or another session already serves refuses and prints that server's address; `--force` starts another. `info`, `attach`, `detach`, `done`, `ask` and `reply` take `--root <repo>` instead of `--port` and find the running server through `<git-dir>/trove/server.json`.
 
 ### Changed
 

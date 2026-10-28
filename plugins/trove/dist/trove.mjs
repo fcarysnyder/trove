@@ -26,7 +26,7 @@ var AGENT_LABELS = { claude: "Claude", codex: "Codex", other: "the agent" };
 
 // ../core/src/app.ts
 import { execFile } from "node:child_process";
-import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, realpathSync as realpathSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, realpathSync as realpathSync2, rmSync as rmSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { createServer, request } from "node:http";
 import { randomUUID } from "node:crypto";
 import { basename as basename3, dirname as dirname2, extname, join as join3, relative, resolve, sep } from "node:path";
@@ -1842,7 +1842,7 @@ function createApp(o) {
   const log = o.log ?? console.log;
   const quietMs = o.quietMs ?? 5e3;
   const uiDir = o.uiDir ? realpathSync2(o.uiDir) : null;
-  const files = { drafts: join3(dir, "drafts.json"), edits: join3(dir, "edits.json"), batches: join3(dir, "batches.jsonl"), events: join3(dir, "events.log"), state: join3(dir, "state.json") };
+  const files = { drafts: join3(dir, "drafts.json"), edits: join3(dir, "edits.json"), batches: join3(dir, "batches.jsonl"), events: join3(dir, "events.log"), state: join3(dir, "state.json"), server: join3(dir, "server.json") };
   let stored = loadSettings(dir);
   const overrides = {};
   if (o.scope !== void 0) overrides.scope = o.scope;
@@ -2448,6 +2448,14 @@ function createApp(o) {
       if (!res.headersSent) res.writeHead(500).end();
     }
   });
+  const record = () => ({ port: port(), pid: process.pid, startedAt: (/* @__PURE__ */ new Date()).toISOString(), by: o.by ?? "cli" });
+  server.on("listening", () => writeFileSync2(files.server, JSON.stringify(record())));
+  const forget = () => {
+    try {
+      if (JSON.parse(readFileSync2(files.server, "utf8")).port === port()) rmSync2(files.server);
+    } catch {
+    }
+  };
   return {
     server,
     info,
@@ -2456,12 +2464,31 @@ function createApp(o) {
     git,
     settings: () => current,
     close: () => new Promise((ok) => {
+      forget();
       server.close(() => ok());
       server.closeAllConnections();
     })
   };
 }
+async function running(root) {
+  let top, r;
+  try {
+    const source = openSource(resolve(root));
+    top = source.root;
+    r = JSON.parse(readFileSync2(join3(source.stateDir, "server.json"), "utf8"));
+  } catch {
+    return null;
+  }
+  if (!alive(r.pid)) return null;
+  const answer = await call(r.port, "GET", "/api/source").catch(() => null);
+  return answer?.status === 200 && answer.body?.root === top ? r : null;
+}
 async function serve(options) {
+  const other = options.force ? null : await running(options.root);
+  if (other) {
+    throw new Error(`Trove is already serving this repository at http://127.0.0.1:${other.port} (${other.by === "desktop" ? "desktop app" : "trove serve"}).
+Attach with: trove attach --port ${other.port} --agent claude. Pass --force to start another.`);
+  }
   const app = createApp(options);
   await new Promise((ok, fail) => {
     app.server.once("error", fail).listen(options.port ?? 0, "127.0.0.1", () => {
@@ -2498,7 +2525,7 @@ function call(port, method, path, body, headers = {}) {
 // ../core/src/selftest.ts
 import assert from "node:assert/strict";
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { appendFileSync as appendFileSync2, existsSync as existsSync3, mkdirSync as mkdirSync3, mkdtempSync, readFileSync as readFileSync3, realpathSync as realpathSync3, rmSync as rmSync2, symlinkSync, writeFileSync as writeFileSync3 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync3, mkdirSync as mkdirSync3, mkdtempSync, readFileSync as readFileSync3, realpathSync as realpathSync3, rmSync as rmSync3, symlinkSync, writeFileSync as writeFileSync3 } from "node:fs";
 import { request as request2 } from "node:http";
 import { tmpdir } from "node:os";
 import { basename as basename4, join as join4 } from "node:path";
@@ -2531,7 +2558,7 @@ async function selftest() {
     await agentCase(temps);
     notARepo(temps);
   } finally {
-    for (const t of temps) rmSync2(t, { recursive: true, force: true });
+    for (const t of temps) rmSync3(t, { recursive: true, force: true });
   }
 }
 async function pure() {
@@ -2650,7 +2677,7 @@ async function gitCase(temps) {
   symlinkSync(join4(root, "gone.md"), join4(root, "l.md"));
   assert.equal((await get("/api/file?path=l.md")).status, 500);
   assert.equal((await get("/api/files")).status, 200);
-  rmSync2(join4(root, "l.md"));
+  rmSync3(join4(root, "l.md"));
   const page = await raw(port, "/");
   assert.deepEqual([page.status, page.type, page.text], [200, "text/html; charset=utf-8", "<!doctype html><title>Trove</title>"]);
   assert.match(page.csp, /script-src 'self';/, "no inline scripts");
@@ -2876,7 +2903,7 @@ ${lines[0]}
   assert.equal(readFileSync3(join4(stateDir, "events.log"), "utf8").trim().split("\n").at(-1), lines.at(-1), "the request goes to the events log");
   assert.equal(sh("rev-parse", "HEAD"), head, "Trove never commits");
   await app.close();
-  rmSync2(join4(tmpdir(), "trove-outside.txt"), { force: true });
+  rmSync3(join4(tmpdir(), "trove-outside.txt"), { force: true });
 }
 async function branchCase(temps) {
   const { root, sh } = newRepo("trove-branch-");
@@ -2935,7 +2962,7 @@ async function switchCase(temps) {
   writeFileSync3(join4(root, "a.md"), "# A on free\n");
   sh("commit", "-qam", "free");
   sh("checkout", "-q", "main");
-  rmSync2(wtDir, { recursive: true });
+  rmSync3(wtDir, { recursive: true });
   sh("worktree", "add", "-q", wtDir, "wt");
   const wtPath = realpathSync3(wtDir);
   const { app, port } = await listen({ root });
@@ -3058,7 +3085,7 @@ function notARepo(temps) {
 }
 
 // bin/trove.mjs
-var USAGE = 'usage: trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>] | attach --port N [--agent claude|codex|other] | detach --port N | info --port N | done <file> [--port 4824] | ask "<question>" | reply "<summary>" | ask --clear [--port 4824] | --selftest';
+var USAGE = 'usage: trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>] [--force] | attach [--root <repo> | --port N] [--agent claude|codex|other] | detach [--root <repo> | --port N] | info [--root <repo> | --port N] | done <file> [--root <repo> | --port N] | ask "<question>" | reply "<summary>" | ask --clear [--root <repo> | --port N] | --selftest';
 var here = dirname3(fileURLToPath(import.meta.url));
 var invoked = () => {
   const script = process.argv[1] ?? "";
@@ -3085,7 +3112,8 @@ async function main() {
     allowPositionals: true,
     options: {
       root: { type: "string", default: "." },
-      port: { type: "string", default: "4824" },
+      port: { type: "string" },
+      force: { type: "boolean" },
       exclude: { type: "string", multiple: true },
       scope: { type: "string" },
       base: { type: "string" },
@@ -3094,7 +3122,13 @@ async function main() {
       agent: { type: "string", default: "claude" }
     }
   });
-  const port = Number(values.port);
+  const finds = ["attach", "detach", "info", "done", "ask", "reply"].includes(command);
+  const port = values.port ? Number(values.port) : finds ? (await running(values.root))?.port : 4824;
+  if (port === void 0) {
+    console.log(`nothing is serving ${resolve2(values.root)}: start one with trove serve, or pass --port`);
+    process.exitCode = 1;
+    return;
+  }
   const failed = (e) => ({ status: 0, body: { error: e.message } });
   if ((command === "ask" || command === "reply") && (positionals[0] || values.clear)) {
     const kind = command === "reply" ? "reply" : "question";
@@ -3138,6 +3172,8 @@ async function main() {
     const { port: bound } = await serve({
       root: resolve2(values.root),
       port,
+      force: values.force,
+      by: "cli",
       exclude: values.exclude,
       scope: (
         /** @type {'uncommitted' | 'branch' | undefined} */
@@ -3149,7 +3185,7 @@ async function main() {
     });
     console.log(await firstLine(bound));
   } catch (error) {
-    console.log(error.code === "EADDRINUSE" ? `port ${port} is busy: another session is probably serving. Stop it, or pass --port.` : error.message.startsWith("not a git repository") ? error.message : `server failed: ${error.message}`);
+    console.log(error.code === "EADDRINUSE" ? `port ${port} is busy: another session is probably serving. Stop it, or pass --port.` : /^(not a git repository|Trove is already serving)/.test(error.message) ? error.message : `server failed: ${error.message}`);
     process.exitCode = 1;
   }
 }

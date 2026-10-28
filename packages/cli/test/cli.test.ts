@@ -32,7 +32,11 @@ test('the bundle builds, serves a repository and prints the done command', async
     expect((await (await fetch(`http://127.0.0.1:${port}/api/source`)).json()).agentInfo).toMatchObject({ id: 'codex', label: 'Codex', connected: true });
     run('detach');
     expect((await (await fetch(`http://127.0.0.1:${port}/api/source`)).json()).agentInfo.connected).toBe(false);
-    busy = await firstLine(['serve', '--root', root, '--port', String(port)]);
+    expect(spawnSync(process.execPath, [bundle, 'info', '--root', root], { encoding: 'utf8' }).stdout.trim()).toBe(line);
+    const again = spawnSync(process.execPath, [bundle, 'serve', '--root', root, '--port', '0'], { encoding: 'utf8' });
+    expect(again.stdout.trim()).toBe(`Trove is already serving this repository at http://127.0.0.1:${port} (trove serve).\n`
+      + `Attach with: trove attach --port ${port} --agent claude. Pass --force to start another.`);
+    busy = await firstLine(['serve', '--root', root, '--port', String(port), '--force']);
     expect(busy.line).toBe(`port ${port} is busy: another session is probably serving. Stop it, or pass --port.`);
   } finally {
     kill();
