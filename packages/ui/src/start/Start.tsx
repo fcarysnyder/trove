@@ -237,7 +237,7 @@ function Segmented({ label, value, options, onChange, disabled, fill }: { label:
 }
 
 /** Terminal apps as their makers name them (the bundle names differ: iTerm.app is iTerm2). */
-const TERMINAL_NAMES: Record<TerminalApp, string> = { Terminal: 'Terminal', iTerm: 'iTerm2', Ghostty: 'Ghostty', WezTerm: 'WezTerm', kitty: 'kitty', Alacritty: 'Alacritty' };
+const TERMINAL_NAMES: Record<TerminalApp, string> = { Trove: 'In Trove', Terminal: 'Terminal', iTerm: 'iTerm2', Ghostty: 'Ghostty', WezTerm: 'WezTerm', kitty: 'kitty', Alacritty: 'Alacritty' };
 
 type Choice = AgentTool | 'none';
 const CHOICES: [Choice, string, string][] = [['claude', 'Claude Code', 'bg-agent-claude'], ['codex', 'Codex', 'bg-agent-codex'], ['none', 'None', 'bg-muted-foreground']];
@@ -378,9 +378,9 @@ function OpenDialog({ repo, onClose }: { repo: Repo; onClose: () => void }) {
             <div className={PAIR}>
               <Segmented fill label="Agent" value={choice} onChange={(v) => setChoice(v as Choice)}
                 options={CHOICES.map(([value, text, dot]) => [value, <><span className={cn('size-2 shrink-0 rounded-full', dot)} aria-hidden />{text}</>])} />
-              <Select value={terms?.current ?? 'Terminal'} onValueChange={pickTerminal} disabled={choice === 'none' || (terms?.installed.length ?? 0) < 2}>
+              <Select value={terms?.current ?? 'Trove'} onValueChange={pickTerminal} disabled={choice === 'none' || (terms?.installed.length ?? 0) < 2}>
                 <SelectTrigger size="default" className="w-full min-w-0 text-xs" aria-label="Terminal app"><SelectValue /></SelectTrigger>
-                <SelectContent>{(terms?.installed ?? ['Terminal']).map((t) => <SelectItem key={t} value={t} className="text-xs">{TERMINAL_NAMES[t]}</SelectItem>)}</SelectContent>
+                <SelectContent>{(terms?.installed ?? ['Trove']).map((t) => <SelectItem key={t} value={t} className="text-xs">{TERMINAL_NAMES[t]}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             {choice !== 'none' && tools && !tools[choice] && <span role="status" className="text-sm text-muted-foreground">{`${choice} is not installed`}</span>}
