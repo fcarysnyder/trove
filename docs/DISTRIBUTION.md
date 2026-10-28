@@ -23,6 +23,10 @@ The disk image and the CLI bundle carry a GitHub build provenance attestation, s
 gh attestation verify Installer-Trove-0.5.0-arm64.dmg --repo fcarysnyder/trove
 ```
 
+## The terminal's native module
+
+The agent's terminal in the Agent pane is a pty from [node-pty](https://github.com/microsoft/node-pty), the app's one native module. node-pty 1.1 is built on N-API and ships prebuilt binaries, so the same `pty.node` loads in Node and in Electron 45 without an `electron-rebuild` step, and nothing compiles on install (`pnpm-workspace.yaml` still lists it in `onlyBuiltDependencies` so its install script runs). `electron.vite.config.ts` copies its `lib/` and this platform's prebuild (`pty.node` and the `spawn-helper` executable, whose execute bit pnpm's store drops) into `out/node-pty`, and `electron-builder.yml` unpacks `out/node-pty/**` from the asar, since neither file can run from inside it. Both Mach-O files are signed with the rest of the bundle; the release workflow checks that `pty.node` is there and that `spawn-helper`'s signature verifies. A node-pty upgrade that drops the prebuilds would need `@electron/rebuild` in a desktop `postinstall`.
+
 ## Signing
 
 Released builds are signed with a Developer ID certificate and notarized, so they open without a Gatekeeper prompt. electron-builder signs with the certificate in `CSC_LINK` and notarizes with the `APPLE_*` credentials; the release workflow passes them from repository secrets and, on a tag, fails unless the app is Developer ID signed, notarized and accepted by `spctl`.

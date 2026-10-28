@@ -91,8 +91,8 @@ Download `Installer-Trove-<version>-arm64.dmg` from the
 [latest release](https://github.com/fcarysnyder/trove/releases/latest), open it and drag Trove to
 Applications. It runs on Apple silicon Macs.
 
-The app opens a repository, picks a worktree and branch, and can start Claude Code or Codex in
-Terminal already attached to that window's server. Each repository gets its own window and its own
+The app opens a repository, picks a worktree and branch, and can start Claude Code or Codex,
+already attached to that window's server, in a terminal inside the window, or in your own terminal app. Each repository gets its own window and its own
 server on a random local port.
 
 To run it from a checkout instead:
