@@ -23,12 +23,10 @@ mac:
   # icon.icns carries simplified 16/32pt art; regenerate with design/icon/src/export.py
   icon: assets/icon.icns
   category: public.app-category.developer-tools
-  # No Developer ID yet, so electron-builder does not sign; scripts/adhoc-sign.cjs signs the whole
-  # bundle ad hoc after packing, because Apple silicon will not run it otherwise. Not notarized, so
-  # the first launch needs Open Anyway (see docs/DISTRIBUTION.md).
-  identity: null
-  hardenedRuntime: false
-  notarize: false
+  # Signed with the Developer ID certificate in CSC_LINK (or the keychain) and notarized when the
+  # APPLE_* variables are set; without them electron-builder skips both and the ad-hoc signature
+  # from scripts/adhoc-sign.cjs stands (see docs/DISTRIBUTION.md).
+  hardenedRuntime: true
 dmg:
   # Release asset names follow Installer-<App>-<version>-<arch>.dmg.
   artifactName: "Installer-${productName}-${version}-${arch}.${ext}"

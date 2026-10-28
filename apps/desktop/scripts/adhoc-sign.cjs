@@ -3,7 +3,8 @@
 // Apple silicon refuses to run code without a valid signature. The Electron binary arrives with
 // its own ad-hoc signature, but that signature does not cover the bundle once Trove's resources
 // are added, so a downloaded copy is reported as damaged. Re-signing the whole bundle ad hoc
-// fixes that. It is not a Developer ID signature: Gatekeeper still asks for Open Anyway once.
+// fixes that. When a Developer ID certificate is available, electron-builder signs over this right
+// after; this is the fallback for builds without one (pull requests, local builds).
 const { execFileSync } = require('node:child_process');
 const { join } = require('node:path');
 

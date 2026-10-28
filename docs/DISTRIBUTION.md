@@ -25,9 +25,45 @@ gh attestation verify Installer-Trove-0.5.0-arm64.dmg --repo fcarysnyder/trove
 
 ## Signing
 
-The Mac app is signed ad hoc and is not notarized. electron-builder does no signing (`identity: null`); its `afterPack` hook, `apps/desktop/scripts/adhoc-sign.cjs`, signs the whole assembled bundle ad hoc before the disk image is made, and the release workflow checks that the signature verifies. Apple silicon refuses to launch code without a valid signature, and Electron's own ad-hoc signature stops covering the bundle once Trove's files are added, which a downloaded copy reports as "damaged". An ad-hoc signature is enough to run, but Gatekeeper still blocks the first launch of a downloaded copy: users open System Settings › Privacy & Security and choose **Open Anyway** once.
+Released builds are signed with a Developer ID certificate and notarized, so they open without a Gatekeeper prompt. electron-builder signs with the certificate in `CSC_LINK` and notarizes with the `APPLE_*` credentials; the release workflow passes them from repository secrets and, on a tag, fails unless the app is Developer ID signed, notarized and accepted by `spctl`.
 
-Moving to a Developer ID signature and notarization needs an Apple Developer account. When there is one: add the certificate as `CSC_LINK` / `CSC_KEY_PASSWORD` secrets and the notarization credentials as `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`; remove `identity: null` and the `afterPack` hook; set `hardenedRuntime: true` and `notarize: true`; and drop the Open Anyway notes from the README and the release notes script.
+Builds without the certificate (pull requests, local `pnpm dist` without it in the keychain) fall back to an ad-hoc signature: the `afterPack` hook, `apps/desktop/scripts/adhoc-sign.cjs`, signs the whole bundle ad hoc, because Apple silicon will not launch code without a valid signature, and electron-builder signs over it when it has a Developer ID. An ad-hoc build runs, but a downloaded copy needs System Settings › Privacy & Security › **Open Anyway** once.
+
+### Setting up the certificate
+
+Needs a paid Apple Developer Program membership.
+
+1. Make a key and certificate signing request (kept outside the repository):
+
+   ```sh
+   umask 077; mkdir -p ~/.trove-signing && cd ~/.trove-signing
+   openssl req -new -newkey rsa:2048 -nodes -keyout developer-id.key -out developer-id.csr -subj "/CN=<your name>/C=US"
+   ```
+
+2. At [Certificates](https://developer.apple.com/account/resources/certificates/add), choose **Developer ID Application** (G2 Sub-CA), upload `developer-id.csr`, and download the certificate to `~/.trove-signing/developer_id.cer`.
+3. Bundle the key, the certificate and Apple's intermediate into a password-protected `.p12`:
+
+   ```sh
+   cd ~/.trove-signing
+   curl -fsSLO https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+   openssl x509 -inform der -in developer_id.cer -out developer_id.pem
+   openssl x509 -inform der -in DeveloperIDG2CA.cer -out DeveloperIDG2CA.pem
+   openssl pkcs12 -export -legacy -inkey developer-id.key -in developer_id.pem -certfile DeveloperIDG2CA.pem -out trove-developer-id.p12
+   ```
+
+   Double-click the `.p12` to add it to the login keychain for local signed builds.
+4. Make an app-specific password at [account.apple.com](https://account.apple.com) › Sign-In and Security, and find the team ID at [Membership details](https://developer.apple.com/account#MembershipDetailsCard).
+5. Add the repository secrets:
+
+   ```sh
+   base64 -i trove-developer-id.p12 | gh secret set CSC_LINK
+   gh secret set CSC_KEY_PASSWORD          # the .p12 export password
+   gh secret set APPLE_ID                  # Apple Account email
+   gh secret set APPLE_APP_SPECIFIC_PASSWORD
+   gh secret set APPLE_TEAM_ID
+   ```
+
+The certificate lasts five years. To renew, repeat the steps and replace the secrets.
 
 ## Releasing
 

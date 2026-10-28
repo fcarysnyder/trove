@@ -50,10 +50,6 @@ const base = `https://github.com/${repo}`;
 const dmg = `Installer-Trove-${version}-arm64.dmg`;
 const cli = `trove-${version}.mjs`;
 const checksum = `Checksum-Trove-${version}-arm64.dmg.sha256`;
-// The first-launch steps, unless the version's own Upgrading section already gives them.
-const gatekeeper = /Open Anyway/.test(body)
-  ? ''
-  : 'Trove is not notarized yet. The first time you open it, macOS says it cannot check the app for malicious software: open System Settings › Privacy & Security and choose **Open Anyway**. You only need to do this once.';
 const changes = previous ? `${base}/compare/${previous}...${tag}` : `${base}/commits/${tag}`;
 
 process.stdout.write(`## Highlights
@@ -67,8 +63,6 @@ ${rest}
 - **Mac (Apple silicon):** [${dmg}](${base}/releases/download/${tag}/${dmg}). Open the disk image and drag Trove to Applications.
 - **CLI:** [${cli}](${base}/releases/download/${tag}/${cli}), a single file that runs with Node 22: \`node ${cli} serve --root <repo>\`.
 - **Claude Code plugin:** \`/plugin marketplace add ${repo}\`, then \`/plugin install trove@trove\`.
-
-${gatekeeper}
 
 To check a download, run \`shasum -a 256 -c ${checksum}\` beside it, or verify where it was built with \`gh attestation verify ${dmg} --repo ${repo}\`.
 
