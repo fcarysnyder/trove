@@ -1,6 +1,7 @@
 // The review server: a queue over a git working tree, comment drafts, the user's block edits, batches for the
 // agent, locks while it works, and the HTTP API the page talks to. Ported from the markdown-editor
 // skill's doc-review.mjs; every route behaves as it did there. Node built-ins only.
+import { execFile } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -474,6 +475,14 @@ export function createApp(o: AppOptions): App {
     'GET /api/source': () => [200, info()],
     'GET /api/activity': () => (follow(), [200, { entries: activity }]),
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
+    // The file in the system's file manager. Never a shell: the path is one argument.
+    'POST /api/reveal': (_, { path }) => {
+      const rel = listed(path);
+      if (!rel) return [404, { error: 'not in the review set' }];
+      const abs = join(top, rel);
+      execFile(...(process.platform === 'darwin' ? ['open', ['-R', abs]] : process.platform === 'win32' ? ['explorer', [`/select,${abs}`]] : ['xdg-open', [dirname(abs)]]) as [string, string[]], () => {});
+      return [200, {}];
+    },
     'POST /api/agent': (_, { id, label }, req) => {
       if (id !== null && !Object.hasOwn(AGENT_LABELS, id)) return [400, { error: 'id is claude, codex, other or null' }];
       if (label !== undefined && (typeof label !== 'string' || label.length > 40)) return [400, { error: 'label is a short string' }];

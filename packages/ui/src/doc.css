@@ -54,7 +54,7 @@
 ::highlight(flash) { background: var(--hl-flash); }
 /* Run badges: the number is CSS content, so the block's text (what anchors measure) is untouched. */
 .new-n { display: inline-flex; align-items: center; justify-content: center; min-width: 12px; height: 12px; margin: 0 2px; padding: 0 2px;
-  border-radius: 9999px; background: var(--good); color: #000; font: 600 9px/12px var(--font-sans); vertical-align: text-top; user-select: none; }
+  border-radius: 9999px; background: var(--good); color: var(--background); font: 600 9px/12px var(--font-sans); vertical-align: text-top; user-select: none; }
 .new-n::after { content: attr(data-n); }
 .new-n.agent { background: var(--agent); }
 .new-n.mine { background: var(--foreground); color: var(--background); }

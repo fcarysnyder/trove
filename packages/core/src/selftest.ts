@@ -210,6 +210,7 @@ async function gitCase(temps: string[]) {
   assert.equal(staged(), '');
 
   // Security: foreign Host, foreign or missing Origin, non-JSON, paths outside the set.
+  assert.equal((await post('/api/reveal', { path: '../etc/passwd' })).status, 404, 'reveal: only a file in the set');
   assert.equal((await post('/api/accept', { path: 'a.md' }, { host: 'evil.example' })).status, 403);
   assert.equal((await post('/api/accept', { path: 'a.md' }, { origin: 'https://evil.example' })).status, 403);
   assert.equal((await post('/api/accept', { path: 'a.md' }, { origin: '' })).status, 403);

@@ -85,6 +85,9 @@ export function show(file: FileResponse) {
 }
 
 /** Open a file and bring its tree row into view, opening its folder if it was closed. */
+/** The file in the system's file manager, opened by the server. */
+export const showInFolder = (path: string) => api('reveal', { path }).catch((e: Error) => toast.error(e.message));
+
 export async function reveal(path: string) {
   const dir = path.split('/').slice(0, -1).join('/');
   set((s) => ({ closedDirs: s.closedDirs.filter((d) => d !== dir) }));
