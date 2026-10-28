@@ -2379,6 +2379,23 @@ function createApp(o) {
     if (![`127.0.0.1:${local}`, `localhost:${local}`].includes(req.headers.host ?? "")) return reply(403);
     if (!pathname.startsWith("/api/")) {
       if (req.method !== "GET") return reply(404);
+      if (pathname.startsWith("/raw/")) {
+        let rel;
+        try {
+          rel = decodeURIComponent(pathname.slice(5));
+        } catch {
+          return reply(404);
+        }
+        const abs = resolve(top, rel);
+        if (!abs.startsWith(top + sep) || abs.startsWith(join3(top, ".git") + sep)) return reply(404);
+        let body = rejected.get(relative(top, abs).split(sep).join("/"))?.text;
+        if (body == null) try {
+          if (statSync2(abs).isFile()) body = readFileSync2(abs);
+        } catch {
+        }
+        if (body == null) return reply(404);
+        return reply(200, body, { "content-type": TYPES[extname(abs).toLowerCase()] ?? "application/octet-stream" });
+      }
       const file = asset(pathname);
       if (file) return reply(200, readFileSync2(file), { "content-type": TYPES[extname(file).toLowerCase()] ?? "application/octet-stream", "content-security-policy": CSP });
       if (pathname === "/" && !uiDir) return reply(404, "No UI is built for this server; it answers /api/ only. Pass --ui <dir>.\n", { "content-type": "text/plain; charset=utf-8" });
@@ -2629,6 +2646,9 @@ async function gitCase(temps) {
   assert.match(page.csp, /script-src 'self';/, "no inline scripts");
   assert.equal((await raw(port, "/assets/app.js")).type, "text/javascript; charset=utf-8");
   for (const p of ["/../trove-outside.txt", "/%2e%2e/trove-outside.txt", "/assets/nope.js", "/api/nope"]) assert.equal((await raw(port, p)).status, 404, p);
+  const frame = await raw(port, "/raw/c.html");
+  assert.deepEqual([frame.status, frame.type, frame.csp, frame.text], [200, "text/html; charset=utf-8", "undefined", "<h1>C</h1><p>Hi</p>\n"]);
+  for (const p of ["/raw/../trove-outside.txt", "/raw/%2e%2e/trove-outside.txt", "/raw/.git/config", "/raw/nope.html", "/raw/gen"]) assert.equal((await raw(port, p)).status, 404, p);
   const bare = await listen(opts);
   assert.equal((await raw(bare.port, "/")).status, 404, "no uiDir: no page");
   assert.equal((await get("/api/files", bare.port)).status, 200, "but the API answers");
