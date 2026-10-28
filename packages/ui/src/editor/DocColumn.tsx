@@ -226,16 +226,16 @@ function DocView() {
       <>
         <iframe
           key={current.hash}
-          className="doc-frame mx-12 block min-h-[60vh] w-[calc(100%-96px)] rounded-lg border-0 bg-white"
-          sandbox="allow-same-origin"
+          className="doc-frame mx-12 block min-h-[60vh] w-[calc(100%-96px)] rounded-lg border-0"
+          sandbox="allow-same-origin allow-scripts"
           title="Rendered file"
-          srcDoc={current.text}
+          src={`raw/${current.path.split('/').map(encodeURIComponent).join('/')}`}
           onLoad={(e) => {
             const doc = e.currentTarget.contentDocument;
             if (!doc) return;
             const style = doc.createElement('style');
-            style.textContent = '::highlight(comment) { background: rgb(255 208 0 / .4); } ::highlight(flash) { background: rgb(255 208 0 / .7); }';
-            doc.head.append(style);
+            style.textContent = ':root { color-scheme: light dark } ::highlight(comment) { background: rgb(255 208 0 / .4); } ::highlight(flash) { background: rgb(255 208 0 / .7); }';
+            doc.head.prepend(style); // first, so the file's own color-scheme wins
             doc.addEventListener('mouseup', (ev) => onSelect(doc, ev.target));
             doc.addEventListener('click', commentAt);
             doc.addEventListener('selectionchange', () => { if (get().pick && doc.getSelection()?.isCollapsed) set({ pick: null }); });

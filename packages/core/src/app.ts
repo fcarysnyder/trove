@@ -536,6 +536,19 @@ export function createApp(o: AppOptions): App {
 
     if (!pathname.startsWith('/api/')) {
       if (req.method !== 'GET') return reply(404);
+      // HTML files load into their frame from here: a document of its own runs its scripts under no policy but
+      // the browser's, and its relative links resolve beside it. Any file under the root, read-only; a rejected
+      // file shows what was rejected.
+      if (pathname.startsWith('/raw/')) {
+        let rel;
+        try { rel = decodeURIComponent(pathname.slice(5)); } catch { return reply(404); }
+        const abs = resolve(top, rel);
+        if (!abs.startsWith(top + sep) || abs.startsWith(join(top, '.git') + sep)) return reply(404);
+        let body: string | Buffer | undefined = rejected.get(relative(top, abs).split(sep).join('/'))?.text;
+        if (body == null) try { if (statSync(abs).isFile()) body = readFileSync(abs); } catch {}
+        if (body == null) return reply(404);
+        return reply(200, body, { 'content-type': TYPES[extname(abs).toLowerCase()] ?? 'application/octet-stream' });
+      }
       const file = asset(pathname);
       if (file) return reply(200, readFileSync(file), { 'content-type': TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream', 'content-security-policy': CSP });
       if (pathname === '/' && !uiDir) return reply(404, 'No UI is built for this server; it answers /api/ only. Pass --ui <dir>.\n', { 'content-type': 'text/plain; charset=utf-8' });
