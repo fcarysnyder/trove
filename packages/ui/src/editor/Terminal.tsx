@@ -2,7 +2,7 @@ import type { AgentTool } from '@trove/core/types';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { ChevronDown, ChevronUp, Square } from 'lucide-react';
+import { PanelTopClose, PanelTopOpen, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -17,7 +17,7 @@ function theme() {
   const v = (name: string) => css.getPropertyValue(name).trim();
   return {
     fontFamily: v('--font-mono'),
-    theme: { background: v('--background'), foreground: v('--foreground'), cursor: v('--agent'), cursorAccent: v('--background'), selectionBackground: v('--hl-mine') },
+    theme: { background: v('--terminal'), foreground: v('--foreground'), cursor: v('--agent'), cursorAccent: v('--terminal'), selectionBackground: v('--hl-mine') },
   };
 }
 
@@ -72,8 +72,8 @@ export default function Terminal({ hidden, onHide }: { hidden: boolean; onHide: 
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex min-h-9 shrink-0 items-center gap-1.5 border-b pr-2 pl-4 text-xs">
+    <div className="flex h-full min-h-0 flex-col bg-terminal">
+      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b pr-2 pl-4 text-xs">
         {tool && <span className={cn('size-2 rounded-full', exited ? 'border border-muted-foreground' : DOT[tool])} aria-hidden />}
         <span className="text-foreground">{tool ? LABEL[tool] : 'Agent'}</span>
         {exited && <span className="text-muted-foreground">exited</span>}
@@ -81,10 +81,10 @@ export default function Terminal({ hidden, onHide }: { hidden: boolean; onHide: 
           {exited
             ? tool && <Button variant="ghost" size="sm" onClick={start}>Start</Button>
             : <IconButton side="bottom" label="Stop" onClick={() => void pty.kill()}><Square /></IconButton>}
-          <IconButton side="bottom" label={hidden ? 'Show terminal' : 'Hide terminal'} onClick={() => onHide(!hidden)}>{hidden ? <ChevronDown /> : <ChevronUp />}</IconButton>
+          <IconButton side="bottom" label={hidden ? 'Show terminal' : 'Hide terminal'} onClick={() => onHide(!hidden)}>{hidden ? <PanelTopOpen /> : <PanelTopClose />}</IconButton>
         </span>
       </div>
-      <div ref={box} className="min-h-0 flex-1 bg-background py-1 pl-3" />
+      <div ref={box} className="min-h-0 flex-1 py-1 pl-3" />
     </div>
   );
 }

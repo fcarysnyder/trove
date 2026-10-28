@@ -14,6 +14,10 @@ summary paragraph and sections are what readers see there.
 - On the desktop, Claude Code or Codex runs in a terminal inside the window, at the top of the Agent pane, instead of in a separate terminal app. Its height is remembered, it folds to its header, and it stops when the window closes. "In Trove" is the new default in the start page's terminal choice; Terminal, iTerm2 and the others are still there.
 - The Agent pane can be widened to 60% of the window.
 
+### Changed
+
+- The Agent pane's Changes and History are tabs under the terminal; a button left of the tabs folds them down to give the terminal the height.
+
 ## [0.6.0] - 2026-10-28
 
 Trove 0.6.0 renders an HTML file the way a browser does: a slide deck or a
