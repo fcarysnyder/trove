@@ -116,8 +116,8 @@ export type AgentId = 'claude' | 'codex' | 'other';
 export type AgentTool = 'claude' | 'codex';
 /** The desktop's own update: none newer, one downloading, one ready to install on restart, or why the last check failed. */
 export type UpdateState = { state: 'none' } | { state: 'downloading'; version: string } | { state: 'ready'; version: string } | { state: 'error'; message: string };
-/** A macOS terminal app the desktop starts an agent in. */
-export type TerminalApp = 'Terminal' | 'iTerm' | 'Ghostty' | 'WezTerm' | 'kitty' | 'Alacritty';
+/** Where the desktop starts an agent: 'Trove' is the terminal in the window's Agent pane, the rest are macOS terminal apps. */
+export type TerminalApp = 'Trove' | 'Terminal' | 'iTerm' | 'Ghostty' | 'WezTerm' | 'kitty' | 'Alacritty';
 /**
  * The agent attached to a server, set by `trove attach` (POST /api/agent) and kept in state.json.
  * With nothing attached: {id: 'other', label: 'the agent', connected: false, at: null}.
@@ -278,7 +278,7 @@ export interface TroveBridge {
   forget(path: string): Promise<void>;
   /** Which agent CLIs are on the user's login-shell PATH. */
   tools(): Promise<Record<AgentTool, boolean>>;
-  /** The terminal apps installed, and the one agents start in (the app setting, else Terminal). */
+  /** 'Trove' and the terminal apps installed, and where agents start (the app setting, else Trove). */
   terminals(): Promise<{ installed: TerminalApp[]; current: TerminalApp }>;
   /** Start agents in `t` from now on, in every window. Rejects when it is not installed. */
   setTerminal(t: TerminalApp): Promise<void>;
@@ -305,6 +305,18 @@ export interface TroveBridge {
   worktreeDir(): Promise<string>;
   /** Make `path` (an existing folder) where new worktrees go, for every window; then that path. */
   setWorktreeDir(path: string): Promise<string>;
+  /** This window's agent terminal: one pty per repository window, which main starts when the terminal setting is 'Trove'. */
+  pty: {
+    /** Start `tool` in the repository when no session is running (the Start button after it exits). */
+    start(tool: AgentTool, cols: number, rows: number): Promise<void>;
+    write(data: string): void;
+    resize(cols: number, rows: number): void;
+    kill(): Promise<void>;
+    /** The session, running or exited (`exitCode` set), with the tail of its output to replay; null before any. */
+    state(): Promise<{ tool: AgentTool; tail: string; exitCode: number | null } | null>;
+    onData(cb: (data: string) => void): () => void;
+    onExit(cb: (code: number) => void): () => void;
+  };
 }
 
 declare global {

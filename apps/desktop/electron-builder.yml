@@ -4,8 +4,8 @@ copyright: Copyright © 2026 F Cary Snyder
 directories:
   output: release
   buildResources: assets
-# main bundles @trove/core and out/ui holds @trove/ui's build (see electron.vite.config.ts), so the
-# app needs nothing from node_modules.
+# main bundles @trove/core, out/ui holds @trove/ui's build and out/node-pty the terminal's native
+# module (see electron.vite.config.ts), so the app needs nothing from node_modules.
 files:
   - out/**
   - package.json
@@ -13,6 +13,9 @@ files:
   - assets/icon.png
   - assets/icon-light.png
   - "!node_modules/**"
+# pty.node and spawn-helper cannot run from inside the asar.
+asarUnpack:
+  - out/node-pty/**
 # Package the Electron binary in node_modules. Electron 45 no longer downloads it on install, so the
 # package and dist scripts run install-electron first (a no-op once it is there).
 electronDist: node_modules/electron/dist

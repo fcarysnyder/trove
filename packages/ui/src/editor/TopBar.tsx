@@ -149,12 +149,12 @@ export function Notice() {
   );
 }
 
-// The desktop opens the editor with ?waiting=claude|codex after starting that agent in Terminal.
+// The desktop opens the editor with ?waiting=claude|codex after starting that agent.
 const waiting = new URLSearchParams(location.search).get('waiting') as AgentTool | null;
 const TOOLS: [AgentTool, string][] = [['claude', 'Claude Code'], ['codex', 'Codex']];
 
 /**
- * Who is attached, and attaching one: on the desktop a Start button per tool opens it in Terminal, attached
+ * Who is attached, and attaching one: on the desktop a Start button per tool starts it, attached
  * to this server; the commands to copy (each tool's start command, the events log, the done command) come second.
  */
 function Connect() {

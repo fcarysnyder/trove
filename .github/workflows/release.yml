@@ -100,6 +100,9 @@ jobs:
             check "Gatekeeper accepts it" spctl --assess --type execute --verbose=2 "$app"
           fi
           check "Built for arm64" arm64
+          pty=$app/Contents/Resources/app.asar.unpacked/out/node-pty/build/Release
+          check "Terminal's pty.node is unpacked" test -f "$pty/pty.node"
+          check "Terminal's spawn-helper is signed" codesign --verify --strict "$pty/spawn-helper"
           check "Installer is named for the release" test -f "Installer-Trove-$VERSION-arm64.dmg"
           ls -l . "$app/Contents/Resources" | head -40
           exit $failed

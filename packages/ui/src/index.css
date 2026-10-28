@@ -34,6 +34,7 @@
   --color-dirty: var(--dirty);
   --color-cool: var(--cool);
   --color-agent: var(--agent);
+  --color-terminal: var(--terminal);
   --color-agent-claude: var(--agent-claude);
   --color-agent-codex: var(--agent-codex);
   --color-agent-other: var(--agent-other);
@@ -80,6 +81,7 @@
   --agent-codex: #6d28d9;
   --agent-other: #0f766e;
   --agent: var(--agent-claude);
+  --terminal: oklch(0.97 0 0); /* the Agent pane's terminal: a step darker than the page */
   --hl-comment: rgb(255 208 0 / 0.35);
   --hl-flash: rgb(255 208 0 / 0.7);
   --hl-added: rgb(42 129 1 / 0.16);
@@ -91,6 +93,7 @@
 
 .dark {
   --background: oklch(0.2046 0 0);
+  --terminal: oklch(0.25 0 0); /* a step lighter */
   --foreground: oklch(0.9219 0 0);
   --body: #cccccc;
   --card: oklch(0.2686 0 0);

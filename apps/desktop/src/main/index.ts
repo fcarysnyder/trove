@@ -1,11 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron';
 import { execFile } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { attachCommand, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
+import type { IPty } from 'node-pty';
 import { checkForUpdate, installUpdate, updateState, watchForUpdates } from './update';
 
 const uiDir = join(import.meta.dirname, '../ui'); // out/main -> out/ui, however Electron was launched
@@ -16,7 +18,9 @@ const MAX_RECENTS = 20;
 // On the Mac the page draws its own title strip (TitleStrip in the UI) with the traffic lights in it.
 const frame = process.platform === 'darwin' ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 14, y: 10 } } : {};
 
-interface SourceWindow { win: BrowserWindow; core: App; path: string; root: string; port: number }
+interface SourceWindow { win: BrowserWindow; core: App; path: string; root: string; port: number; pty: Pty | null }
+/** The window's agent terminal: running while `exitCode` is null; after exit it stays for its tail. */
+interface Pty { proc: IPty; tool: AgentTool; tail: string; exitCode: number | null }
 const sources = new Set<SourceWindow>();
 let startWin: BrowserWindow | null = null;
 
@@ -77,7 +81,7 @@ async function openNow(req: OpenRequest): Promise<void> {
   const open = [...sources].find((s) => s.path === path || s.root === path);
   if (open) {
     if (req.agent !== undefined) writeRecents(readRecents().map((r) => (r.path === open.root ? { ...r, agent: req.agent } : r)));
-    if (req.agent) await launchAgent(req.agent, open.root, open.port);
+    if (req.agent) await launchAgent(req.agent, open);
     open.win.show();
     open.win.focus();
     return;
@@ -94,10 +98,6 @@ async function openNow(req: OpenRequest): Promise<void> {
     doneCommand: (port) => `trove done <file> --port ${port}`,
   });
   const info = core.info();
-  // Server first (the agent needs its port), then the agent's Terminal, then the window. A Terminal that
-  // fails still gets the window, whose Connect popover has the command to paste; the start page shows why.
-  let failed: unknown = null;
-  if (req.agent) await launchAgent(req.agent, info.root, info.port).catch((e: unknown) => { failed = e; });
   const last = readRecents().find((r) => r.path === info.root);
   writeRecents([
     {
@@ -122,14 +122,20 @@ async function openNow(req: OpenRequest): Promise<void> {
     // The bridge here too: the editor's repository and branch menus open other worktrees and recents with it.
     webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
-  const source: SourceWindow = { win, core, path, root: info.root, port: info.port };
+  const source: SourceWindow = { win, core, path, root: info.root, port: info.port, pty: null };
   sources.add(source);
   win.on('page-title-updated', (e) => e.preventDefault());
   win.on('closed', () => {
     sources.delete(source);
+    killPty(source);
     void core.close();
   });
   guard(win, (target) => target.origin === new URL(url).origin);
+  // Server first (the agent needs its port), then the window (the terminal in it, which replays what the
+  // agent printed before the page listened), then the agent. A Terminal app that fails still gets the
+  // window, whose Connect popover has the command to paste; the start page shows why.
+  let failed: unknown = null;
+  if (req.agent) await launchAgent(req.agent, source).catch((e: unknown) => { failed = e; });
   await win.loadURL(req.agent ? `${url}/?waiting=${req.agent}` : url);
   if (failed) throw failed;
   if (onlyStart) startWin?.close();
@@ -165,7 +171,7 @@ async function tools(): Promise<Record<AgentTool, boolean>> {
  * them; the others take a command on their own command line, in a new instance (-n). Warp and Hyper are
  * left out: neither documents a way to start a window running a given command.
  */
-const TERMINAL_ARGS: Record<TerminalApp, (script: string) => string[]> = {
+const TERMINAL_ARGS: Record<Exclude<TerminalApp, 'Trove'>, (script: string) => string[]> = {
   Terminal: (s) => ['-a', 'Terminal', s],
   iTerm: (s) => ['-a', 'iTerm', s],
   Ghostty: (s) => ['-na', 'Ghostty', '--args', '-e', s],
@@ -173,26 +179,57 @@ const TERMINAL_ARGS: Record<TerminalApp, (script: string) => string[]> = {
   kitty: (s) => ['-na', 'kitty', '--args', s],
   Alacritty: (s) => ['-na', 'Alacritty', '--args', '-e', s],
 };
-const TERMINALS = Object.keys(TERMINAL_ARGS) as TerminalApp[];
+const TERMINALS = Object.keys(TERMINAL_ARGS) as Exclude<TerminalApp, 'Trove'>[];
 const installed = (name: TerminalApp) =>
   [`/Applications/${name}.app`, join(homedir(), 'Applications', `${name}.app`), `/System/Applications/Utilities/${name}.app`].some((p) => existsSync(p));
-/** The terminal apps on this Mac that an agent can start in, Terminal first. */
-const terminals = () => TERMINALS.filter(installed);
-/** The app setting, while that app is still installed; else Terminal. */
+/** Where an agent can start: Trove's own terminal, then the terminal apps on this Mac, Terminal first. */
+const terminals = (): TerminalApp[] => ['Trove', ...TERMINALS.filter(installed)];
+/** The app setting, while that app is still installed; else Trove. */
 function terminal(): TerminalApp {
   const t = readAppSettings().terminal as TerminalApp;
-  return TERMINALS.includes(t) && installed(t) ? t : 'Terminal';
+  return TERMINALS.includes(t as Exclude<TerminalApp, 'Trove'>) && installed(t) ? t : 'Trove';
 }
 
-/** A window of the chosen terminal app running `tool` in the repository with the attach prompt for the server on `port`. */
-async function launchAgent(tool: AgentTool, root: string, port: number): Promise<void> {
-  const script = join(app.getPath('temp'), `trove-${tool}-${port}.command`);
-  writeFileSync(script, `#!/bin/sh\n${attachCommand(tool, root, port, true)}\n`);
-  chmodSync(script, 0o755);
+/** `tool` in the repository with the attach prompt for the window's server: in the window's terminal, or a window of the chosen terminal app. */
+async function launchAgent(tool: AgentTool, s: SourceWindow): Promise<void> {
   const t = terminal();
+  if (t === 'Trove') return startPty(s, tool, 80, 24); // the page resizes it to the pane when it attaches
+  const script = join(app.getPath('temp'), `trove-${tool}-${s.port}.command`);
+  writeFileSync(script, `#!/bin/sh\n${attachCommand(tool, s.root, s.port, true)}\n`);
+  chmodSync(script, 0o755);
   await run('open', TERMINAL_ARGS[t](script)).catch((e: { stderr?: string; message: string }) => {
     throw new Error(`${t} did not open: ${(e.stderr || e.message).trim()}`);
   });
+}
+
+// ---- the agent's terminal --------------------------------------------------------------------
+
+// out/node-pty, copied there by electron.vite.config.ts (unpacked from the asar when packaged).
+const pty = createRequire(import.meta.url)('../node-pty') as typeof import('node-pty');
+const TAIL = 256 * 1024; // what a reloaded page replays; nothing survives an app restart
+
+/** The agent in the login shell (the PATH `tools()` found it on), in the repository. One per window. */
+function startPty(s: SourceWindow, tool: AgentTool, cols: number, rows: number): void {
+  if (s.pty && s.pty.exitCode === null) return;
+  const proc = pty.spawn(process.env.SHELL || '/bin/zsh', ['-ilc', attachCommand(tool, s.root, s.port, true)], {
+    cwd: s.root, cols, rows, name: 'xterm-256color', env: { ...process.env, COLORTERM: 'truecolor' },
+  });
+  const session: Pty = { proc, tool, tail: '', exitCode: null };
+  const send = (channel: string, arg: unknown) => { if (s.pty === session && !s.win.isDestroyed()) s.win.webContents.send(channel, arg); };
+  proc.onData((d) => {
+    session.tail += d;
+    if (session.tail.length > 2 * TAIL) session.tail = session.tail.slice(-TAIL);
+    send('trove:pty:data', d);
+  });
+  proc.onExit(({ exitCode }) => {
+    session.exitCode = exitCode;
+    send('trove:pty:exit', exitCode);
+  });
+  s.pty = session;
+}
+
+function killPty(s: SourceWindow): void {
+  if (s.pty?.exitCode === null) s.pty.proc.kill();
 }
 
 // ---- cloning ---------------------------------------------------------------------------------
@@ -476,6 +513,31 @@ ipcMain.handle('trove:switchBranch', (_e, path: unknown, branch: unknown, base: 
 ipcMain.handle('trove:removeWorktree', (_e, path: unknown) => removeWorktree(str(path)));
 ipcMain.handle('trove:worktreeDir', () => worktreeDir());
 ipcMain.handle('trove:setWorktreeDir', (_e, path: unknown) => setWorktreeDir(str(path)));
+// The agent's terminal: each window reaches only its own session. No HTTP route, ever: a shell on the
+// local server would let any local process run commands.
+const own = (e: IpcMainEvent | IpcMainInvokeEvent) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  return [...sources].find((s) => s.win === win);
+};
+const size = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? Math.min(v as number, 1000) : 1);
+ipcMain.handle('trove:pty:start', (e, tool: unknown, cols: unknown, rows: unknown) => {
+  if (!TOOLS.includes(tool as AgentTool)) throw new Error(`unknown agent ${String(tool)}`);
+  const s = own(e);
+  if (s) startPty(s, tool as AgentTool, size(cols), size(rows));
+});
+ipcMain.on('trove:pty:write', (e, data: unknown) => {
+  const p = own(e)?.pty;
+  if (typeof data === 'string' && p?.exitCode === null) p.proc.write(data);
+});
+ipcMain.on('trove:pty:resize', (e, cols: unknown, rows: unknown) => {
+  const p = own(e)?.pty;
+  if (p?.exitCode === null) p.proc.resize(size(cols), size(rows));
+});
+ipcMain.handle('trove:pty:kill', (e) => { const s = own(e); if (s) killPty(s); });
+ipcMain.handle('trove:pty:state', (e) => {
+  const p = own(e)?.pty;
+  return p ? { tool: p.tool, tail: p.tail, exitCode: p.exitCode } : null;
+});
 ipcMain.handle('trove:drop', (_e, path: unknown) => openOrStage(probe(str(path))));
 
 // ---- lifecycle -------------------------------------------------------------------------------
@@ -501,6 +563,8 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) openStart();
   });
 });
+
+app.on('before-quit', () => { for (const s of sources) killPty(s); });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

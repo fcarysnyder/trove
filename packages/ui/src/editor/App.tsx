@@ -20,7 +20,7 @@ import { ModalEditor } from './doc/Editors';
 
 const WIDTH = { files: 260, changes: 440 };
 // The Agent pane (`changes`) holds the history and the comments, so it gets more room than the file tree.
-const RANGE = { files: [180, 420], changes: [400, '50%'] } as const;
+const RANGE = { files: [180, 420], changes: [400, '60%'] } as const;
 
 export function App() {
   const theme = useStore((s) => s.settings.theme);
