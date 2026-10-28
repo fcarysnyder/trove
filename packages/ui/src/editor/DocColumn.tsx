@@ -164,7 +164,8 @@ function DocView() {
     const ranges = found.flatMap((h) => (h ? [toRange(bodyOf(h.i), h.start, h.end)] : [])).filter((r): r is Range => !!r);
     if (view?.CSS?.highlights) view.CSS.highlights.set('comment', new view.Highlight(...ranges));
   }, [model, current.drafts, frameLoads, editing]);
-  useEffect(() => () => { CSS.highlights?.delete('comment'); set({ hits: [] }); }, []);
+  // A layout cleanup: the view is keyed by file, and a passive one would run after the next file's lookup and wipe it.
+  useLayoutEffect(() => () => { CSS.highlights?.delete('comment'); set({ hits: [] }); }, []);
 
   useEffect(() => {
     const up = (e: MouseEvent) => onSelect(document, e.target);
