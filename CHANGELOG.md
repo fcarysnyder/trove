@@ -16,7 +16,7 @@ summary paragraph and sections are what readers see there.
 
 ### Changed
 
-- The Agent pane's Changes and History are tabs under the terminal; a button left of the tabs folds them down to give the terminal the height.
+- The Agent pane's Changes and History are tabs under the terminal; a button beside the tabs folds them down to give the terminal the height.
 
 ## [0.6.0] - 2026-10-28
 
