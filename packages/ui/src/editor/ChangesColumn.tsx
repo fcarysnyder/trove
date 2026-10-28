@@ -106,12 +106,12 @@ export function ChangesColumn() {
       <WithTerminal bottom={(fold) => (
         // The comments and edits still to send, and what went back and forth with the agent.
         <Tabs.Root value={tab} onValueChange={(t) => { setTab(t); save('agent-tab', t); }} className="flex h-full min-h-0 flex-col">
-          <div className={cn('flex h-9 shrink-0 items-center gap-1 border-b', fold ? 'pl-1.5' : 'pl-4')}>
-            {fold}
+          <div className="flex h-9 shrink-0 items-center gap-1 border-b pr-2 pl-4">
             <Tabs.List aria-label="Agent" className="flex h-full gap-4">
               <Tabs.Trigger value="changes" className={TAB}>Changes{!!shown && <Count n={shown} />}</Tabs.Trigger>
               <Tabs.Trigger value="history" className={TAB}>History</Tabs.Trigger>
             </Tabs.List>
+            <span className="ml-auto">{fold}</span>
           </div>
           <Tabs.Content value="changes" className="min-h-0 flex-1"><ScrollArea className="h-full">{body}</ScrollArea></Tabs.Content>
           <Tabs.Content value="history" className="min-h-0 flex-1">
@@ -132,7 +132,7 @@ const STRIP = 36; // the terminal's header and the tabs: all that shows of eithe
 
 /**
  * The agent's terminal over `bottom` (the changes and history tabs), once the window has one. Either folds to
- * its strip, never both; the terminal's height and what is folded are remembered. `bottom` gets its fold button.
+ * its strip, never both; the terminal's height and what is folded are remembered. `bottom` gets its fold button, for the right of its tabs.
  */
 function WithTerminal({ bottom }: { bottom: (fold: ReactNode) => ReactNode }) {
   const session = useSession();
