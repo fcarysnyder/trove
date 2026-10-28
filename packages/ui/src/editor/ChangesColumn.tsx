@@ -3,15 +3,14 @@ import { ChevronDown, CircleAlert, MessageCircleQuestion, MessageSquare, PanelRi
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Kbd } from '@/components/ui/kbd';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { mod, plural, reducedMotion } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { loadAll, open, revertEdit, saveDrafts, send, sendable, setScope, togglePanel } from './actions';
-import { Count, IconButton, PathLabel } from './bits';
+import { Count, IconButton, PaneSection, PathLabel } from './bits';
 import { get, set, useNames, useStore } from './store';
 import { showBlock, showPassage } from './doc/commands';
 import { ActivityList, activityFor } from './Activity';
@@ -70,25 +69,25 @@ export function ChangesColumn() {
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">
         <span className="font-semibold text-foreground">Agent</span>
         <Notice />
-        <IconButton side="bottom" label="Hide agent" tip="Hide agent (])" className="ml-auto" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="ml-auto gap-1 text-muted-foreground" aria-label={`Showing ${scope === 'file' ? 'this file' : 'all files'}`}>
+              {scope === 'file' ? 'This file' : 'All files'}<ChevronDown />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuRadioGroup value={scope} onValueChange={(v) => setScope(v as 'file' | 'all')}>
+              <DropdownMenuRadioItem value="file">This file</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="all">All files</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <IconButton side="bottom" label="Hide agent" tip="Hide agent (])" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
       </div>
-      <ToggleGroup type="single" value={scope} onValueChange={(v) => v && setScope(v as 'file' | 'all')} aria-label="Comments shown" spacing={0}
-        className="mx-4 my-2 w-auto shrink-0 gap-0.5 rounded-lg bg-card p-0.5">
-        {(['file', 'all'] as const).map((v) => (
-          <ToggleGroupItem key={v} value={v} size="default" className="h-8 flex-1 rounded-md! px-2 text-xs text-muted-foreground data-[state=on]:bg-accent data-[state=on]:text-foreground">
-            {v === 'file' ? 'This file' : 'All files'}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
       <ScrollArea className="min-h-0 flex-1">
         {current && <ActivityList path={scope === 'file' ? current.path : undefined} />}
         {/* Under the history, the comments and edits still to send. */}
-        {current && (
-          <h3 className="flex items-center gap-1.5 px-4 pt-4 font-semibold text-foreground" aria-label={shown ? `Changes, ${plural(shown, 'change')}` : 'Changes'}>
-            Changes{shown > 0 && <Count n={shown} />}
-          </h3>
-        )}
-        {body}
+        {current ? <PaneSection id="changes" title="Changes" count={shown}>{body}</PaneSection> : body}
       </ScrollArea>
       <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
         <SendButton />

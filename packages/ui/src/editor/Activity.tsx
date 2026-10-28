@@ -5,6 +5,7 @@ import type { Activity } from '@trove/core/types';
 import { nameOf, plural } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { reveal } from './actions';
+import { PaneSection } from './bits';
 import { useNames, useStore } from './store';
 
 const VERB: Record<Activity['kind'], string> = {
@@ -23,9 +24,8 @@ export function ActivityList({ path }: { path?: string }) {
     <button key={p} title={p} className="text-foreground outline-none hover:underline focus-visible:underline" onClick={() => void reveal(p)}>{nameOf(p)}</button>
   );
   return (
-    <section aria-labelledby="history" className="border-b pb-4">
-    <h3 id="history" className="px-4 pt-4 pb-2 font-semibold text-foreground">History</h3>
-      <ol className="px-4">
+    <PaneSection id="history" title="History">
+      <ol className="px-4 pb-2">
       {entries.map((e, k) => {
         // Create PR's line on the events log (`pr <id>: …`) reads as the request it is.
         const pr = e.kind === 'event' && /^pr \w+:/.test(e.text);
@@ -47,6 +47,6 @@ export function ActivityList({ path }: { path?: string }) {
         );
       })}
     </ol>
-    </section>
+    </PaneSection>
   );
 }
