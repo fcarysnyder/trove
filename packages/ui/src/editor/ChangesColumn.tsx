@@ -84,7 +84,7 @@ export function ChangesColumn() {
         {current && <ActivityList path={scope === 'file' ? current.path : undefined} />}
         {/* Under the history, the comments and edits still to send. */}
         {current && (
-          <h3 className="flex items-center gap-1.5 px-4 pt-4 text-xs text-muted-foreground" aria-label={shown ? `Changes, ${plural(shown, 'change')}` : 'Changes'}>
+          <h3 className="flex items-center gap-1.5 px-4 pt-4 font-semibold text-foreground" aria-label={shown ? `Changes, ${plural(shown, 'change')}` : 'Changes'}>
             Changes{shown > 0 && <Count n={shown} />}
           </h3>
         )}

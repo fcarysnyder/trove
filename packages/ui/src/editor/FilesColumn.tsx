@@ -167,8 +167,9 @@ function Folders({ list, query }: { list: FileRow[]; query: string }) {
   return [...groups].map(([dir, rows]) => (
     <Collapsible key={dir} open={!!query || !closed.includes(dir)}
       onOpenChange={(o) => set((s) => ({ closedDirs: o ? s.closedDirs.filter((d) => d !== dir) : [...s.closedDirs, dir] }))}>
-      <CollapsibleTrigger title={dir || '/'} className="flex w-full items-center rounded-sm px-1 py-1.5 text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
-        <span className="folder max-w-full">{`‎${dir || '/'}‎`}</span>
+      <CollapsibleTrigger title={dir || '/'} className="group flex w-full items-center gap-1.5 rounded-sm px-1 py-1.5 text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        <ChevronRight className="size-3.5 shrink-0 transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none" aria-hidden />
+        <span className="folder min-w-0 max-w-full">{`‎${dir || '/'}‎`}</span>
       </CollapsibleTrigger>
       <CollapsibleContent>
         {rows.map((f) => (
