@@ -170,7 +170,7 @@ Trove is a pnpm workspace. Node 22 and pnpm 10.
 | `packages/ui` | The page: Vite, React, Tailwind and shadcn/ui. |
 | `packages/cli` | The `trove` command, bundled to one file with esbuild. |
 | `apps/desktop` | The Electron app. Runs core in the main process, one server per window. |
-| `plugins/trove` | The Claude Code plugin: the `markdown-editor` skill and a committed build of the CLI and page. |
+| `plugins/trove` | The Claude Code plugin: the `markdown-editor` and `bring-file` skills and a committed build of the CLI and page. |
 
 ```sh
 pnpm install

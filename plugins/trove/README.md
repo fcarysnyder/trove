@@ -1,7 +1,7 @@
 # plugins/trove: maintainer's note
 
-The Claude Code plugin. `skills/markdown-editor/SKILL.md` is the agent's side; `dist/` is what it
-runs.
+The Claude Code plugin. `skills/markdown-editor/SKILL.md` is the agent's side and `dist/` is what it
+runs; `skills/bring-file/SKILL.md` copies a file from a ref into the working tree, uncommitted.
 
 `dist/` is generated: `trove.mjs` is the CLI bundle from `packages/cli` (core included, Node
 built-ins only, Node 22+), `ui/` is the built page from `packages/ui`, and `BUILD.json` records the
