@@ -9,9 +9,27 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-10-27
+
+Trove 0.5.6 is the first release signed with a Developer ID and notarized by
+Apple, so it opens straight away, and updates now check who made them before
+installing. The right-hand column becomes Agent: a history of what went back
+and forth with your agent, above the comments you still have to send. It is
+read-only, with no chat box; you talk to the agent in your terminal.
+
 ### Changed
 
 - The Mac app is signed with a Developer ID and notarized by Apple, so it opens without the Privacy & Security › Open Anyway step.
+- Before installing an update, Trove checks that it is signed and, once you are on a signed version, that it comes from the same developer. An update that fails either check is never offered.
+- The right-hand column is called Agent. Its History lists what went back and forth with the agent as a timeline: comments sent, files it finished, its questions and replies, and Create PR requests. Changes lists the comments and edits still to send, each under its file. Both sections fold.
+- Choose This file or All files from a menu in the Agent header.
+- When the agent replies or asks a question, a small Replied or Question chip appears beside the Agent title; open it to read the message. When the pane is hidden, its button shows a dot.
+- The Agent pane is never narrower than 400px.
+- Folders in the file tree show a chevron, and the editor's three footers are the same height.
+
+### Fixed
+
+- After switching files, a comment no longer reads "Passage not found" and loses its highlight until you reload.
 
 ## [0.5.5] - 2026-10-27
 
