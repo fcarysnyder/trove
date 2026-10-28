@@ -2,7 +2,7 @@
 // agent, locks while it works, and the HTTP API the page talks to. Ported from the markdown-editor
 // skill's doc-review.mjs; every route behaves as it did there. Node built-ins only.
 import { execFile } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
@@ -25,7 +25,11 @@ export interface AppOptions {
   // process.env.CLAUDECODE is set, else whatever state.json has. null: never from the environment (the desktop).
   agent?: AgentId | null;
   doneCommand?: (port: number) => string; // what SourceInfo.doneCommand prints; the CLI and the desktop set their own
+  by?: ServerRecord['by']; // who runs this server, written to server.json; default 'cli'
 }
+
+/** `<git-dir>/trove/server.json`: the running server, so another process finds it from the repository alone. */
+export interface ServerRecord { port: number; pid: number; startedAt: string; by: 'desktop' | 'cli' }
 
 export interface App {
   server: Server;
@@ -71,7 +75,7 @@ export function createApp(o: AppOptions): App {
   const log = o.log ?? console.log;
   const quietMs = o.quietMs ?? 5000;
   const uiDir = o.uiDir ? realpathSync(o.uiDir) : null;
-  const files = { drafts: join(dir, 'drafts.json'), edits: join(dir, 'edits.json'), batches: join(dir, 'batches.jsonl'), events: join(dir, 'events.log'), state: join(dir, 'state.json') };
+  const files = { drafts: join(dir, 'drafts.json'), edits: join(dir, 'edits.json'), batches: join(dir, 'batches.jsonl'), events: join(dir, 'events.log'), state: join(dir, 'state.json'), server: join(dir, 'server.json') };
 
   // Settings: the file, with this run's options on top until a POST changes the same key.
   let stored = loadSettings(dir);
@@ -593,16 +597,40 @@ export function createApp(o: AppOptions): App {
   const server = createServer((req, res) => {
     try { handle(req, res); } catch { if (!res.headersSent) res.writeHead(500).end(); }
   });
+  const record: () => ServerRecord = () => ({ port: port(), pid: process.pid, startedAt: new Date().toISOString(), by: o.by ?? 'cli' });
+  server.on('listening', () => writeFileSync(files.server, JSON.stringify(record())));
+  // Only our own record: with --force a second server may have written its own since.
+  const forget = () => { try { if (JSON.parse(readFileSync(files.server, 'utf8')).port === port()) rmSync(files.server); } catch {} };
 
   return {
     server, info, list, tick, git,
     settings: () => current,
-    close: () => new Promise<void>((ok) => { server.close(() => ok()); server.closeAllConnections(); }),
+    close: () => new Promise<void>((ok) => { forget(); server.close(() => ok()); server.closeAllConnections(); }),
   };
 }
 
-/** Bind on 127.0.0.1. `port` 0 picks a free one. Resolves once listening; runs the quiet-release tick. */
-export async function serve(options: AppOptions & { port?: number }) {
+/** The server running on the repository at `root`, from its server.json: its pid lives and its port answers
+ * for this root (pids get reused). null when none, or `root` is not in a git repository. */
+export async function running(root: string): Promise<ServerRecord | null> {
+  let top: string, r: ServerRecord;
+  try {
+    const source = openSource(resolve(root));
+    top = source.root;
+    r = JSON.parse(readFileSync(join(source.stateDir, 'server.json'), 'utf8'));
+  } catch { return null; }
+  if (!alive(r.pid)) return null;
+  const answer = await call(r.port, 'GET', '/api/source').catch(() => null);
+  return answer?.status === 200 && answer.body?.root === top ? r : null;
+}
+
+/** Bind on 127.0.0.1. `port` 0 picks a free one. Resolves once listening; runs the quiet-release tick.
+ * Throws when a server already runs on this repository, unless `force`. */
+export async function serve(options: AppOptions & { port?: number; force?: boolean }) {
+  const other = options.force ? null : await running(options.root);
+  if (other) {
+    throw new Error(`Trove is already serving this repository at http://127.0.0.1:${other.port} (${other.by === 'desktop' ? 'desktop app' : 'trove serve'}).\n`
+      + `Attach with: trove attach --port ${other.port} --agent claude. Pass --force to start another.`);
+  }
   const app = createApp(options);
   await new Promise<void>((ok, fail) => {
     app.server.once('error', fail).listen(options.port ?? 0, '127.0.0.1', () => { app.server.off('error', fail); ok(); });

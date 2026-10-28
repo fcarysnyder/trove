@@ -26,12 +26,15 @@ worktree chosen from the Current worktree menu, needs its own server there.
 
 ## Start
 
-**Attach to a running Trove** (the desktop app starts one and opens you with a prompt naming its
-port): if the prompt names a port, or `node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" info --port <port>`
-answers, run `node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" attach --port <port> --agent claude`
-instead of step 1. Its line is the one `serve` prints: take the URL, the events log and the `done`
-command from it, then go on from step 2. The page shows you as connected and in your colour. Run
-`... detach --port <port>` when you stop for good. Everything else below is unchanged.
+**Attach to a running Trove first, always.** Run `node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" info --root <repo>`.
+If it answers (the desktop app or another session already serves this repository), run
+`node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" attach --root <repo> --agent claude` instead of step 1.
+Its line is the one `serve` prints: take the URL, the events log and the `done` command from it,
+then go on from step 2. The page shows you as connected and in your colour. Run
+`... detach --root <repo>` when you stop for good. If `info` says nothing is serving, start at
+step 1. `serve` refuses a repository that is already served; pass `--force` only when the user
+asked for a separate server. `port 4824 is busy` now usually means a server on another
+repository: pass `--port 0` for a free one. Everything else below is unchanged.
 
 1. Run `node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" serve --root <repo>` in the background, so it
    outlives your notification stream. In Claude Code, Bash with `run_in_background`; elsewhere a
