@@ -9,6 +9,28 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-28
+
+Trove 0.6.0 renders an HTML file the way a browser does: a slide deck or a
+prototype runs its scripts and finds the stylesheet beside it, and a plain
+page follows the app's light or dark scheme. Right-click a file in the tree to
+copy its path or show it in Finder. A new `bring-file` skill in the Claude Code
+plugin copies a file from any branch or commit into your working tree,
+uncommitted.
+
+### Added
+
+- HTML files run their scripts in the document frame, and their relative links, such as a stylesheet or an image next to the file, resolve. The server serves the repository's files read-only at `/raw/<path>`, never anything outside the repository or inside `.git`.
+- Right-click a file in the tree to copy its absolute path, relative path or file name, or to show it in Finder.
+- The `bring-file` skill copies one or more files, as they are at a branch or commit in this or another repository, into the working tree as an uncommitted change. It never switches branches, stages or commits unless asked.
+- A file's full path shows on hover in the tree.
+
+### Fixed
+
+- An HTML file with its own dark-mode rules was unreadable in dark mode: the frame's white background hid its light text. The frame now takes the app's scheme.
+- Run badges were hard to read in light mode; their digits now contrast with the fill.
+- The comment card and the selection toolbar no longer run past the window when neither side of the passage has room.
+
 ## [0.5.6] - 2026-10-27
 
 Trove 0.5.6 is the first release signed with a Developer ID and notarized by

@@ -1,6 +1,6 @@
 {
   "name": "trove",
-  "version": "0.5.6",
+  "version": "0.6.0",
   "description": "Trove: a local, git-driven editor for AI-written markdown and HTML. `trove serve` opens a git repository; `trove done|ask|reply` are the agent's side.",
   "type": "module",
   "license": "MIT",
