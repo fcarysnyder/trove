@@ -1,8 +1,9 @@
 // Updates from GitHub Releases without Squirrel. Squirrel.Mac installs an update only when its code
 // signature satisfies the running app's, and an ad-hoc signature is different on every build, so it
 // would refuse every one. Instead Trove downloads the release's installer itself, checks it against
-// the SHA-256 the release publishes beside it, copies the app out of it, and on Restart swaps its own
-// bundle with a short script that runs once Trove has quit.
+// the SHA-256 the release publishes beside it, copies the app out of it, checks its code signature
+// (and, once Trove is Developer ID signed, that it comes from the same team), and on Restart swaps its
+// own bundle with a short script that runs once Trove has quit.
 import { app } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -32,6 +33,25 @@ const bundle = () => {
   const b = resolve(process.execPath, '../../..');
   return app.isPackaged && b.endsWith('.app') ? b : null;
 };
+
+/** The Team ID a bundle is signed with, or null when it is signed ad hoc. `codesign -dv` writes to stderr. */
+async function teamOf(bundlePath: string): Promise<string | null> {
+  const { stderr } = await run('codesign', ['-dv', '--verbose=2', bundlePath]);
+  const team = /^TeamIdentifier=(.+)$/m.exec(stderr)?.[1].trim();
+  return team && team !== 'not set' ? team : null;
+}
+
+/**
+ * The checksum says the download is the release's file; this says who made it. The new app's signature
+ * must verify, and once the running app is Developer ID signed the new one must carry the same Team
+ * ID, so an update can never come from someone else, nor fall back to an ad-hoc build. An ad-hoc
+ * install has no team to match, which lets it update onto the first signed release.
+ */
+async function trusted(next: string, running: string): Promise<void> {
+  await run('codesign', ['--verify', '--deep', '--strict', next]).catch(() => { throw new Error('The update\'s signature does not verify'); });
+  const mine = await teamOf(running);
+  if (mine && (await teamOf(next)) !== mine) throw new Error('The update is not signed by the same developer');
+}
 
 /**
  * Look for a newer release and, when there is one, download and verify it so Restart can install it.
@@ -64,6 +84,7 @@ export async function checkForUpdate(): Promise<UpdateState> {
     writeFileSync(file, bytes);
     await run('hdiutil', ['attach', '-nobrowse', '-readonly', '-mountpoint', mnt, file]);
     try { await run('ditto', [join(mnt, 'Trove.app'), next]); } finally { await run('hdiutil', ['detach', mnt]).catch(() => {}); }
+    await trusted(next, bundle()!);
     return put({ state: 'ready', version }), state;
   } catch (e) {
     return put({ state: 'error', message: e instanceof Error ? e.message : String(e) }), state;
