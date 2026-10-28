@@ -89,9 +89,7 @@ trove reply "<summary>"                              answer a question the revie
 
 Download `Installer-Trove-<version>-arm64.dmg` from the
 [latest release](https://github.com/fcarysnyder/trove/releases/latest), open it and drag Trove to
-Applications. It runs on Apple silicon Macs. Trove is not notarized yet, so the first time you open
-it macOS blocks it: open System Settings › Privacy & Security and choose **Open Anyway**. You only
-need to do this once.
+Applications. It runs on Apple silicon Macs.
 
 The app opens a repository, picks a worktree and branch, and can start Claude Code or Codex in
 Terminal already attached to that window's server. Each repository gets its own window and its own

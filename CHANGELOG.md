@@ -9,6 +9,10 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+### Changed
+
+- The Mac app is signed with a Developer ID and notarized by Apple, so it opens without the Privacy & Security › Open Anyway step.
+
 ## [0.5.5] - 2026-10-27
 
 Trove 0.5.5 keeps itself up to date. It checks GitHub for a new release while

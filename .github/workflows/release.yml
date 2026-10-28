@@ -52,6 +52,14 @@ jobs:
       - run: pnpm build
 
       - name: Build the installer
+        env:
+          # Developer ID signing and notarization; unset on pull requests from forks, which then
+          # build ad hoc. See docs/DISTRIBUTION.md.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -o pipefail
           if ! pnpm --filter @trove/desktop dist 2>&1 | tee "$RUNNER_TEMP/dist.log"; then
@@ -81,12 +89,16 @@ jobs:
             file="$app/Contents/Resources/${icon%.icns}.icns"
             cmp "$file" ../assets/icon.icns || { echo "CFBundleIconFile=$icon; $(ls -l "$app/Contents/Resources" | grep -i icns)"; return 1; }
           }
-          adhoc() { d="$(codesign -dv "$app" 2>&1)"; grep -q 'Signature=adhoc' <<<"$d" || { echo "$d"; return 1; }; }
+          developer_id() { d="$(codesign -dv --verbose=2 "$app" 2>&1)"; grep -q 'Authority=Developer ID Application' <<<"$d" || { echo "$d"; return 1; }; }
           arm64() { a="$(lipo -archs "$app/Contents/MacOS/Trove")"; [ "$a" = arm64 ] || { echo "archs: $a"; return 1; }; }
           check "Version is $VERSION" version_is
           check "Icon is assets/icon.icns" icon_is_ours
           check "Signature verifies" codesign --verify --deep --strict "$app"
-          check "Signed ad hoc" adhoc
+          if [ "$GITHUB_REF_TYPE" = tag ]; then # releases must open without a Gatekeeper prompt
+            check "Signed with Developer ID" developer_id
+            check "Notarized" xcrun stapler validate "$app"
+            check "Gatekeeper accepts it" spctl --assess --type execute --verbose=2 "$app"
+          fi
           check "Built for arm64" arm64
           check "Installer is named for the release" test -f "Installer-Trove-$VERSION-arm64.dmg"
           ls -l . "$app/Contents/Resources" | head -40
