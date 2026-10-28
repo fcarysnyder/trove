@@ -25,6 +25,7 @@ var DEFAULT_SETTINGS = {
 var AGENT_LABELS = { claude: "Claude", codex: "Codex", other: "the agent" };
 
 // ../core/src/app.ts
+import { execFile } from "node:child_process";
 import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, realpathSync as realpathSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { createServer, request } from "node:http";
 import { randomUUID } from "node:crypto";
@@ -2314,6 +2315,15 @@ function createApp(o) {
     "GET /api/source": () => [200, info()],
     "GET /api/activity": () => (follow(), [200, { entries: activity }]),
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
+    // The file in the system's file manager. Never a shell: the path is one argument.
+    "POST /api/reveal": (_2, { path }) => {
+      const rel = listed(path);
+      if (!rel) return [404, { error: "not in the review set" }];
+      const abs = join3(top, rel);
+      execFile(...process.platform === "darwin" ? ["open", ["-R", abs]] : process.platform === "win32" ? ["explorer", [`/select,${abs}`]] : ["xdg-open", [dirname2(abs)]], () => {
+      });
+      return [200, {}];
+    },
     "POST /api/agent": (_2, { id, label }, req) => {
       if (id !== null && !Object.hasOwn(AGENT_LABELS, id)) return [400, { error: "id is claude, codex, other or null" }];
       if (label !== void 0 && (typeof label !== "string" || label.length > 40)) return [400, { error: "label is a short string" }];
@@ -2667,6 +2677,7 @@ async function gitCase(temps) {
   assert.deepEqual(await states(), { "a.md": "accepted", "b.md": "queue", "c.html": "accepted", "r \xE9 \xF1.md": "accepted" });
   for (const path of ["a.md", "c.html"]) assert.equal((await post("/api/unaccept", { path })).status, 200);
   assert.equal(staged(), "");
+  assert.equal((await post("/api/reveal", { path: "../etc/passwd" })).status, 404, "reveal: only a file in the set");
   assert.equal((await post("/api/accept", { path: "a.md" }, { host: "evil.example" })).status, 403);
   assert.equal((await post("/api/accept", { path: "a.md" }, { origin: "https://evil.example" })).status, 403);
   assert.equal((await post("/api/accept", { path: "a.md" }, { origin: "" })).status, 403);
