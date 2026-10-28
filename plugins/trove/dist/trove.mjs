@@ -25,6 +25,7 @@ var DEFAULT_SETTINGS = {
 var AGENT_LABELS = { claude: "Claude", codex: "Codex", other: "the agent" };
 
 // ../core/src/app.ts
+import { execFile } from "node:child_process";
 import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, realpathSync as realpathSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { createServer, request } from "node:http";
 import { randomUUID } from "node:crypto";
@@ -2314,6 +2315,15 @@ function createApp(o) {
     "GET /api/source": () => [200, info()],
     "GET /api/activity": () => (follow(), [200, { entries: activity }]),
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
+    // The file in the system's file manager. Never a shell: the path is one argument.
+    "POST /api/reveal": (_2, { path }) => {
+      const rel = listed(path);
+      if (!rel) return [404, { error: "not in the review set" }];
+      const abs = join3(top, rel);
+      execFile(...process.platform === "darwin" ? ["open", ["-R", abs]] : process.platform === "win32" ? ["explorer", [`/select,${abs}`]] : ["xdg-open", [dirname2(abs)]], () => {
+      });
+      return [200, {}];
+    },
     "POST /api/agent": (_2, { id, label }, req) => {
       if (id !== null && !Object.hasOwn(AGENT_LABELS, id)) return [400, { error: "id is claude, codex, other or null" }];
       if (label !== void 0 && (typeof label !== "string" || label.length > 40)) return [400, { error: "label is a short string" }];
@@ -2379,6 +2389,23 @@ function createApp(o) {
     if (![`127.0.0.1:${local}`, `localhost:${local}`].includes(req.headers.host ?? "")) return reply(403);
     if (!pathname.startsWith("/api/")) {
       if (req.method !== "GET") return reply(404);
+      if (pathname.startsWith("/raw/")) {
+        let rel;
+        try {
+          rel = decodeURIComponent(pathname.slice(5));
+        } catch {
+          return reply(404);
+        }
+        const abs = resolve(top, rel);
+        if (!abs.startsWith(top + sep) || abs.startsWith(join3(top, ".git") + sep)) return reply(404);
+        let body = rejected.get(relative(top, abs).split(sep).join("/"))?.text;
+        if (body == null) try {
+          if (statSync2(abs).isFile()) body = readFileSync2(abs);
+        } catch {
+        }
+        if (body == null) return reply(404);
+        return reply(200, body, { "content-type": TYPES[extname(abs).toLowerCase()] ?? "application/octet-stream" });
+      }
       const file = asset(pathname);
       if (file) return reply(200, readFileSync2(file), { "content-type": TYPES[extname(file).toLowerCase()] ?? "application/octet-stream", "content-security-policy": CSP });
       if (pathname === "/" && !uiDir) return reply(404, "No UI is built for this server; it answers /api/ only. Pass --ui <dir>.\n", { "content-type": "text/plain; charset=utf-8" });
@@ -2629,6 +2656,9 @@ async function gitCase(temps) {
   assert.match(page.csp, /script-src 'self';/, "no inline scripts");
   assert.equal((await raw(port, "/assets/app.js")).type, "text/javascript; charset=utf-8");
   for (const p of ["/../trove-outside.txt", "/%2e%2e/trove-outside.txt", "/assets/nope.js", "/api/nope"]) assert.equal((await raw(port, p)).status, 404, p);
+  const frame = await raw(port, "/raw/c.html");
+  assert.deepEqual([frame.status, frame.type, frame.csp, frame.text], [200, "text/html; charset=utf-8", "undefined", "<h1>C</h1><p>Hi</p>\n"]);
+  for (const p of ["/raw/../trove-outside.txt", "/raw/%2e%2e/trove-outside.txt", "/raw/.git/config", "/raw/nope.html", "/raw/gen"]) assert.equal((await raw(port, p)).status, 404, p);
   const bare = await listen(opts);
   assert.equal((await raw(bare.port, "/")).status, 404, "no uiDir: no page");
   assert.equal((await get("/api/files", bare.port)).status, 200, "but the API answers");
@@ -2647,6 +2677,7 @@ async function gitCase(temps) {
   assert.deepEqual(await states(), { "a.md": "accepted", "b.md": "queue", "c.html": "accepted", "r \xE9 \xF1.md": "accepted" });
   for (const path of ["a.md", "c.html"]) assert.equal((await post("/api/unaccept", { path })).status, 200);
   assert.equal(staged(), "");
+  assert.equal((await post("/api/reveal", { path: "../etc/passwd" })).status, 404, "reveal: only a file in the set");
   assert.equal((await post("/api/accept", { path: "a.md" }, { host: "evil.example" })).status, 403);
   assert.equal((await post("/api/accept", { path: "a.md" }, { origin: "https://evil.example" })).status, 403);
   assert.equal((await post("/api/accept", { path: "a.md" }, { origin: "" })).status, 403);

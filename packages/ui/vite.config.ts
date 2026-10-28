@@ -17,6 +17,7 @@ export default defineConfig({
     proxy: {
       // The server refuses POSTs from another origin, so the proxy presents the API's own.
       '/api': { target: api, changeOrigin: true, configure: (proxy) => proxy.on('proxyReq', (req) => req.setHeader('origin', api)) },
+      '/raw': { target: api, changeOrigin: true },
     },
   },
 });

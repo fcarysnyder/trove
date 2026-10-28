@@ -9,7 +9,7 @@ import { frameEl } from './doc/dom';
 
 /**
  * Keeps `ref` (position: fixed) at `range` as the document scrolls: on the preferred side of it, the
- * other when that side has no room, inside the window, hidden while the passage is scrolled away.
+ * other when that side has no room, slid inside the view when neither has, hidden while the passage is scrolled away.
  */
 function useAtRange(ref: RefObject<HTMLDivElement | null>, range: Range | undefined, side: 'above' | 'below') {
   const [, redraw] = useReducer((k: number) => k + 1, 0);
@@ -29,7 +29,9 @@ function useAtRange(ref: RefObject<HTMLDivElement | null>, range: Range | undefi
     const away = bottom < view.top || top > view.bottom; // scrolled away from the selection
     const above = top - el.offsetHeight - 6, below = bottom + 6;
     const fitsAbove = above >= view.top, fitsBelow = below + el.offsetHeight <= view.bottom;
-    const y = side === 'above' ? (fitsAbove ? above : below) : (fitsBelow || !fitsAbove ? below : above);
+    const wanted = side === 'above' ? (fitsAbove ? above : below) : (fitsBelow || !fitsAbove ? below : above);
+    // Neither side has room (a tall card, a passage near an edge): slide it inside the view, over the passage if it must.
+    const y = Math.max(view.top + 6, Math.min(wanted, view.bottom - el.offsetHeight - 6));
     const x = Math.max(8, Math.min(box.left + off.left, window.innerWidth - el.offsetWidth - 8));
     Object.assign(el.style, { left: `${x}px`, top: `${y}px`, visibility: away ? 'hidden' : 'visible' });
   });

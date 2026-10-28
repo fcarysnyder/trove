@@ -4,6 +4,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -15,7 +16,7 @@ import { countKeys, FILTERS, isPendingOnly, markRange, matches, PENDING_OFF, tog
 import { stateInfo } from '@/lib/status';
 import { dirOf, nameOf } from '@/lib/text';
 import { cn } from '@/lib/utils';
-import { acceptAll, createPr, open, prReady, reveal, setFilters, shown, togglePanel, visible } from './actions';
+import { acceptAll, createPr, open, prReady, reveal, setFilters, showInFolder, shown, togglePanel, visible } from './actions';
 import { Count, IconButton, nothingText } from './bits';
 import { StateIcons } from './StateIcon';
 import { get, set, useNames, useStore } from './store';
@@ -162,8 +163,10 @@ function Name({ path, query }: { path: string; query: string }) {
 function Folders({ list, query }: { list: FileRow[]; query: string }) {
   const closed = useStore((s) => s.closedDirs);
   const current = useStore((s) => s.current?.path);
+  const root = useStore((s) => s.source?.root);
   const n = useNames();
   const groups = Map.groupBy(list, (f) => dirOf(f.path));
+  const copy = (text: string) => void navigator.clipboard.writeText(text);
   return [...groups].map(([dir, rows]) => (
     <Collapsible key={dir} open={!!query || !closed.includes(dir)}
       onOpenChange={(o) => set((s) => ({ closedDirs: o ? s.closedDirs.filter((d) => d !== dir) : [...s.closedDirs, dir] }))}>
@@ -173,13 +176,29 @@ function Folders({ list, query }: { list: FileRow[]; query: string }) {
       </CollapsibleTrigger>
       <CollapsibleContent>
         {rows.map((f) => (
-          <button key={f.path} data-tree-row aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
-            className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-card hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
-              f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
-            <StateIcons file={f} names={n} />
-            <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
-            {f.drafts > 0 && <Count n={f.drafts} />}
-          </button>
+          <ContextMenu key={f.path}>
+            <ContextMenuTrigger asChild>
+              <button data-tree-row title={f.path} aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
+                className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-card hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
+                  f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
+                <StateIcons file={f} names={n} />
+                <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
+                {f.drafts > 0 && <Count n={f.drafts} />}
+              </button>
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuSub>
+                <ContextMenuSubTrigger>Copy</ContextMenuSubTrigger>
+                <ContextMenuSubContent>
+                  <ContextMenuItem disabled={!root} onSelect={() => copy(`${root}/${f.path}`)}>Absolute path</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => copy(f.path)}>Relative path</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => copy(nameOf(f.path))}>Filename</ContextMenuItem>
+                </ContextMenuSubContent>
+              </ContextMenuSub>
+              <ContextMenuSeparator />
+              <ContextMenuItem onSelect={() => void showInFolder(f.path)}>{navigator.platform.startsWith('Mac') ? 'Show in Finder' : 'Show in folder'}</ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         ))}
       </CollapsibleContent>
     </Collapsible>
