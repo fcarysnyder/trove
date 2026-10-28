@@ -9,6 +9,10 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+### Added
+
+- A second `trove serve` on a repository that the desktop app or another session already serves refuses and prints that server's address; `--force` starts another. `info`, `attach`, `detach`, `done`, `ask` and `reply` take `--root <repo>` instead of `--port` and find the running server through `<git-dir>/trove/server.json`.
+
 ## [0.6.0] - 2026-10-28
 
 Trove 0.6.0 renders an HTML file the way a browser does: a slide deck or a

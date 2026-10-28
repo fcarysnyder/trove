@@ -4,19 +4,21 @@
 // is already running (the desktop's); `done`, `ask` and `reply` are the agent's side of it;
 // `--selftest` checks the engine end to end.
 //
-//   trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>]
-//   trove attach --port N [--agent claude|codex|other] | detach --port N | info --port N
-//   trove done <file> [--port 4824]
-//   trove ask "<question>" | reply "<summary>" | ask --clear [--port 4824]
+//   trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>] [--force]
+//   trove attach [--root <repo> | --port N] [--agent claude|codex|other] | detach [--root <repo> | --port N] | info [--root <repo> | --port N]
+//   trove done <file> [--root <repo> | --port N]
+//   trove ask "<question>" | reply "<summary>" | ask --clear [--root <repo> | --port N]
+// Without --port these find the server running on --root's repository (default: the current directory's).
 //   trove --selftest
 import { existsSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { call, selftest, serve } from '@trove/core';
+import { call, running, selftest, serve } from '@trove/core';
 
-const USAGE = 'usage: trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>]'
-  + ' | attach --port N [--agent claude|codex|other] | detach --port N | info --port N | done <file> [--port 4824] | ask "<question>" | reply "<summary>" | ask --clear [--port 4824] | --selftest';
+const USAGE = 'usage: trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>] [--force]'
+  + ' | attach [--root <repo> | --port N] [--agent claude|codex|other] | detach [--root <repo> | --port N] | info [--root <repo> | --port N]'
+  + ' | done <file> [--root <repo> | --port N] | ask "<question>" | reply "<summary>" | ask --clear [--root <repo> | --port N] | --selftest';
 const here = dirname(fileURLToPath(import.meta.url));
 
 // How the agent should call this binary back: `trove` when it runs from PATH (an npm bin link),
@@ -52,11 +54,18 @@ async function main() {
     args,
     allowPositionals: true,
     options: {
-      root: { type: 'string', default: '.' }, port: { type: 'string', default: '4824' }, exclude: { type: 'string', multiple: true },
+      root: { type: 'string', default: '.' }, port: { type: 'string' }, force: { type: 'boolean' }, exclude: { type: 'string', multiple: true },
       scope: { type: 'string' }, base: { type: 'string' }, ui: { type: 'string' }, clear: { type: 'boolean' }, agent: { type: 'string', default: 'claude' },
     },
   });
-  const port = Number(values.port);
+  // serve binds 4824 by default; the other commands go to --port, else the server on --root's repository.
+  const finds = ['attach', 'detach', 'info', 'done', 'ask', 'reply'].includes(command);
+  const port = values.port ? Number(values.port) : finds ? (await running(values.root))?.port : 4824;
+  if (port === undefined) {
+    console.log(`nothing is serving ${resolve(values.root)}: start one with trove serve, or pass --port`);
+    process.exitCode = 1;
+    return;
+  }
   const failed = (/** @type {Error} */ e) => ({ status: 0, body: { error: e.message } });
   if ((command === 'ask' || command === 'reply') && (positionals[0] || values.clear)) {
     const kind = command === 'reply' ? 'reply' : 'question';
@@ -98,14 +107,14 @@ async function main() {
   const cmd = invoked();
   try {
     const { port: bound } = await serve({
-      root: resolve(values.root), port, exclude: values.exclude, scope: /** @type {'uncommitted' | 'branch' | undefined} */ (values.scope), base: values.base,
+      root: resolve(values.root), port, force: values.force, by: 'cli', exclude: values.exclude, scope: /** @type {'uncommitted' | 'branch' | undefined} */ (values.scope), base: values.base,
       uiDir: values.ui ? resolve(values.ui) : defaultUi(),
       doneCommand: (p) => `${cmd} done <file> --port ${p}`,
     });
     console.log(await firstLine(bound));
   } catch (/** @type {any} */ error) {
     console.log(error.code === 'EADDRINUSE' ? `port ${port} is busy: another session is probably serving. Stop it, or pass --port.`
-      : error.message.startsWith('not a git repository') ? error.message : `server failed: ${error.message}`);
+      : /^(not a git repository|Trove is already serving)/.test(error.message) ? error.message : `server failed: ${error.message}`);
     process.exitCode = 1;
   }
 }
