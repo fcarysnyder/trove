@@ -163,7 +163,7 @@ function ModalBody({ editing }: { editing: Editing }) {
           />
         </div>
         <div aria-label="Preview" className="preview min-h-0 min-w-0 overflow-auto p-4">
-          {current.kind === 'html' ? <iframe sandbox="" srcDoc={shown} title="Preview" className="size-full rounded-md border-0 bg-white" />
+          {current.kind === 'html' ? <iframe sandbox="" srcDoc={shown.replace(/<head[^>]*>/i, '$&<style>:root{color-scheme:light dark}</style>')} title="Preview" className="size-full rounded-md border-0" />
             : fm ? <pre className="fm">{shown}</pre>
             : current.kind === 'text' ? <pre className="font-mono text-[13px] whitespace-pre-wrap">{shown}</pre>
             : <div className="block-body" dangerouslySetInnerHTML={{ __html: marked.parse(shown, undefined) as string }} />}

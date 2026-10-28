@@ -173,7 +173,7 @@ function Folders({ list, query }: { list: FileRow[]; query: string }) {
       </CollapsibleTrigger>
       <CollapsibleContent>
         {rows.map((f) => (
-          <button key={f.path} data-tree-row aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
+          <button key={f.path} data-tree-row title={f.path} aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
             className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-card hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
               f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
             <StateIcons file={f} names={n} />
