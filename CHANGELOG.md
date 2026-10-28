@@ -9,6 +9,15 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-28
+
+Trove 0.7.0 puts the agent's terminal inside the window. On the desktop,
+Claude Code or Codex runs at the top of the Agent pane, with Changes and
+History as tabs beneath it, so reviewing and talking to the agent no longer
+means switching windows. A repository is served once: a second `trove serve`
+finds the running server and says where it is, and the plugin's skill attaches
+to it instead of starting its own.
+
 ### Added
 
 - On the desktop, Claude Code or Codex runs in a terminal inside the window, at the top of the Agent pane, instead of in a separate terminal app. Its height is remembered, it folds to its header, and it stops when the window closes. "In Trove" is the new default in the start page's terminal choice; Terminal, iTerm2 and the others are still there.
