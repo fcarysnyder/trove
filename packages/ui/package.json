@@ -13,6 +13,8 @@
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
     "@trove/core": "workspace:*",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.0",
     "lucide-react": "^1.61.0",

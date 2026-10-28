@@ -1,12 +1,15 @@
 import type { Anchor, BlockEdit, CommentKind, Draft, FileRow } from '@trove/core/types';
 import { ChevronDown, CircleAlert, MessageCircleQuestion, MessageSquare, PanelRightClose, Pencil, Trash, Undo2 } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import type { PanelImperativeHandle } from 'react-resizable-panels';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Kbd } from '@/components/ui/kbd';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { load, save } from '@/lib/storage';
 import { mod, plural, reducedMotion } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { loadAll, open, revertEdit, saveDrafts, send, sendable, setScope, togglePanel } from './actions';
@@ -15,6 +18,22 @@ import { get, set, useNames, useStore } from './store';
 import { showBlock, showPassage } from './doc/commands';
 import { ActivityList, activityFor } from './Activity';
 import { Notice } from './TopBar';
+
+// Desktop only, and its own chunk: the plugin's page never loads xterm.
+const Terminal = lazy(() => import('./Terminal'));
+
+/** Whether this window has an agent terminal: one already ran, or main starts one (Connect's Start buttons). */
+function useSession() {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const pty = window.trove?.pty;
+    if (!pty) return;
+    void pty.state().then((s) => { if (s) setOn(true); });
+    const off = pty.onData(() => { setOn(true); off(); });
+    return off;
+  }, []);
+  return on;
+}
 
 export function ChangesColumn() {
   const current = useStore((s) => s.current);
@@ -84,15 +103,54 @@ export function ChangesColumn() {
         </DropdownMenu>
         <IconButton side="bottom" label="Hide agent" tip="Hide agent (])" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
-        {current && <ActivityList path={scope === 'file' ? current.path : undefined} />}
-        {/* Under the history, the comments and edits still to send. */}
-        {current ? <PaneSection id="changes" title="Changes" count={shown}>{body}</PaneSection> : body}
-      </ScrollArea>
-      <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
-        <SendButton />
-      </div>
+      <WithTerminal>
+        <ScrollArea className="min-h-0 flex-1">
+          {current && <ActivityList path={scope === 'file' ? current.path : undefined} />}
+          {/* Under the history, the comments and edits still to send. */}
+          {current ? <PaneSection id="changes" title="Changes" count={shown}>{body}</PaneSection> : body}
+        </ScrollArea>
+        <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
+          <SendButton />
+        </div>
+      </WithTerminal>
     </section>
+  );
+}
+
+const HEADER = 36; // the terminal's header, all that shows while it is hidden
+
+/** The agent's terminal over `children` (the history and changes), once the window has one; its height and hiding are remembered. */
+function WithTerminal({ children }: { children: ReactNode }) {
+  const session = useSession();
+  const panel = useRef<PanelImperativeHandle>(null);
+  const [saved] = useState(() => load('terminal', { height: 360, hidden: false }));
+  const [hidden, setHidden] = useState(saved.hidden);
+  const [animate, setAnimate] = useState(false);
+  useEffect(() => {
+    if (!session) return;
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => setAnimate(true))); // as Columns: no motion on load
+    return () => cancelAnimationFrame(id);
+  }, [session]);
+  if (!session) return <div className="flex min-h-0 flex-1 flex-col">{children}</div>;
+  const hide = (h: boolean) => {
+    if (h) panel.current?.collapse(); else panel.current?.resize(saved.height);
+  };
+  // A drag or hide/show: the folded state and an open terminal's height are remembered.
+  const changed = (_: unknown, meta: { isUserInteraction: boolean }) => {
+    const px = panel.current?.getSize().inPixels ?? 0;
+    const h = !!panel.current?.isCollapsed();
+    setHidden(h);
+    if (!h && meta.isUserInteraction) saved.height = Math.round(px);
+    save('terminal', { ...saved, hidden: h });
+  };
+  return (
+    <ResizablePanelGroup orientation="vertical" onLayoutChanged={changed} className={cn('min-h-0 flex-1', animate && 'animate')}>
+      <ResizablePanel id="terminal" panelRef={panel} collapsible collapsedSize={HEADER} minSize={160} defaultSize={hidden ? HEADER : saved.height} groupResizeBehavior="preserve-pixel-size">
+        <Suspense><Terminal hidden={hidden} onHide={hide} /></Suspense>
+      </ResizablePanel>
+      <ResizableHandle aria-label="Resize terminal" />
+      <ResizablePanel id="history" minSize={120}><div className="flex h-full flex-col">{children}</div></ResizablePanel>
+    </ResizablePanelGroup>
   );
 }
 
