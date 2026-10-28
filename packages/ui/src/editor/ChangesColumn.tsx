@@ -53,7 +53,7 @@ export function ChangesColumn() {
     const count = (f: FileRow) => (f.path === current.path ? own : (allDrafts[f.path]?.length ?? 0) + (allEdits[f.path]?.length ?? 0));
     const group = (f: FileRow, locked = false) => [
       <FileHead key={`h${f.path}`} f={f} count={count(f)} />,
-      ...rowsOf(f, locked),
+      <div key={`g${f.path}`} className="mr-4 mb-2 ml-5 border-l [&>div]:pr-0 [&>div]:pl-3">{rowsOf(f, locked)}</div>,
     ];
     const withAny = files.filter((f) => count(f));
     const live = withAny.filter((f) => f.state !== 'working');
@@ -104,7 +104,7 @@ function Row({ kind, anchor, n, found, tools, children, locked, onClick, rowRef 
   const Kind = kind === 'explain' ? MessageCircleQuestion : MessageSquare;
   return (
     <div ref={rowRef} data-note={locked ? undefined : n ?? undefined} onClick={(e) => { if (!(e.target as Element).closest('textarea, button')) onClick?.(); }}
-      className={cn('group/note border-b px-4 py-3', locked ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:bg-card')}>
+      className={cn('group/note px-4 py-2', locked ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:bg-card')}>
       <div className="flex min-h-6 items-center gap-1.5 text-xs text-muted-foreground">
         {n != null && <span>{n + 1}</span>}
         <Kind className="size-3.5" aria-hidden />
@@ -175,7 +175,7 @@ function EditRow({ path, x, locked }: { path: string; x: BlockEdit; locked: bool
   const firstLine = (t: string) => t.split('\n').find((l) => l.trim()) ?? '';
   return (
     <div onClick={(e) => { if (!locked && !(e.target as Element).closest('button')) void showBlock(path, x.index); }}
-      className={cn('group/note border-b px-4 py-3', locked ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:bg-card')}>
+      className={cn('group/note px-4 py-2', locked ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:bg-card')}>
       <div className="flex min-h-6 items-center gap-1.5 text-xs text-muted-foreground">
         <Pencil className="size-3.5" aria-hidden /><span>Edit</span>
         {!locked && (
@@ -202,7 +202,7 @@ function EditRow({ path, x, locked }: { path: string; x: BlockEdit; locked: bool
 function FileHead({ f, count }: { f: FileRow; count: number }) {
   return (
     <button onClick={() => void open(f.path)} title={f.path}
-      className="flex w-full items-center gap-1.5 px-4 pt-3 pb-1 text-left font-semibold whitespace-nowrap text-foreground outline-none hover:bg-card focus-visible:ring-2 focus-visible:ring-ring">
+      className="flex w-full items-center gap-1.5 px-4 pt-2 pb-1 text-left text-[13px] font-medium whitespace-nowrap text-body outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
       <PathLabel path={f.path} className="min-w-0 flex-1" />
       <Count n={count} />
     </button>
