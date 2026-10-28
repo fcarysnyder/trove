@@ -3,17 +3,18 @@ import { ChevronDown, CircleAlert, MessageCircleQuestion, MessageSquare, PanelRi
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Kbd } from '@/components/ui/kbd';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { mod, plural, reducedMotion } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { loadAll, open, revertEdit, saveDrafts, send, sendable, setScope, togglePanel } from './actions';
-import { Count, IconButton, PathLabel } from './bits';
+import { Count, IconButton, PaneSection, PathLabel } from './bits';
 import { get, set, useNames, useStore } from './store';
 import { showBlock, showPassage } from './doc/commands';
+import { ActivityList, activityFor } from './Activity';
+import { Notice } from './TopBar';
 
 export function ChangesColumn() {
   const current = useStore((s) => s.current);
@@ -41,44 +42,52 @@ export function ChangesColumn() {
     ].sort((a, b) => a[0] - b[0]).map(([, r]) => r);
   };
 
+  // The thread: what went back and forth with the agent, oldest first, then the comments and edits still to send.
+  const activity = useStore((s) => s.activity);
   let body: ReactNode;
   if (!current) body = <p className="px-4 py-3 text-muted-foreground">No file open</p>;
   else if (scope === 'file') {
-    body = own ? rowsOf(current) : <p className="px-4 py-3 text-muted-foreground">No comments or edits on this file</p>;
+    body = own ? rowsOf(current) : activityFor(activity, current.path).length ? null : <p className="px-4 py-3 text-muted-foreground">No comments or edits on this file</p>;
   } else {
     // Every file's comments and edits in tree order; files the agent is working on last, read-only.
     const count = (f: FileRow) => (f.path === current.path ? own : (allDrafts[f.path]?.length ?? 0) + (allEdits[f.path]?.length ?? 0));
     const group = (f: FileRow, locked = false) => [
       <FileHead key={`h${f.path}`} f={f} count={count(f)} />,
-      ...rowsOf(f, locked),
+      <div key={`g${f.path}`} className="mr-4 mb-2 ml-5 border-l [&>div]:pr-0 [&>div]:pl-3">{rowsOf(f, locked)}</div>,
     ];
     const withAny = files.filter((f) => count(f));
     const live = withAny.filter((f) => f.state !== 'working');
     const locked = withAny.filter((f) => f.state === 'working');
     body = [
-      ...(live.length ? live.flatMap((f) => group(f)) : [<p key="empty" className="px-4 py-3 text-muted-foreground">No comments or edits</p>]),
+      ...(live.length ? live.flatMap((f) => group(f)) : activity.length ? [] : [<p key="empty" className="px-4 py-3 text-muted-foreground">No comments or edits</p>]),
       ...(locked.length ? [<div key="locked" className="px-4 pt-4 text-xs text-muted-foreground">{n.Agent} is working</div>, ...locked.flatMap((f) => group(f, true))] : []),
     ];
   }
 
   return (
-    <section aria-label="Changes" className="flex h-full min-w-0 flex-col">
+    <section aria-label="Agent" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">
-        <span className="flex flex-1 items-center gap-1.5 font-semibold text-foreground" aria-label={shown ? `Changes, ${plural(shown, 'change')}` : 'Changes'}>
-          Changes{shown > 0 && <Count n={shown} />}
-        </span>
-        <IconButton side="bottom" label="Hide changes" tip="Hide changes (])" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
+        <span className="font-semibold text-foreground">Agent</span>
+        <Notice />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="ml-auto gap-1 text-muted-foreground" aria-label={`Showing ${scope === 'file' ? 'this file' : 'all files'}`}>
+              {scope === 'file' ? 'This file' : 'All files'}<ChevronDown />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuRadioGroup value={scope} onValueChange={(v) => setScope(v as 'file' | 'all')}>
+              <DropdownMenuRadioItem value="file">This file</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="all">All files</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <IconButton side="bottom" label="Hide agent" tip="Hide agent (])" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
       </div>
-      <ToggleGroup type="single" value={scope} onValueChange={(v) => v && setScope(v as 'file' | 'all')} aria-label="Comments shown" spacing={0}
-        className="mx-4 my-2 w-auto shrink-0 gap-0.5 rounded-lg bg-card p-0.5">
-        {(['file', 'all'] as const).map((v) => (
-          <ToggleGroupItem key={v} value={v} size="default" className="h-8 flex-1 rounded-md! px-2 text-xs text-muted-foreground data-[state=on]:bg-accent data-[state=on]:text-foreground">
-            {v === 'file' ? 'This file' : 'All files'}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
       <ScrollArea className="min-h-0 flex-1">
-        {body}
+        {current && <ActivityList path={scope === 'file' ? current.path : undefined} />}
+        {/* Under the history, the comments and edits still to send. */}
+        {current ? <PaneSection id="changes" title="Changes" count={shown}>{body}</PaneSection> : body}
       </ScrollArea>
       <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
         <SendButton />
@@ -95,7 +104,7 @@ function Row({ kind, anchor, n, found, tools, children, locked, onClick, rowRef 
   const Kind = kind === 'explain' ? MessageCircleQuestion : MessageSquare;
   return (
     <div ref={rowRef} data-note={locked ? undefined : n ?? undefined} onClick={(e) => { if (!(e.target as Element).closest('textarea, button')) onClick?.(); }}
-      className={cn('group/note border-b px-4 py-3', locked ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:bg-card')}>
+      className={cn('group/note px-4 py-2', locked ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:bg-card')}>
       <div className="flex min-h-6 items-center gap-1.5 text-xs text-muted-foreground">
         {n != null && <span>{n + 1}</span>}
         <Kind className="size-3.5" aria-hidden />
@@ -166,7 +175,7 @@ function EditRow({ path, x, locked }: { path: string; x: BlockEdit; locked: bool
   const firstLine = (t: string) => t.split('\n').find((l) => l.trim()) ?? '';
   return (
     <div onClick={(e) => { if (!locked && !(e.target as Element).closest('button')) void showBlock(path, x.index); }}
-      className={cn('group/note border-b px-4 py-3', locked ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:bg-card')}>
+      className={cn('group/note px-4 py-2', locked ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:bg-card')}>
       <div className="flex min-h-6 items-center gap-1.5 text-xs text-muted-foreground">
         <Pencil className="size-3.5" aria-hidden /><span>Edit</span>
         {!locked && (
@@ -193,7 +202,7 @@ function EditRow({ path, x, locked }: { path: string; x: BlockEdit; locked: bool
 function FileHead({ f, count }: { f: FileRow; count: number }) {
   return (
     <button onClick={() => void open(f.path)} title={f.path}
-      className="flex w-full items-center gap-1.5 px-4 pt-3 pb-1 text-left font-semibold whitespace-nowrap text-foreground outline-none hover:bg-card focus-visible:ring-2 focus-visible:ring-ring">
+      className="flex w-full items-center gap-1.5 px-4 pt-2 pb-1 text-left text-[13px] font-medium whitespace-nowrap text-body outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
       <PathLabel path={f.path} className="min-w-0 flex-1" />
       <Count n={count} />
     </button>

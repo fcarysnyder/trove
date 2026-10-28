@@ -1,6 +1,6 @@
 // The editor's behaviour, ported from the old page's script: polling, opening, stepping, accepting,
 // drafts, edits and sending. Components call these; they read and write the store.
-import type { BlockEdit, CommentKind, Draft, DraftsResponse, FileResponse, FileRow, FilesResponse, GitInfo, Recent, SendBody, Settings, SourceInfo } from '@trove/core/types';
+import type { ActivityResponse, BlockEdit, CommentKind, Draft, DraftsResponse, FileResponse, FileRow, FilesResponse, GitInfo, Recent, SendBody, Settings, SourceInfo } from '@trove/core/types';
 import { toast } from 'sonner';
 import { api, ApiError, optional } from '@/lib/api';
 import { passes, normalizeOff, type FilterKey } from '@/lib/filter';
@@ -266,7 +266,7 @@ export function setScope(scope: 'file' | 'all') {
   if (scope === 'all') void loadAll().catch(() => {});
 }
 
-export function togglePanel(name: 'files' | 'changes', hide?: boolean) {
+export function togglePanel(name: keyof State['hidden'], hide?: boolean) {
   set((s) => ({ hidden: { ...s.hidden, [name]: hide ?? !s.hidden[name] } }));
   save(`hide-${name}`, get().hidden[name]);
 }
@@ -381,7 +381,13 @@ export async function init() {
   const waiting = (f: FileRow) => f.state === 'queue' || f.state === 'working';
   const first = visible().find(waiting) ?? get().files.find(waiting); // the remembered filters may hide every waiting file
   if (first) await open(first.path);
-  setInterval(() => { void refresh(); void loadGit(); void loadSource(); }, 2000);
+  if (!get().hidden.changes) void loadActivity();
+  setInterval(() => { void refresh(); void loadGit(); void loadSource(); if (!get().hidden.changes) void loadActivity(); }, 2000);
+}
+/** The Changes thread's activity; an old server without /api/activity has none. */
+export async function loadActivity() {
+  const res = await optional<ActivityResponse>('activity').catch(() => undefined);
+  if (res !== undefined && JSON.stringify(res?.entries ?? []) !== JSON.stringify(get().activity)) set({ activity: res?.entries ?? [] });
 }
 /** The attached agent changes under the page (`trove attach`, `detach`): its colour and name follow. */
 async function loadSource() {

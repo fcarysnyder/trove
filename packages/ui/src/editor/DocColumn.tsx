@@ -27,6 +27,8 @@ export function DocColumn() {
   const hidden = useStore((s) => s.hidden);
   const showNew = useStore((s) => s.showNew);
   const editing = useStore((s) => s.editing);
+  const question = useStore((s) => s.question);
+  const n = useNames();
   const model = current && docModel(current);
   const own = current ? current.drafts.length + current.edits.length : 0;
   const newTip = model?.canShowNew ? 'Show new (N)' : current?.kind === 'markdown' ? 'No earlier version to compare with' : 'Markdown files only';
@@ -47,8 +49,9 @@ export function DocColumn() {
           <TooltipContent>{newTip}</TooltipContent>
         </Tooltip>
         {hidden.changes && (
-          <IconButton side="bottom" label={own ? `Show changes, ${plural(own, 'change')}` : 'Show changes'} tip="Show changes (])" className="relative" onClick={() => togglePanel('changes', false)}>
-            {own > 0 && <span aria-hidden className="absolute top-px right-px size-2 rounded-full bg-destructive shadow-[0_0_0_1.5px_var(--background)]" />}
+          <IconButton side="bottom" label={[`Show agent`, question && (question.kind === 'reply' ? `${n.who} replied` : `${n.who} has a question`), own && plural(own, 'change')].filter(Boolean).join(', ')}
+            tip="Show agent (])" className="relative" onClick={() => togglePanel('changes', false)}>
+            {(question || own > 0) && <span aria-hidden className={cn('absolute top-px right-px size-2 rounded-full shadow-[0_0_0_1.5px_var(--background)]', question ? 'bg-agent' : 'bg-destructive')} />}
             <PanelRight />
           </IconButton>
         )}
@@ -161,7 +164,8 @@ function DocView() {
     const ranges = found.flatMap((h) => (h ? [toRange(bodyOf(h.i), h.start, h.end)] : [])).filter((r): r is Range => !!r);
     if (view?.CSS?.highlights) view.CSS.highlights.set('comment', new view.Highlight(...ranges));
   }, [model, current.drafts, frameLoads, editing]);
-  useEffect(() => () => { CSS.highlights?.delete('comment'); set({ hits: [] }); }, []);
+  // A layout cleanup: the view is keyed by file, and a passive one would run after the next file's lookup and wipe it.
+  useLayoutEffect(() => () => { CSS.highlights?.delete('comment'); set({ hits: [] }); }, []);
 
   useEffect(() => {
     const up = (e: MouseEvent) => onSelect(document, e.target);
@@ -328,7 +332,7 @@ function DocFooter() {
   const busy = !!editing;
   const next = nextPending();
   return (
-    <div className="flex min-h-12 shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 border-t px-4 py-1.5">
+    <div className="flex min-h-12 shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 border-t px-4">
       <span className="flex min-w-0 flex-[1_1_auto] cursor-default items-center gap-1.5 overflow-hidden text-xs whitespace-nowrap text-muted-foreground select-none">
         <StateIcons file={f} names={n} className="size-3.5" />{s.label}
       </span>

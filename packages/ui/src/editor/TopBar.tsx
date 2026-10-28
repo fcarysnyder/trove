@@ -10,7 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { PROGRESS, stateInfo } from '@/lib/status';
 import { dirOf, folderText, nameOf, plural } from '@/lib/text';
 import { cn } from '@/lib/utils';
-import { dismissQuestion, reveal, step, visible } from './actions';
+import { dismissQuestion, reveal, step, togglePanel, visible } from './actions';
 import { Count, IconButton } from './bits';
 import { Icon } from './StateIcon';
 import { get, set, useNames, useStore } from './store';
@@ -60,7 +60,6 @@ export function TopBar() {
             <Unplug className="size-4" aria-hidden />Disconnected
           </span>
         )}
-        <Notice />
         {source && <Connect />}
         {hasSettings && <IconButton label="Settings" onClick={() => set({ settingsOpen: true })}><Settings /></IconButton>}
       </div>
@@ -114,8 +113,8 @@ function Progress() {
   );
 }
 
-/** What the agent left in its session: a question or a reply, and the files it changed. Only the X dismisses it. */
-function Notice() {
+/** What the agent left in its session, a question or a reply, as a small chip in the Agent pane's header: it opens the text and the files changed. Only the x dismisses it. */
+export function Notice() {
   const q = useStore((s) => s.question);
   const files = useStore((s) => s.files);
   const n = useNames();
@@ -124,15 +123,15 @@ function Notice() {
   const changed = files.filter((f) => f.updated);
   const label = q.kind === 'reply' ? `${n.who} replied` : `${n.who} has a question`;
   return (
-    <span className="inline-flex items-center rounded-full border bg-card">
+    <span className="inline-flex h-6 shrink-0 items-center rounded-full bg-secondary">
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="sm" className="h-8 gap-1.5 rounded-l-full rounded-r-none pr-1.5 pl-2.5 text-foreground"
+          <button title={label} className="inline-flex h-6 items-center gap-1.5 rounded-l-full pr-1 pl-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={`${label}${changed.length ? `, ${plural(changed.length, 'file')} changed` : ''}`}>
-            <span className="size-2 rounded-full bg-agent" aria-hidden />
-            {label}
+            <span className="size-1.5 shrink-0 rounded-full bg-agent" aria-hidden />
+            {q.kind === 'reply' ? 'Replied' : 'Question'}
             {changed.length > 0 && <Count n={changed.length} className="bg-agent text-black" />}
-          </Button>
+          </button>
         </PopoverTrigger>
         <PopoverContent align="end" onOpenAutoFocus={(e) => e.preventDefault()} className="max-h-[60vh] w-80 gap-0 overflow-auto p-1" aria-label={`What ${n.agent} left for you`}>
           {q.text && <p className="p-2 text-[13px] text-body [overflow-wrap:anywhere]">{q.text}</p>}
@@ -145,7 +144,7 @@ function Notice() {
           ))}
         </PopoverContent>
       </Popover>
-      <IconButton label="Dismiss" className="h-8 rounded-l-none rounded-r-full pr-1.5 [&_svg]:size-3.5" onClick={() => void dismissQuestion()}><X /></IconButton>
+      <IconButton label="Dismiss" className="size-6 rounded-l-none rounded-r-full [&_svg]:size-3" onClick={() => void dismissQuestion()}><X /></IconButton>
     </span>
   );
 }

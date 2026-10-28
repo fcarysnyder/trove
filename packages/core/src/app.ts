@@ -10,7 +10,7 @@ import { blocks, splice } from './anchor.js';
 import { included, kindOf, loadSettings, mergeSettings, saveSettings } from './settings.js';
 import { agentAbove, alive, peerOf } from './presence.js';
 import { openSource, sha, withChanges } from './source.js';
-import { AGENT_LABELS, type AgentId, type AgentInfo, type BlockEdit, type Draft, type FileEntry, type GitInfo, type GitScope, type Question, type Settings, type SourceInfo } from './types.js';
+import { AGENT_LABELS, type Activity, type AgentId, type AgentInfo, type BlockEdit, type Draft, type FileEntry, type GitInfo, type GitScope, type Question, type Settings, type SourceInfo } from './types.js';
 
 export interface AppOptions {
   root: string; // any path inside a git working tree; anything else throws `not a git repository: <root>`
@@ -117,6 +117,15 @@ export function createApp(o: AppOptions): App {
     seen: [...seen], skipped: [...skipped], rejected: Object.fromEntries(rejected), agent }));
   if (serving) saveState();
   const REJECTED: Result = [409, { error: 'Rejected: restore it first' }];
+  // What the agent drawer lists, newest last: the batches log's last sends, then what this run sees.
+  const activity: Activity[] = [];
+  const note = (kind: Activity['kind'], text: string, more: Partial<Activity> = {}) => {
+    activity.push({ at: new Date().toISOString(), kind, text, ...more });
+    activity.splice(0, activity.length - 100);
+  };
+  const sentEntry = (b: { id: string; sentAt: string; items: { path: string | null }[] }): Activity =>
+    ({ at: b.sentAt, kind: 'batch', text: b.id, comments: b.items.length, paths: [...new Set(b.items.map((c) => c.path as string))] });
+  try { activity.push(...readFileSync(files.batches, 'utf8').trim().split('\n').slice(-100).map((l) => sentEntry(JSON.parse(l)))); } catch {}
 
   function list(): FileEntry[] {
     const before = seen.size;
@@ -161,6 +170,7 @@ export function createApp(o: AppOptions): App {
     working.delete(rel);
     if (hashOf(rel) !== w.hash) updated.set(rel, w.text);
     saveState();
+    note('release', rel);
     return true;
   }
   // Fallback release: the file changed after send and then stayed the same for quietMs.
@@ -171,6 +181,20 @@ export function createApp(o: AppOptions): App {
       if (h !== w.last) Object.assign(w, { last: h, at: now });
       else if (now - w.at >= quietMs) release(rel);
     }
+    follow();
+  }
+  // Lines other routes append to the events log join the activity, stamped when this run first reads
+  // them; batch notices are left to the batches log, which says more.
+  const size = (f: string) => { try { return statSync(f).size; } catch { return 0; } };
+  let eventsAt = size(files.events);
+  function follow() {
+    const n = size(files.events);
+    if (n === eventsAt) return;
+    if (n < eventsAt) eventsAt = 0; // cut short or replaced: from the start
+    const tail = readFileSync(files.events).subarray(eventsAt);
+    const end = tail.lastIndexOf(10) + 1; // a line still being written waits
+    eventsAt += end;
+    for (const line of tail.subarray(0, end).toString('utf8').split('\n')) if (line && !line.startsWith('batch ')) note('event', line);
   }
 
   const port = () => { const a = server.address(); return a && typeof a === 'object' ? a.port : 0; };
@@ -410,6 +434,7 @@ export function createApp(o: AppOptions): App {
       const id = randomUUID().slice(0, 8);
       const sentPaths = new Set(items.map((c) => c.path));
       appendFileSync(files.batches, `${JSON.stringify({ id, sentAt: new Date().toISOString(), items })}\n`);
+      note('batch', id, { comments: items.length, paths: [...sentPaths] as string[] });
       saveDrafts(keep);
       // A notice, not the batch itself: a long line is cut short on its way to the agent.
       const notice = `batch ${id}: ${items.length} ${items.length === 1 ? 'comment' : 'comments'} on ${sentPaths.size} ${sentPaths.size === 1 ? 'file' : 'files'}. Read it with: grep -F ${id} '${files.batches}'`;
@@ -437,6 +462,7 @@ export function createApp(o: AppOptions): App {
       if (typeof text !== 'string' || !['question', 'reply'].includes(kind)) return [400, { error: 'text, and kind question or reply' }];
       question = text.trim() ? { text: text.trim().slice(0, 300), kind, at: new Date().toISOString() } : null;
       saveState();
+      if (question) note(kind, question.text);
       return [200, { question }];
     },
     // `done <file>` from the agent and the page's Unlock button.
@@ -446,13 +472,16 @@ export function createApp(o: AppOptions): App {
       return [200, { released: release(rel), updated: updated.has(rel) }];
     },
     'GET /api/source': () => [200, info()],
+    'GET /api/activity': () => (follow(), [200, { entries: activity }]),
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
     'POST /api/agent': (_, { id, label }, req) => {
       if (id !== null && !Object.hasOwn(AGENT_LABELS, id)) return [400, { error: 'id is claude, codex, other or null' }];
       if (label !== undefined && (typeof label !== 'string' || label.length > 40)) return [400, { error: 'label is a short string' }];
+      if (id === null && agent) note('detach', agent.label);
       agent = id === null ? null : attached(id, label?.trim(), agentAbove(peerOf(req!.socket.remotePort!), id));
       attachedHere = id !== null;
       saveState();
+      if (agent) note('attach', agent.label);
       return [200, agentInfo()];
     },
     'GET /api/git': () => [200, git()],
