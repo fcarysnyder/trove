@@ -3,20 +3,22 @@
 // Branch (switch here, or open the worktree a branch is checked out in), each with its own filter. A
 // server serves one root, so another worktree opens elsewhere.
 import { recentName, type BranchInfo } from '@trove/core/types';
-import { BookMarked, Check, ChevronDown, Copy, FolderTree, Search } from 'lucide-react';
+import { BookMarked, Check, ChevronDown, Copy, FileText, FolderOpen, FolderTree, Search } from 'lucide-react';
 import { Tabs } from 'radix-ui';
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { tilde } from '@/lib/text';
+import { copy } from '@/lib/copy';
+import { dirOf, nameOf, tilde } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { loadGit, loadRecents, openRecent, openWorktree, switchBranch } from './actions';
 import { Count, IconButton } from './bits';
-import { get, set, useNames, useStore, type State } from './store';
+import { get, set, useFolder, useNames, useStore, type State } from './store';
 
 type Tab = NonNullable<State['switcher']>;
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -26,6 +28,7 @@ let lastTab: Tab = 'repo';
 export function Switcher() {
   const git = useStore((s) => s.git);
   const source = useStore((s) => s.source);
+  const folder = useFolder();
   const tab = useStore((s) => s.switcher);
   const open = !!tab;
   useEffect(() => {
@@ -33,6 +36,22 @@ export function Switcher() {
     void loadGit();
     void loadRecents();
   }, [open]);
+  // A folder has no repository, worktree or branch to switch: the segment names it and where it is, and on the desktop
+  // opens a menu of the pinned and recent places, and the pickers.
+  if (folder && source) {
+    const head = (
+      <>
+        <FolderOpen />
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate text-[13px] leading-4 font-semibold text-foreground">{source.name}</span>
+          <span className="truncate text-[11px] leading-4 font-normal text-muted-foreground">{tilde(dirOf(source.root))}</span>
+        </span>
+      </>
+    );
+    const box = 'flex h-full w-72 min-w-0 shrink items-center gap-3 border-r px-4 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground';
+    if (!window.trove) return <div title={source.root} className={box}>{head}</div>;
+    return <FolderMenu className={box} root={source.root}>{head}</FolderMenu>;
+  }
   if (!git) return <strong className="self-center truncate px-4 font-semibold text-foreground" title={source?.root}>{source?.name ?? 'Trove'}</strong>;
   const multi = git.worktrees.length > 1;
   const value = tab === 'worktree' && !multi ? 'branch' : tab;
@@ -50,7 +69,7 @@ export function Switcher() {
                 <span className="max-w-[240px] truncate">{git.repo.name}</span>
                 {git.dirty > 0 && <Count n={git.dirty} />}
               </span>
-              <span className="max-w-[280px] truncate font-mono text-[11px] leading-4 font-normal text-muted-foreground">{where}</span>
+              <span className="max-w-[280px] truncate text-[11px] leading-4 font-normal text-muted-foreground">{where}</span>
             </span>
             <ChevronDown className="ml-auto size-4" />
           </Button>
@@ -104,15 +123,15 @@ function PickList({ rows, noun, footer }: { rows: Row[]; noun: string; footer?: 
   };
   return (
     <div onKeyDown={nav}>
-      <div className="relative p-2">
-        <Search className="pointer-events-none absolute top-1/2 left-4.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-        <Input ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Filter ${noun}`} aria-label={`Filter ${noun}`}
-          autoComplete="off" spellCheck={false} className="h-8 pl-8"
+      <InputGroup className="m-2 h-8 w-auto">
+        <InputGroupAddon><Search aria-hidden /></InputGroupAddon>
+        <InputGroupInput ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Filter ${noun}`} aria-label={`Filter ${noun}`}
+          autoComplete="off" spellCheck={false}
           onKeyDown={(e) => {
             const first = shown.find((r) => !r.off);
             if (e.key === 'Enter' && first) { e.preventDefault(); go(first); }
           }} />
-      </div>
+      </InputGroup>
       <div ref={list} className="max-h-80 overflow-auto px-1 pb-1">
         {shown.length === 0 && <p className="px-2 py-1.5 text-sm text-muted-foreground">{rows.length ? `No ${noun} match` : `No ${noun}`}</p>}
         {shown.map((r) => {
@@ -207,7 +226,6 @@ function ServeDialog() {
   const bin = done?.split(' done ')[0] || 'trove';
   const quoted = root && (/[\s'"$`\\]/.test(root) ? `'${root.replaceAll("'", String.raw`'\''`)}'` : root);
   const command = `${bin} serve --root ${quoted} --port 0`;
-  const copy = () => navigator.clipboard.writeText(command).then(() => toast('Copied'), () => toast('Copy failed'));
   return (
     <Dialog open={!!root} onOpenChange={(open) => { if (!open) set({ serveRoot: null }); }}>
       {/* Focus the dialog, not the copy button, whose tooltip would take the first Escape. */}
@@ -218,9 +236,40 @@ function ServeDialog() {
         </DialogHeader>
         <div className="flex items-start gap-1">
           <code className="min-w-0 flex-1 rounded-sm bg-background px-2 py-1.5 font-mono text-xs break-all text-foreground">{command}</code>
-          <IconButton label="Copy command" onClick={copy}><Copy /></IconButton>
+          <IconButton label="Copy command" onClick={() => void copy(command)}><Copy /></IconButton>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The folder segment's menu: pinned and recent places (each opens as it was last opened), then Open Folder and Open File. */
+function FolderMenu({ root, className, children }: { root: string; className: string; children: ReactNode }) {
+  const recents = useStore((s) => s.recents).filter((r) => r.path !== root || r.file);
+  const bridge = window.trove!;
+  const pick = (p: Promise<string | null | undefined>) => void p.then((path) => (path ? bridge.open({ path }) : undefined)).catch((e) => toast(errText(e)));
+  const item = (r: (typeof recents)[number]) => (
+    <DropdownMenuItem key={`${r.path}\n${r.file ?? ''}`} title={r.file ?? r.path} onSelect={() => void openRecent(r)}>
+      {r.kind === 'git' ? <BookMarked /> : r.file ? <FileText /> : <FolderOpen />}
+      <span className="min-w-0 flex-1 truncate">{r.file ? nameOf(r.file) : recentName(r)}</span>
+      <span className="max-w-32 truncate text-xs text-muted-foreground">{tilde(r.file ? dirOf(r.file) : dirOf(r.path))}</span>
+    </DropdownMenuItem>
+  );
+  const pinned = recents.filter((r) => r.pinned), rest = recents.filter((r) => !r.pinned).slice(0, 8);
+  return (
+    <DropdownMenu onOpenChange={(o) => { if (o) void loadRecents(); }}>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" title={root} className={cn(className, 'justify-start rounded-none text-left hover:bg-accent aria-expanded:bg-accent')}>
+          {children}<ChevronDown className="ml-auto" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-80">
+        {pinned.length > 0 && <DropdownMenuGroup><DropdownMenuLabel>Pinned</DropdownMenuLabel>{pinned.map(item)}</DropdownMenuGroup>}
+        {rest.length > 0 && <DropdownMenuGroup><DropdownMenuLabel>Recent</DropdownMenuLabel>{rest.map(item)}</DropdownMenuGroup>}
+        {recents.length > 0 && <DropdownMenuSeparator />}
+        <DropdownMenuItem onSelect={() => pick(bridge.pickFolder().then((p) => p?.path))}>Open Folder…<DropdownMenuShortcut>⌘O</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => pick(bridge.pickFile())}>Open File…<DropdownMenuShortcut>⇧⌘O</DropdownMenuShortcut></DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

@@ -1,11 +1,10 @@
 import type { FileRow } from '@trove/core/types';
-import { ChevronRight, ListFilter, PanelLeftClose, Search, X } from 'lucide-react';
+import { ChevronRight, FileCode, FilePen, FileText, ListFilter, Lock, PanelLeftClose, Search, Sparkles, X } from 'lucide-react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from '@/components/ui/context-menu';
-import { Input } from '@/components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -13,13 +12,14 @@ import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { countKeys, FILTERS, isPendingOnly, markRange, matches, PENDING_OFF, toggleOff, type FilterKey } from '@/lib/filter';
-import { stateInfo } from '@/lib/status';
+import { stateInfo, type Names } from '@/lib/status';
 import { dirOf, nameOf } from '@/lib/text';
 import { cn } from '@/lib/utils';
-import { acceptAll, createPr, open, prReady, reveal, setFilters, showInFolder, shown, togglePanel, visible } from './actions';
+import { acceptAll, createPr, open, prReady, reveal, setFilters, shown, togglePanel, visible } from './actions';
 import { Count, IconButton, nothingText } from './bits';
+import { DirMenu, PathMenu } from './PathMenu';
 import { StateIcons } from './StateIcon';
-import { get, set, useNames, useStore } from './store';
+import { get, set, useFolder, useNames, useStore } from './store';
 
 /** The tree row to land on after the search: the open file's, else the first. */
 const focusTree = () => {
@@ -43,6 +43,7 @@ export function FilesColumn() {
   const none = files.length > 0 && !folders.length && !committed.length && !rejected.length;
   const pending = folders.filter((f) => f.state === 'queue').length;
   const n = useNames();
+  const folder = useFolder();
   const onSearchKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -58,26 +59,29 @@ export function FilesColumn() {
     <section aria-label="Files" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-1 border-b pr-2 pl-4">
         <span className="flex-1 font-semibold text-foreground">Files</span>
-        {pending > 0 && <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void acceptAll()}>Accept all</Button>}
-        {prReady(files) && (
+        {/* A folder is edited in place: no review to accept, open a PR for or filter by. */}
+        {!folder && pending > 0 && <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void acceptAll()}>Accept all</Button>}
+        {!folder && prReady(files) && (
           <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={!source?.agentInfo?.connected} onClick={() => void createPr(n.agent)}>Create PR</Button>
         )}
-        <Filters off={off} />
+        {!folder && <Filters off={off} />}
         <IconButton side="bottom" label="Hide files" tip="Hide files ([)" onClick={() => togglePanel('files', true)}><PanelLeftClose /></IconButton>
       </div>
-      <div className="relative shrink-0 px-2 pt-2">
-        <Search className="pointer-events-none absolute top-1/2 left-4.5 mt-1 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-        <Input id="file-search" value={query} placeholder="Search files" aria-label="Search files" autoComplete="off" spellCheck={false}
-          onChange={(e) => set({ query: e.target.value })} onKeyDown={onSearchKey} className="h-8 pr-8 pl-8" />
-        {query && (
-          <IconButton label="Clear search" className="absolute top-1/2 right-3 mt-1 -translate-y-1/2" onClick={() => { set({ query: '' }); document.getElementById('file-search')?.focus(); }}>
-            <X />
-          </IconButton>
-        )}
+      <div className="shrink-0 px-2 pt-2">
+        <InputGroup className="h-8">
+          <InputGroupAddon><Search aria-hidden /></InputGroupAddon>
+          <InputGroupInput id="file-search" value={query} placeholder="Search files" aria-label="Search files" autoComplete="off" spellCheck={false}
+            onChange={(e) => set({ query: e.target.value })} onKeyDown={onSearchKey} />
+          {query && (
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton size="icon-xs" aria-label="Clear search" title="Clear search" onClick={() => { set({ query: '' }); document.getElementById('file-search')?.focus(); }}><X /></InputGroupButton>
+            </InputGroupAddon>
+          )}
+        </InputGroup>
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <nav aria-label="Files" className="p-2">
-          {loaded && !files.length && <p className="px-1 py-1.5 text-[13px] text-muted-foreground">{nothingText(source)}</p>}
+          {loaded && !files.length && <p className="px-1 py-1.5 text-[13px] text-muted-foreground">{folder ? 'No documents' : nothingText(source)}</p>}
           {none ? (
             <p className="flex items-center gap-1 px-1 py-1.5 text-[13px] text-muted-foreground">
               No files match
@@ -92,10 +96,12 @@ export function FilesColumn() {
           )}
         </nav>
       </ScrollArea>
-      <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
-        <Switch id="pending-only" size="default" checked={isPendingOnly(off)} onCheckedChange={(v) => setFilters(v ? PENDING_OFF : [])} />
-        <Label htmlFor="pending-only" className="text-xs font-normal text-muted-foreground">Pending only</Label>
-      </div>
+      {!folder && (
+        <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
+          <Switch id="pending-only" size="default" checked={isPendingOnly(off)} onCheckedChange={(v) => setFilters(v ? PENDING_OFF : [])} />
+          <Label htmlFor="pending-only" className="text-xs font-normal text-muted-foreground">Pending only</Label>
+        </div>
+      )}
     </section>
   );
 }
@@ -159,46 +165,53 @@ function Name({ path, query }: { path: string; query: string }) {
   return <>{name.slice(0, r[0])}<mark className="rounded-[2px] bg-foreground/15 text-foreground">{name.slice(r[0], r[1])}</mark>{name.slice(r[1])}</>;
 }
 
+/** A folder's row has no review state: the file's type. */
+const FileIcon = ({ file }: { file: FileRow }) => {
+  const I = file.kind === 'html' ? FileCode : FileText;
+  return <I className="size-4 shrink-0 text-muted-foreground" aria-hidden />;
+};
+
+/** What still means something in a folder: the agent working on it (locked), its update since your last send, your edit. */
+function Marks({ file, names }: { file: FileRow; names: Names }) {
+  const marks = ([[file.state === 'working', Lock, 'working', ''], [file.updated, Sparkles, 'updated', 'text-agent'], [file.edited, FilePen, 'edited', '']] as const)
+    .filter(([on]) => on);
+  return marks.map(([, I, s, tone]) => {
+    const label = stateInfo(s, names).label;
+    return <I key={s} role="img" aria-label={label} className={cn('size-3.5 shrink-0 text-muted-foreground', tone)}><title>{label}</title></I>;
+  });
+}
+
 /** Files grouped under their folder, each folder a disclosure the user can close; all open while searching. */
 function Folders({ list, query }: { list: FileRow[]; query: string }) {
   const closed = useStore((s) => s.closedDirs);
   const current = useStore((s) => s.current?.path);
-  const root = useStore((s) => s.source?.root);
   const n = useNames();
+  const folder = useFolder();
+  const unsaved = useStore((s) => s.unsaved);
+  const root = useStore((s) => s.source?.root);
   const groups = Map.groupBy(list, (f) => dirOf(f.path));
-  const copy = (text: string) => void navigator.clipboard.writeText(text);
   return [...groups].map(([dir, rows]) => (
     <Collapsible key={dir} open={!!query || !closed.includes(dir)}
       onOpenChange={(o) => set((s) => ({ closedDirs: o ? s.closedDirs.filter((d) => d !== dir) : [...s.closedDirs, dir] }))}>
-      <CollapsibleTrigger title={dir || '/'} className="group flex w-full items-center gap-1.5 rounded-sm px-1 py-1.5 text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+      <DirMenu dir={dir} first={rows[0]!.path}>
+      <CollapsibleTrigger title={dir || root} className="group flex w-full items-center gap-1.5 rounded-sm px-1 py-1.5 text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
         <ChevronRight className="size-3.5 shrink-0 transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none" aria-hidden />
-        <span className="folder min-w-0 max-w-full">{`‎${dir || '/'}‎`}</span>
+        <span className="folder min-w-0 max-w-full">{`‎${dir || nameOf(root ?? '') || '/'}‎`}</span>
       </CollapsibleTrigger>
+      </DirMenu>
       <CollapsibleContent>
         {rows.map((f) => (
-          <ContextMenu key={f.path}>
-            <ContextMenuTrigger asChild>
-              <button data-tree-row title={f.path} aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
-                className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-card hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
-                  f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
-                <StateIcons file={f} names={n} />
-                <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
-                {f.drafts > 0 && <Count n={f.drafts} />}
-              </button>
-            </ContextMenuTrigger>
-            <ContextMenuContent>
-              <ContextMenuSub>
-                <ContextMenuSubTrigger>Copy</ContextMenuSubTrigger>
-                <ContextMenuSubContent>
-                  <ContextMenuItem disabled={!root} onSelect={() => copy(`${root}/${f.path}`)}>Absolute path</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => copy(f.path)}>Relative path</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => copy(nameOf(f.path))}>Filename</ContextMenuItem>
-                </ContextMenuSubContent>
-              </ContextMenuSub>
-              <ContextMenuSeparator />
-              <ContextMenuItem onSelect={() => void showInFolder(f.path)}>{navigator.platform.startsWith('Mac') ? 'Show in Finder' : 'Show in folder'}</ContextMenuItem>
-            </ContextMenuContent>
-          </ContextMenu>
+          <PathMenu key={f.path} path={f.path}>
+            <button data-tree-row title={f.path} aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
+              className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
+                f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
+              {folder ? <FileIcon file={f} /> : <StateIcons file={f} names={n} />}
+              <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
+              {folder && <Marks file={f} names={n} />}
+              {folder && unsaved[f.path] && <span role="img" aria-label="Unsaved edits" title="Unsaved edits" className="size-1.5 shrink-0 rounded-full bg-dirty" />}
+              {f.drafts > 0 && <Count n={f.drafts} />}
+            </button>
+          </PathMenu>
         ))}
       </CollapsibleContent>
     </Collapsible>

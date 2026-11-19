@@ -1,11 +1,12 @@
 // Commands shared by the document, the selection toolbar, Changes and the keyboard.
 import { makeAnchor } from '@trove/core/anchor';
-import { toast } from 'sonner';
+import { copy } from '@/lib/copy';
 import { flash, open, setShowNew } from '../actions';
-import { get, set } from '../store';
+import { get, set, type ChatRef } from '../store';
 import { toRange } from './layers';
 import { docModel } from './model';
 import { blockEl, bodyOf, frameEl, headingPath, nodeEl } from './dom';
+import { showTargets } from './annotate';
 
 /** Tables and front matter edit in the modal; HTML files whole in the modal; the rest inline. */
 const MODAL: Record<string, string> = { table: 'Edit table', frontmatter: 'Edit front matter' };
@@ -62,14 +63,15 @@ export function onSelect(doc: Document, target: EventTarget | null) {
   });
 }
 
-export function pickAction(act: 'change' | 'explain' | 'edit' | 'copy') {
-  const { pick } = get();
+export function pickAction(act: 'change' | 'explain' | 'edit' | 'copy' | 'chat') {
+  const { pick, current } = get();
   if (!pick) return;
   set({ pick: null });
+  if (act === 'chat') return current && addToChat({ path: current.path, quote: pick.anchor.quote });
   if (act === 'change' || act === 'explain') {
     set({ composer: { kind: act, anchor: pick.anchor, range: pick.range } });
   } else if (act === 'edit') editBlock(pick.block);
-  else navigator.clipboard.writeText(pick.text).then(() => toast('Copied'), () => toast('Copy failed'));
+  else void copy(pick.text);
 }
 
 /** Open the comment's file if needed, then bring its passage into view and flash it. */
@@ -78,6 +80,7 @@ export async function showPassage(path: string, n: number) {
     await open(path);
     await new Promise((r) => requestAnimationFrame(r));
   }
+  if (get().current?.drafts[n]?.anchor.targets?.length) return showTargets(n);
   const hit = get().hits[n];
   const range = hit && toRange(bodyOf(hit.i), hit.start, hit.end);
   if (!range) return;
@@ -95,4 +98,12 @@ export async function showBlock(path: string, index: number | null) {
     await new Promise((r) => requestAnimationFrame(r));
   }
   flash(index == null ? frameEl() ?? document.querySelector('.md') : blockEl(index));
+}
+
+/** Add a passage to History's message box (the conversation's or the open thread's): History shows and its box takes focus. */
+export function addToChat(ref: ChatRef) {
+  set((s) => ({ chat: [...s.chat.filter((c) => c.quote !== ref.quote || c.path !== ref.path), ref] }));
+  window.getSelection()?.removeAllRanges();
+  frameEl()?.contentWindow?.getSelection()?.removeAllRanges();
+  window.dispatchEvent(new Event('trove:chat'));
 }

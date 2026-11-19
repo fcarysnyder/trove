@@ -1,26 +1,34 @@
 import { findAnchor, type AnchorHit } from '@trove/core/anchor';
 import type { DiffOp } from '@trove/core/anchor';
 import { GitBranch, MessageSquare, PanelLeft, PanelRight, Pencil, Undo2 } from 'lucide-react';
-import { recentName } from '@trove/core/types';
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { recentName, type Version, type VersionBy } from '@trove/core/types';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Kbd } from '@/components/ui/kbd';
 import { Label } from '@/components/ui/label';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { status } from '@/lib/status';
-import { nameOf, plural, tilde } from '@/lib/text';
+import { stateInfo, status } from '@/lib/status';
+import { mod, nameOf, plural, tilde } from '@/lib/text';
 import { cn } from '@/lib/utils';
-import { accept, entry, focusComment, loadRecents, nextPending, openRecent, openWorktree, post, reject, restore, revertAll, setShowNew, skip, togglePanel } from './actions';
+import { AnnotateBar, AnnotateLayer, commitMark } from './Annotate';
+import { accept, closeView, compare, discard, entry, focusComment, loadRecents, nextPending, openRecent, openWorktree, pickVersion, post, reject, restore, restoreVersion, revertAll, saveFile, setShowNew, skip, togglePanel, unsavedBlocks, versionsOf } from './actions';
 import { Count, IconButton, nothingText, PathLabel } from './bits';
-import { StateIcons } from './StateIcon';
-import { get, set, useNames, useStore } from './store';
+import { Icon, StateIcons } from './StateIcon';
+import { get, set, useFolder, useNames, useStore } from './store';
 import { editBlock, onSelect } from './doc/commands';
+import { elementHit, wireFrame } from './doc/annotate';
 import { blockEl, bodyOf } from './doc/dom';
 import { InlineEditor } from './doc/Editors';
 import { applyLayers, paint, placeBars, textOf, toRange, type Marks } from './doc/layers';
 import { docModel } from './doc/model';
 import { onKey } from './keys';
+import { copyPath, PathMenu } from './PathMenu';
+import { useNeedsYou } from './ChangesColumn';
 
 export function DocColumn() {
   const current = useStore((s) => s.current);
@@ -28,26 +36,55 @@ export function DocColumn() {
   const showNew = useStore((s) => s.showNew);
   const editing = useStore((s) => s.editing);
   const question = useStore((s) => s.question);
+  const htmlView = useStore((s) => s.htmlView);
+  const needs = useNeedsYou();
   const n = useNames();
+  const folder = useFolder();
   const model = current && docModel(current);
+  // A folder has nothing to mark new against but the text before the agent's last update.
+  const canNew = !!model?.canShowNew && (!folder || !!current?.since || !!current?.base);
   const own = current ? current.drafts.length + current.edits.length : 0;
-  const newTip = model?.canShowNew ? 'Show new (N)' : current?.kind === 'markdown' ? 'No earlier version to compare with' : 'Markdown files only';
+  const newTip = canNew ? 'Show new (N)' : current?.kind === 'markdown' ? 'No earlier version to compare with' : 'Markdown files only';
   return (
     <section aria-label="File" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">
         {hidden.files && <IconButton side="bottom" label="Show files" tip="Show files ([)" className="-ml-2" onClick={() => togglePanel('files', false)}><PanelLeft /></IconButton>}
-        <span className="flex min-w-0 flex-1 items-center font-semibold">
-          {current && <PathLabel path={current.path} nameClass="text-foreground" />}
+        <span className="flex min-w-0 flex-1 items-center">
+          {current && (
+            // Click copies the relative path; right-click has the rest.
+            <Tooltip>
+              <PathMenu path={current.path}>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="sm" onClick={() => void copyPath(current.path)} className="-ml-2 max-w-full min-w-0 shrink cursor-pointer justify-start px-2 font-semibold">
+                    <PathLabel path={current.path} nameClass="text-foreground" />
+                  </Button>
+                </TooltipTrigger>
+              </PathMenu>
+              <TooltipContent side="bottom" align="start" className="[overflow-wrap:anywhere]">Copy {current.path}</TooltipContent>
+            </Tooltip>
+          )}
+          {current?.version != null && <VersionBadge key={current.path} path={current.path} version={current.version} />}
         </span>
+        {current?.kind === 'html' && (
+          <ToggleGroup type="single" size="sm" variant="outline" spacing={0} value={htmlView} onValueChange={(v) => v && set({ htmlView: v as 'preview' | 'source' })}>
+            <ToggleGroupItem value="preview">Preview</ToggleGroupItem>
+            <ToggleGroupItem value="source">Source</ToggleGroupItem>
+          </ToggleGroup>
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex items-center gap-2">
-              <Switch id="show-new" size="default" checked={showNew} disabled={!model?.canShowNew || !!editing} onCheckedChange={setShowNew} />
+              <Switch id="show-new" size="default" checked={showNew} disabled={!canNew || !!editing} onCheckedChange={setShowNew} />
               <Label htmlFor="show-new" className="text-xs font-normal whitespace-nowrap text-muted-foreground peer-disabled:opacity-40">Show new</Label>
             </span>
           </TooltipTrigger>
           <TooltipContent>{newTip}</TooltipContent>
         </Tooltip>
+        {hidden.changes && needs && (
+          <Button variant="outline" size="sm" className="border-dirty/50 bg-dirty/10 text-dirty hover:bg-dirty/20 hover:text-dirty" onClick={() => togglePanel('changes', false)}>
+            {n.Agent} {needs === 'question' ? 'has a question' : 'needs you'}
+          </Button>
+        )}
         {hidden.changes && (
           <IconButton side="bottom" label={[`Show agent`, question && (question.kind === 'reply' ? `${n.who} replied` : `${n.who} has a question`), own && plural(own, 'change')].filter(Boolean).join(', ')}
             tip="Show agent (])" className="relative" onClick={() => togglePanel('changes', false)}>
@@ -56,8 +93,12 @@ export function DocColumn() {
           </IconButton>
         )}
       </div>
-      <DocBody />
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <DocBody />
+        {htmlView === 'preview' && <AnnotateBar />}
+      </div>
       <DocFooter />
+      <ConflictDialog />
     </section>
   );
 }
@@ -78,11 +119,13 @@ function Nothing() {
   const loaded = useStore((s) => s.loaded);
   const any = useStore((s) => s.files.length > 0);
   const source = useStore((s) => s.source);
+  const folder = useFolder();
   const git = useStore((s) => s.git);
   const recents = useStore((s) => s.recents);
   useEffect(() => { void loadRecents(); }, []);
   if (!loaded) return null;
   if (any) return <p className="grid min-h-full place-items-center text-muted-foreground">Select a file</p>;
+  if (folder) return <p className="grid min-h-full place-items-center font-medium text-foreground">No documents</p>;
   const ours = new Set(git?.worktrees.map((w) => w.path));
   const elsewhere = [
     ...(git?.worktrees ?? []).filter((w) => !w.current && w.changes).map((w) => ({
@@ -101,7 +144,7 @@ function Nothing() {
               className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-sm text-foreground">{e.title}</span>
-                <span className="truncate font-mono text-xs text-muted-foreground">{e.sub}</span>
+                <span className="truncate text-xs text-muted-foreground">{e.sub}</span>
               </span>
               <Count n={e.n} />
             </button>
@@ -125,12 +168,22 @@ function DocView() {
   const editing = useStore((s) => s.editing);
   const hits = useStore((s) => s.hits);
   const n = useNames();
+  const folder = useFolder();
   const model = docModel(current);
   const md = useRef<HTMLDivElement>(null);
   const marks = useRef<Marks | null>(null);
   const [frameLoads, setFrameLoads] = useState(0); // the HTML frame's text is measurable once it has loaded
   const [card, setCard] = useState<Card | null>(null);
-  const layered = showNew && !editing && current.kind === 'markdown';
+  const view = useStore((s) => s.view);
+  const buf = useStore((s) => s.unsaved[current.path]);
+  // An HTML file's Source view goes down the plain text path: one text block, measured in the page, not the frame.
+  const source = useStore((s) => current.kind === 'html' && s.htmlView === 'source');
+  const parts = useMemo(() => (source ? [{ type: 'text' as const, raw: current.text, path: [] }] : model.parts), [source, model]);
+  const frame = current.kind === 'html' && !source;
+  const bodyAt = (i: number) => (source ? blockEl(i)?.querySelector<HTMLElement>(':scope > .block-body') ?? null : bodyOf(i));
+  // A version or Compare always shows its marks; a folder otherwise has only the text before the agent's last update.
+  const layered = (showNew || !!view) && !editing && current.kind === 'markdown' && (!folder || !!current.since || !!current.base);
+  const edited = folder && buf && !view ? new Set(unsavedBlocks(current.text, buf.was, current.kind)) : null;
 
   // Show new: tints, badges and bars, measured on the rendered blocks.
   useLayoutEffect(() => {
@@ -151,19 +204,20 @@ function DocView() {
   useLayoutEffect(() => {
     if (editing) return;
     let found: (AnchorHit | null)[];
-    if (current.kind === 'html') {
+    if (frame) {
       // ponytail: the whole body is one block, so the heading path does not narrow the search; prefix and suffix break ties.
       const text = frameLoads ? bodyOf(null)?.textContent ?? null : null;
-      found = current.drafts.map((c) => (text == null ? null : findAnchor([{ text, path: c.anchor.path }], c.anchor)));
+      found = current.drafts.map((c) => (text == null ? null : c.anchor.targets?.length ? elementHit(c.anchor) : findAnchor([{ text, path: c.anchor.path }], c.anchor)));
     } else {
-      const items = model.parts.map((b, i) => ({ text: bodyOf(i)?.textContent ?? '', path: b.path }));
+      const items = parts.map((b, i) => ({ text: bodyAt(i)?.textContent ?? '', path: b.path }));
       found = current.drafts.map((c) => findAnchor(items, c.anchor));
     }
     if (JSON.stringify(found) !== JSON.stringify(get().hits)) set({ hits: found });
-    const view = (current.kind === 'html' ? document.querySelector<HTMLIFrameElement>('iframe.doc-frame')?.contentWindow : window) as (Window & typeof globalThis) | null | undefined;
-    const ranges = found.flatMap((h) => (h ? [toRange(bodyOf(h.i), h.start, h.end)] : [])).filter((r): r is Range => !!r);
+    const view = (frame ? document.querySelector<HTMLIFrameElement>('iframe.doc-frame')?.contentWindow : window) as (Window & typeof globalThis) | null | undefined;
+    // Element comments have badges, not a text range.
+    const ranges = found.flatMap((h, k) => (h && !current.drafts[k]?.anchor.targets?.length ? [toRange(bodyAt(h.i), h.start, h.end)] : [])).filter((r): r is Range => !!r);
     if (view?.CSS?.highlights) view.CSS.highlights.set('comment', new view.Highlight(...ranges));
-  }, [model, current.drafts, frameLoads, editing]);
+  }, [model, parts, current.drafts, frameLoads, editing]);
   // A layout cleanup: the view is keyed by file, and a passive one would run after the next file's lookup and wipe it.
   useLayoutEffect(() => () => { CSS.highlights?.delete('comment'); set({ hits: [] }); }, []);
 
@@ -183,7 +237,7 @@ function DocView() {
     const t = e.target as Element;
     if (!t.ownerDocument.getSelection()?.isCollapsed || t.closest('button')) return;
     const inside = (r: DOMRect) => e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-    const i = get().hits.findIndex((h) => h && [...(toRange(bodyOf(h.i), h.start, h.end)?.getClientRects() ?? [])].some(inside));
+    const i = get().hits.findIndex((h, k) => h && !get().current?.drafts[k]?.anchor.targets?.length && [...(toRange(bodyAt(h.i), h.start, h.end)?.getClientRects() ?? [])].some(inside));
     if (i >= 0) focusComment(i);
   };
 
@@ -221,15 +275,15 @@ function DocView() {
   }
   const goneBar = (i: number) => gone.has(i) && <div className="gone" data-text={gone.get(i)} />;
 
-  if (current.kind === 'html') {
+  if (frame) {
     return (
-      <>
+      <div className="relative">
         <iframe
           key={current.hash}
           className="doc-frame mx-12 block min-h-[60vh] w-[calc(100%-96px)] rounded-lg border-0"
           sandbox="allow-same-origin allow-scripts"
           title="Rendered file"
-          src={`raw/${current.path.split('/').map(encodeURIComponent).join('/')}`}
+          {...(buf || view ? { srcDoc: withBase(current.text, current.path) } : { src: rawUrl(current.path) })}
           onLoad={(e) => {
             const doc = e.currentTarget.contentDocument;
             if (!doc) return;
@@ -241,26 +295,28 @@ function DocView() {
             doc.addEventListener('selectionchange', () => { if (get().pick && doc.getSelection()?.isCollapsed) set({ pick: null }); });
             doc.addEventListener('keydown', onKey);
             doc.addEventListener('dblclick', () => editBlock(null));
+            wireFrame(doc, commitMark);
             e.currentTarget.style.height = `${doc.documentElement.scrollHeight}px`;
             setFrameLoads((k) => k + 1);
           }}
         />
+        <AnnotateLayer loads={frameLoads} />
         {card && <DiffCard card={card} />}
-      </>
+      </div>
     );
   }
 
   return (
     <div ref={md} className={cn('md', editing && 'doc-editing')} onClick={commentAt} onMouseMove={onMove} onMouseLeave={() => setCard(null)}
       onDoubleClick={(e) => { const b = (e.target as Element).closest<HTMLElement>('.block'); if (b && !(e.target as Element).closest('textarea, button')) editBlock(Number(b.dataset.i)); }}>
-      {model.parts.map((b, i) => (
+      {parts.map((b, i) => (
         <Fragment key={i}>
           {goneBar(i)}
-          <div className="block" data-i={i}>
+          <div className={cn('block', edited?.has(i) && 'unsaved')} data-i={i}>
             {editing?.mode === 'inline' && (editing.index === i || (editing.index == null && current.kind === 'text')) ? <InlineEditor editing={editing} /> : (
               <>
                 {b.type === 'frontmatter' ? <div className="block-body"><pre className="fm">{b.raw}</pre></div>
-                  : b.type === 'text' ? <div className="block-body"><pre className="text">{b.raw}</pre></div>
+                  : b.type === 'text' ? <div className="block-body"><pre className={cn('text', source && 'lines')}>{source ? numbered(b.raw) : b.raw}</pre></div>
                   : <div className="block-body" dangerouslySetInnerHTML={{ __html: model.htmls[i]! }} />}
                 <div className="bars" />
                 {/* No text inside the gutter buttons, so the block's text stays what anchors measure. */}
@@ -277,7 +333,7 @@ function DocView() {
           </div>
         </Fragment>
       ))}
-      {goneBar(model.parts.length)}
+      {goneBar(parts.length)}
       {card && <DiffCard card={card} />}
     </div>
   );
@@ -286,17 +342,20 @@ function DocView() {
 /**
  * The page shows the new text with its new words tinted; the card shows the old text, the words
  * that were cut or replaced struck through and, where new words went in, their badge's number.
- * Below the block, else above it, else at the pointer.
+ * Below the block, else above it, else (a block taller than the room either side) at the pointer; capped to the window.
  */
 function DiffCard({ card }: { card: Card }) {
   const ref = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const el = ref.current!;
-    const r = card.target.getBoundingClientRect();
-    const h = el.offsetHeight;
-    const top = r.bottom + 6 + h <= innerHeight ? r.bottom + 6 : r.top - 6 - h >= 0 ? r.top - 6 - h : Math.min(card.y + 16, innerHeight - h - 8);
-    Object.assign(el.style, { left: `${r.left}px`, top: `${top}px`, width: `${Math.min(r.width, 640)}px`, visibility: 'visible' });
-  }, [card]);
+  const anchor = useMemo(() => ({
+    current: {
+      getBoundingClientRect() {
+        const r = card.target.getBoundingClientRect();
+        const h = (ref.current?.scrollHeight ?? 0) + 14; // the card's natural height, its offset and the window's margin
+        return innerHeight - r.bottom >= h || r.top >= h ? r : new DOMRect(r.x, card.y + 10, r.width, 0);
+      },
+      contextElement: card.target,
+    },
+  }), [card]);
   let k = 0;
   const parts = card.ops.map((o, j) => {
     if (o.op === '=') {
@@ -310,33 +369,93 @@ function DiffCard({ card }: { card: Card }) {
     const cls = card.mineN?.has(num) ? 'mine' : card.kind;
     return <span key={j} className={`new-n ${cls}`} data-n={num} />;
   });
+  const keep = (e: Event) => e.preventDefault(); // a preview: it never takes focus
   return (
-    <div ref={ref} aria-hidden style={{ visibility: 'hidden' }}
-      className="pointer-events-none fixed z-20 max-w-[640px] rounded-lg border bg-popover px-3 py-2 text-[13px] whitespace-pre-wrap text-body shadow-lg [overflow-wrap:anywhere]">
-      <div className="mb-1 text-xs font-medium text-muted-foreground">{card.label}</div>
-      {parts}
-    </div>
+    <Popover open>
+      <PopoverAnchor virtualRef={anchor} />
+      <PopoverContent ref={ref} aria-hidden side="bottom" align="start" sideOffset={6} onOpenAutoFocus={keep} onCloseAutoFocus={keep}
+        className="pointer-events-none block w-(--radix-popover-trigger-width) max-w-[640px] overflow-hidden px-3 py-2 text-[13px] whitespace-pre-wrap text-body shadow-lg [overflow-wrap:anywhere]">
+        <div className="mb-1 text-xs font-medium text-muted-foreground">{card.label}</div>
+        {parts}
+      </PopoverContent>
+    </Popover>
   );
 }
 
 function DocFooter() {
   const current = useStore((s) => s.current);
   const editing = useStore((s) => s.editing);
+  const view = useStore((s) => s.view);
+  const buf = useStore((s) => (s.current ? s.unsaved[s.current.path] : undefined));
   const n = useNames();
+  const folder = useFolder();
   useStore((s) => s.files);
   const f = entry();
-  if (!current || !f) return <div className="min-h-12 shrink-0 border-t" />;
+  if (!current || !f) return folder ? null : <div className="min-h-12 shrink-0 border-t" />;
   const s = status(f, n);
   // The second click of a double-click lands on the next file's buttons; ignore it.
   const act = (fn: () => unknown) => (e: ReactMouseEvent) => { if (e.detail <= 1) void fn(); };
   const busy = !!editing;
   const next = nextPending();
+  const row = 'flex min-h-12 shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 border-t px-4';
+  const label = 'flex min-w-0 flex-[1_1_auto] cursor-default items-center gap-1.5 overflow-hidden text-xs whitespace-nowrap text-muted-foreground select-none';
+  const unlock = <Button variant="ghost" size="default" disabled={busy} onClick={act(() => post('release'))}>Unlock</Button>;
+  const revert = f.edited && (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={current.revertable ? -1 : 0} className="inline-flex">
+          <Button variant="ghost" size="default" disabled={busy || !current.revertable} onClick={act(revertAll)}><Undo2 />Revert all edits</Button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{current.revertable ? 'Back to the text before your first edit' : 'The file changed since your edit'}</TooltipContent>
+    </Tooltip>
+  );
+  // A folder is edited in place, with no review: a version or Compare, the file's unsaved edits, else only Unlock or
+  // Revert all edits, and no footer without any.
+  if (folder) {
+    if (view) {
+      const what = view.n == null ? `${n.Agent}'s changes` : `v${view.n} · ${who(view.by!, n.Agent)} · ${when(view.at!)}`;
+      return (
+        <div className={row}>
+          <span className={label}>{what}</span>
+          {view.n == null ? (
+            <>
+              <Button variant="outline" onClick={act(discard)}>Keep {n.agent}'s</Button>
+              <Button onClick={act(() => saveFile(get().conflict?.hash))}>Save mine</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={act(closeView)}>Back<Kbd>Esc</Kbd></Button>
+              <Button onClick={act(restoreVersion)}>Restore v{view.n}</Button>
+            </>
+          )}
+        </div>
+      );
+    }
+    if (buf) {
+      return (
+        <div className={row}>
+          <span className={label}>{plural(Math.max(1, unsavedBlocks(buf.text, buf.was, current.kind).length), 'unsaved edit')}</span>
+          <Button variant="outline" disabled={busy} onClick={act(discard)}>Don't save</Button>
+          <Button disabled={busy} onClick={act(() => saveFile())}>Save<Kbd className="bg-primary-foreground/15 text-primary-foreground">{SAVE_KEY}</Kbd></Button>
+        </div>
+      );
+    }
+    if (f.state !== 'working' && !f.edited) return null;
+    const info = stateInfo(f.state === 'working' ? 'working' : 'edited', n);
+    return (
+      <div className={row}>
+        <span className={label}><Icon name={info.icon} className="size-3.5" />{info.label}</span>
+        {f.state === 'working' ? unlock : revert}
+      </div>
+    );
+  }
   return (
-    <div className="flex min-h-12 shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 border-t px-4">
-      <span className="flex min-w-0 flex-[1_1_auto] cursor-default items-center gap-1.5 overflow-hidden text-xs whitespace-nowrap text-muted-foreground select-none">
+    <div className={row}>
+      <span className={label}>
         <StateIcons file={f} names={n} className="size-3.5" />{s.label}
       </span>
-      {f.state === 'working' ? <Button variant="ghost" size="default" disabled={busy} onClick={act(() => post('release'))}>Unlock</Button>
+      {f.state === 'working' ? unlock
         : f.state === 'accepted' ? <Button variant="ghost" size="default" disabled={busy} onClick={act(() => post('unaccept'))}>Undo accept</Button>
         : f.state === 'rejected' ? <Button variant="ghost" size="default" onClick={act(restore)}>Restore</Button>
         : f.state === 'skipped' ? (
@@ -346,16 +465,7 @@ function DocFooter() {
           </>
         ) : (
           <>
-            {f.edited && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span tabIndex={current.revertable ? -1 : 0} className="inline-flex">
-                    <Button variant="ghost" size="default" disabled={busy || !current.revertable} onClick={act(revertAll)}><Undo2 />Revert all edits</Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>{current.revertable ? 'Back to the text before your first edit' : 'The file changed since your edit'}</TooltipContent>
-              </Tooltip>
-            )}
+            {revert}
             <RejectButton path={current.path} untracked={f.untracked} disabled={busy} />
             <Button variant="ghost" size="default" disabled={busy} onClick={act(() => skip(true))}>Skip</Button>
             <Button variant="ghost" size="default" disabled={busy} onClick={act(() => accept(false))}>Accept</Button>
@@ -385,5 +495,70 @@ function RejectButton({ path, untracked, disabled }: { path: string; untracked: 
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+const SAVE_KEY = mod === 'Cmd' ? '⌘S' : 'Ctrl S';
+const rawUrl = (path: string) => `raw/${path.split('/').map(encodeURIComponent).join('/')}`;
+/** Unsaved or picked HTML is not on disk: its text in the frame, with relative links resolving beside the file as on disk. */
+const withBase = (html: string, path: string) => {
+  const tag = `<base href="${new URL(rawUrl(path), location.href).href}">`;
+  return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, `$&${tag}`) : tag + html;
+};
+const when = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const who = (by: VersionBy, agent: string) => (by === 'user' ? 'You' : by === 'agent' ? agent : 'Original');
+
+/** One span per line, each keeping its newline, so the text stays the file's and CSS numbers the lines. */
+const numbered = (text: string) => text.split('\n').map((l, i, all) => (i < all.length - 1 ? <span key={i}>{l}{'\n'}</span> : l && <span key={i}>{l}</span>));
+
+/** The version on disk; its menu lists the kept ones, and picking one marks the open file against it. */
+function VersionBadge({ path, version }: { path: string; version: number }) {
+  const [list, setList] = useState<Version[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const picked = useStore((s) => s.view?.n);
+  const n = useNames();
+  return (
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) void versionsOf(path).then(setList, () => setList([])); }}>
+      <PopoverTrigger asChild>
+        <button aria-label={`Version ${picked ?? version}`} className="ml-1 shrink-0 rounded-4xl outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <Badge className="cursor-pointer bg-foreground text-background">v{picked ?? version}</Badge>
+        </button>
+      </PopoverTrigger>
+      {list && ( // nothing until the list is in, so no empty frame flashes
+      <PopoverContent align="start" className="max-h-80 w-72 gap-0 overflow-y-auto p-1">
+        {!list.length && <p className="px-2 py-1.5 text-sm text-muted-foreground">No earlier versions</p>}
+        {list.map((v) => (
+          <button key={v.n} onClick={() => { setOpen(false); void pickVersion(v.n); }}
+            className={cn('flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent', v.n === picked && 'bg-accent')}>
+            <Badge variant={v.n === version ? 'default' : 'outline'} className={cn('tabular-nums', v.n === version && 'bg-foreground text-background')}>v{v.n}</Badge>
+            <span className="min-w-0 flex-1 truncate text-foreground">{who(v.by, n.Agent)}{v.n === version && <span className="text-muted-foreground"> · current</span>}</span>
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{when(v.at)}</span>
+          </button>
+        ))}
+      </PopoverContent>
+      )}
+    </Popover>
+  );
+}
+
+/** Save found the file changed on disk since your first unsaved edit: never a silent overwrite. */
+function ConflictDialog() {
+  const conflict = useStore((s) => s.conflict);
+  const viewing = useStore((s) => !!s.view);
+  const n = useNames();
+  return (
+    <Dialog open={!!conflict && !viewing} onOpenChange={(o) => { if (!o) set({ conflict: null }); }}>
+      <DialogContent showCloseButton={false} className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{n.who} changed this file</DialogTitle>
+          {conflict?.at && <DialogDescription>{when(conflict.at)}</DialogDescription>}
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={compare}>Compare</Button>
+          <Button variant="outline" onClick={discard}>Keep {n.agent}'s</Button>
+          <Button onClick={() => void saveFile(conflict?.hash)}>Save mine</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

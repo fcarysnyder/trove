@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { AgentTool, OpenRequest, TerminalApp, TroveBridge, UpdateState } from '@trove/core';
+import type { AgentMode, AgentTool, OpenRequest, TerminalApp, TroveBridge, UpdateState } from '@trove/core';
 
 // invoke rejects with "Error invoking remote method '<channel>': Error: <message>"; the page shows <message>.
 const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args).catch((e: Error) => {
@@ -15,16 +15,20 @@ const on = <T>(channel: string, cb: (arg: T) => void) => {
 
 const trove: TroveBridge = {
   pickFolder: () => invoke('trove:pickFolder'),
+  pickFile: () => invoke('trove:pickFile'),
   probe: (path: string) => invoke('trove:probe', path),
   open: (req: OpenRequest) => invoke('trove:open', req),
   recents: () => invoke('trove:recents'),
   forget: (path: string) => invoke('trove:forget', path),
+  pin: (path: string, pinned: boolean) => invoke('trove:pin', path, pinned),
   tools: () => invoke('trove:tools'),
   update: () => invoke('trove:update'),
   onUpdate: (cb: (s: UpdateState) => void) => { ipcRenderer.on('trove:update', (_e, s: UpdateState) => cb(s)); },
   installUpdate: () => invoke('trove:installUpdate'),
   terminals: () => invoke('trove:terminals'),
   setTerminal: (t: TerminalApp) => invoke('trove:setTerminal', t),
+  mode: () => invoke('trove:mode'),
+  setMode: (m: AgentMode) => invoke('trove:setMode', m),
   home: () => invoke('trove:home'),
   githubRepos: () => invoke('trove:githubRepos'),
   clone: (url: string, parent: string) => invoke('trove:clone', url, parent),
@@ -34,6 +38,8 @@ const trove: TroveBridge = {
   removeWorktree: (path: string) => invoke('trove:removeWorktree', path),
   worktreeDir: () => invoke('trove:worktreeDir'),
   setWorktreeDir: (path: string) => invoke('trove:setWorktreeDir', path),
+  attention: (on: boolean) => ipcRenderer.send('trove:attention', on),
+  showTerminal: () => invoke('trove:showTerminal'),
   pty: {
     start: (tool: AgentTool, cols: number, rows: number) => invoke('trove:pty:start', tool, cols, rows),
     // send, not invoke: keystrokes and resizes are fire-and-forget.
@@ -48,8 +54,11 @@ const trove: TroveBridge = {
 
 contextBridge.exposeInMainWorld('trove', trove);
 
-// A folder dropped on any window opens it if it is a repository; any other folder stays
-// on the zero state with the reason. The page cannot learn a dropped file's
+// A file opened in a window that already shows its folder: the page follows its #file= hash.
+ipcRenderer.on('trove:open-file', (_e, rel: string) => { location.hash = new URLSearchParams({ file: rel }).toString(); });
+
+// A folder dropped on any window opens as its repository or as a folder; a document opens in its
+// folder, with the file selected. The page cannot learn a dropped file's
 // path itself (File.path is gone since Electron 32), so the preload takes the drop.
 window.addEventListener('dragover', (e) => e.preventDefault(), true);
 window.addEventListener(

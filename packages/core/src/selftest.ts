@@ -1,14 +1,14 @@
 // The end-to-end check, ported from doc-review.mjs --selftest: anchoring, the block splice, hash
-// checks, Host/Origin checks and every state transition against a throwaway git repo, plus the
-// refusal of a plain folder, a branch scope, settings and the UI static files. Node built-ins only, so the bundled CLI
+// checks, Host/Origin checks and every state transition against a throwaway git repo, plus a plain
+// folder (and one inside a repository), a branch scope, settings and the UI static files. Node built-ins only, so the bundled CLI
 // runs it (`trove --selftest`) with no devDependencies; vitest calls it too.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { addedSpans, blocks, countStates, findAnchor, makeAnchor, matchBlocks, splice, subtractSpans, wordDiff } from './anchor.js';
 import { call, createApp, type AppOptions } from './app.js';
 import { agentAbove, alive } from './presence.js';
@@ -43,7 +43,8 @@ export async function selftest(): Promise<void> {
     await branchCase(temps);
     await switchCase(temps);
     await agentCase(temps);
-    notARepo(temps);
+    await folderCase(temps);
+    await historyCase(temps);
   } finally {
     for (const t of temps) rmSync(t, { recursive: true, force: true });
   }
@@ -211,6 +212,10 @@ async function gitCase(temps: string[]) {
 
   // Security: foreign Host, foreign or missing Origin, non-JSON, paths outside the set.
   assert.equal((await post('/api/reveal', { path: '../etc/passwd' })).status, 404, 'reveal: only a file in the set');
+  assert.equal((await post('/api/open', { path: '../etc/passwd' })).status, 404, 'open: only a file in the set');
+  assert.equal((await post('/api/open', { path: 'nope.html' })).status, 404, 'open: an unlisted file');
+  assert.equal((await post('/api/open', { path: 'a.md' })).status, 400, 'open: HTML only; Trove may be the app for markdown');
+  assert.equal((await post('/api/open', { path: 'c.html' }, { origin: 'https://evil.example' })).status, 403, 'open: same origin only');
   assert.equal((await post('/api/accept', { path: 'a.md' }, { host: 'evil.example' })).status, 403);
   assert.equal((await post('/api/accept', { path: 'a.md' }, { origin: 'https://evil.example' })).status, 403);
   assert.equal((await post('/api/accept', { path: 'a.md' }, { origin: '' })).status, 403);
@@ -223,6 +228,7 @@ async function gitCase(temps: string[]) {
 
   // Accept stages; a later change puts the file back in the queue.
   const shown = (await get('/api/file?path=a.md')).body.hash;
+  assert.deepEqual([(await get('/api/file?path=a.md')).body.version, (await get('/api/versions?path=a.md')).body], [undefined, []], 'a repository keeps no versions: git has them');
   const stale = await post('/api/accept', { path: 'a.md', hash: 'stale' });
   assert.deepEqual([stale.status, stale.body.hash], [409, shown], 'accepting a version the user did not see is refused');
   assert.equal(staged(), '', 'a refused accept leaves the index alone');
@@ -581,7 +587,7 @@ async function agentCase(temps: string[]) {
   const opts = { root, agent: null };
   let { app, port } = await listen(opts);
   const source = async () => (await call(port, 'GET', '/api/source')).body;
-  const none = { id: 'other', label: 'the agent', connected: false, at: null };
+  const none = { id: 'other', label: 'the agent', connected: false, at: null, waiting: null, since: null };
   assert.deepEqual([(await source()).agentInfo, (await source()).agent], [none, 'other'], 'nothing attached');
   assert.equal((await call(port, 'POST', '/api/agent', { id: 'cursor' })).status, 400);
   const codex = await call(port, 'POST', '/api/agent', { id: 'codex' });
@@ -600,26 +606,231 @@ async function agentCase(temps: string[]) {
   assert.deepEqual([(await source()).agentInfo, (await source()).agent], [{ ...claude, connected: false }, 'claude'],
     'who attached survives a restart; with no process to follow, connected does not');
   assert.deepEqual((await call(port, 'POST', '/api/agent', { id: null })).body, none, 'detach');
-  // Activity: past sends from the batches log, then this run's moves; any other events-log line as written.
+  // Activity: the last run's entries from activity.jsonl, then this run's moves; any other events-log line as written.
   appendFileSync((await source()).eventsLog, 'pr 7: opened\n');
   const activity = (await call(port, 'GET', '/api/activity')).body.entries.map((e: any) => [e.kind, e.text, e.comments]);
-  assert.deepEqual(activity, [['batch', sent.id, 1], ['detach', 'Claude', undefined], ['event', 'pr 7: opened', undefined]]);
+  assert.deepEqual(activity, [['attach', 'Codex', undefined], ['batch', sent.id, 1], ['attach', 'Cursor', undefined], ['attach', 'Claude', undefined],
+    ['detach', 'Claude', undefined], ['event', 'pr 7: opened', undefined]]);
   assert.equal((await call(port, 'GET', '/api/activity', undefined, { host: 'evil.example' })).status, 403);
   assert.equal((await call(port, 'POST', '/api/accept', { path: 'a.md', hash })).body.error, 'The agent is working on this file');
   await app.close();
   ({ app, port } = await listen(opts));
   assert.deepEqual((await source()).agentInfo, none, 'detach survives a restart');
+  // Signals (`trove signal`, the desktop's terminal): what the agent waits on the user for, the last one wins.
+  const signal = async (body: unknown) => (await call(port, 'POST', '/api/signal', body)).body;
+  assert.equal((await call(port, 'POST', '/api/signal', { kind: 'nap' })).status, 400);
+  assert.equal((await call(port, 'POST', '/api/signal', { kind: 'idle', text: 7 })).status, 400);
+  const asked = await signal({ kind: 'permission', text: ' Bash ' });
+  assert.deepEqual([asked.waiting, asked.waitingText, typeof asked.since], ['permission', 'Bash', 'string']);
+  assert.deepEqual([(await signal({ kind: 'idle' })).waitingText, (await source()).agentInfo.waiting], [undefined, 'idle'], 'the last signal wins');
+  await call(port, 'POST', '/api/message', { text: 'Go on.' });
+  assert.equal((await source()).agentInfo.waiting, null, "the user's message ends an idle wait");
+  await signal({ kind: 'question', text: 'Which one?' });
+  await call(port, 'POST', '/api/message', { text: 'Also this.' });
+  assert.equal((await source()).agentInfo.waiting, 'question', 'but not a question');
+  assert.equal((await signal({ kind: 'working' })).waiting, null);
   await app.close();
   ({ app, port } = await listen({ root, agent: 'claude' }));
   assert.deepEqual([(await source()).agentInfo.label, (await source()).agentInfo.connected], ['Claude', true], 'the serving agent is attached');
   await app.close();
 }
 
-// A folder outside any git repository is refused, and the probe says so.
-function notARepo(temps: string[]) {
-  const root = mkdtempSync(join(tmpdir(), 'trove-plain-'));
+// History: every entry lands in activity.jsonl and comes back after a restart, an older state dir's sends
+// from the batches log once each; the agent's notes and messages, and the user's, each with one events-log line.
+async function historyCase(temps: string[]) {
+  const { root } = newRepo('trove-history-');
   temps.push(root);
-  writeFileSync(join(root, 'a.md'), '# A\n');
+  writeFileSync(join(root, 'a.md'), '# A\n\nText.\n');
+  writeFileSync(join(root, 'b.md'), '# B\n\nText.\n');
+  const anchor = { quote: 'Text', prefix: '', suffix: '', path: [], raw: '' };
+  mkdirSync(join(root, '.git', 'trove'));
+  appendFileSync(join(root, '.git', 'trove', 'batches.jsonl'),
+    `${JSON.stringify({ id: 'old1', sentAt: '2026-01-01T00:00:00.000Z', items: [{ path: 'a.md', kind: 'explain', note: 'Why?', anchor }] })}\n`);
+  let { app, port } = await listen({ root, quietMs: 50 });
+  const post = (path: string, body: unknown) => call(port, 'POST', path, body);
+  const entries = async () => (await call(port, 'GET', '/api/activity')).body.entries as any[];
+  const { eventsLog, stateDir } = (await call(port, 'GET', '/api/source')).body;
+  const log = join(stateDir, 'activity.jsonl');
+  const events = () => (existsSync(eventsLog) ? readFileSync(eventsLog, 'utf8') : '');
+  assert.deepEqual((await entries()).map((e) => [e.id, e.kind, e.paths]), [['old1', 'batch', ['a.md']]], 'an older state dir: its sends');
+  assert.equal((await call(port, 'GET', '/api/batch?id=old1')).body.items[0].note, 'Why?');
+  assert.equal((await call(port, 'GET', '/api/batch?id=nope')).status, 404);
+
+  // The agent's message (`say`): markdown of any length, about files, answering an entry; nothing echoed to its events log.
+  const long = 'Line one, "quoted".\n\n- a list\n- of `code`\n';
+  const said = (await post('/api/message', { text: long, from: 'agent', paths: [join(root, 'a.md'), 'a.md'], re: 'old1' })).body;
+  assert.deepEqual([said.kind, said.from, said.body, said.paths, said.re, said.text], ['message', 'agent', long.trim(), ['a.md'], 'old1', '']);
+  assert.equal((await post('/api/message', { text: 'x', paths: ['nope.md'] })).status, 404);
+  assert.equal((await post('/api/message', { text: '  ' })).status, 400);
+  assert.equal((await post('/api/message', { text: 'x', re: 'not an id!' })).status, 400);
+  assert.equal((await post('/api/message', { text: 'x', from: 'robot' })).status, 400);
+  assert.equal(events(), '');
+
+  // The user's reply from the page: one line on the events log, which names the grep that finds the whole text.
+  const mine = (await post('/api/message', { text: 'Thanks.\nAlso: shorten it.', re: said.id })).body;
+  assert.deepEqual([mine.from, mine.re], ['user', said.id]);
+  assert.equal(events(), `message ${mine.id}: from the reviewer, re ${said.id}. Read it with: grep -F ${mine.id} '${log}'\n`);
+  assert.deepEqual(readFileSync(log, 'utf8').split('\n').filter((l) => l.includes(mine.id)).map((l) => JSON.parse(l).body), ['Thanks.\nAlso: shorten it.']);
+  const plain = (await post('/api/message', { text: 'Start on b.md', paths: ['b.md'] })).body;
+  assert.ok(events().endsWith(`message ${plain.id}: from the reviewer. Read it with: grep -F ${plain.id} '${log}'\n`));
+
+  // `done --note`: on the release; on the quiet release that got there first; else a message about the file.
+  for (const p of ['a.md', 'b.md']) await post('/api/drafts', { path: p, drafts: [{ kind: 'change', note: 'n', anchor }] });
+  const sent = (await post('/api/send', {})).body;
+  writeFileSync(join(root, 'a.md'), '# A\n\nBetter text.\n');
+  assert.equal((await post('/api/release', { path: 'a.md', note: 7 })).status, 400);
+  assert.deepEqual((await post('/api/release', { path: 'a.md', note: 'Rewrote the **intro**.' })).body, { released: true, updated: true });
+  writeFileSync(join(root, 'b.md'), '# B\n\nShorter.\n');
+  app.tick(Date.now());
+  app.tick(Date.now() + 100);
+  assert.deepEqual((await post('/api/release', { path: 'b.md', note: 'Shortened it.' })).body, { released: false, updated: true });
+  await post('/api/release', { path: 'b.md', note: 'And again.' });
+
+  const shape = (es: any[]) => es.map((e) => [e.kind, e.from ?? null, e.body ?? e.text, e.paths ?? null]);
+  const expected = [
+    ['batch', null, 'old1', ['a.md']],
+    ['message', 'agent', long.trim(), ['a.md']],
+    ['message', 'user', 'Thanks.\nAlso: shorten it.', null],
+    ['message', 'user', 'Start on b.md', ['b.md']],
+    ['batch', null, sent.id, ['a.md', 'b.md']],
+    ['release', 'agent', 'Rewrote the **intro**.', ['a.md']],
+    ['release', 'agent', 'Shortened it.', ['b.md']],
+    ['message', 'agent', 'And again.', ['b.md']],
+  ];
+  assert.deepEqual(shape(await entries()), expected, 'events-log lines for batches and messages are not entries of their own');
+  assert.deepEqual((await entries()).filter((e) => e.kind === 'batch').map((e) => e.counts), [{ 'a.md': 1 }, { 'a.md': 1, 'b.md': 1 }], 'comments per file');
+  await app.close();
+  ({ app, port } = await listen({ root }));
+  assert.deepEqual(shape(await entries()), expected, 'all of it survives a restart, each send once');
+  await app.close();
+}
+
+// A plain folder: every doc in it, edited in place with no review state. Comments, Send, the agent's update, edits and
+// reverts work as in a repository; accept, skip, reject and pr are refused. Inside a repository, opened as a folder:
+// .gitignore holds and git is only read.
+async function folderCase(temps: string[]) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'trove-folder-')));
+  temps.push(root);
+  const seed: Record<string, string> = { 'a.md': '# A\n\nOne.\n', 'docs/b.md': '# B\n', 'docs/c.html': '<p>C</p>\n', '.hidden/x.md': '# x\n',
+    'node_modules/y/z.md': '# z\n', 'gen/g.md': '# g\n', 'notes.txt': 'notes\n', 'pic.png': 'x' };
+  const plant = (dir: string, files: Record<string, string>) => {
+    for (const [p, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(dir, p)), { recursive: true });
+      writeFileSync(join(dir, p), text);
+    }
+  };
+  plant(root, seed);
   assert.equal(probeGit(root), null);
-  assert.throws(() => createApp({ root, log: () => {} }), { message: `not a git repository: ${root}` });
+  const opts = { root, exclude: ['gen/**'] };
+  let { app, port } = await listen(opts);
+  temps.push(app.info().stateDir);
+  assert.equal(dirname(app.info().stateDir), join(homedir(), '.trove', 'folders'), 'state outside the folder');
+  const get = async (path: string, p = port) => (await call(p, 'GET', path)).body;
+  const post = (path: string, body: unknown) => call(port, 'POST', path, body);
+  const rows = async (p = port) => Object.fromEntries((await get('/api/files', p)).files.map((f: any) => [f.path, [f.state, f.updated, f.edited, f.drafts].join(' ')]));
+  const info = await get('/api/source');
+  assert.deepEqual([info.kind, info.branch, info.base, info.scope, info.repo, info.worktree],
+    ['folder', null, null, 'uncommitted', { root, name: basename(root) }, { path: root, name: basename(root), branch: null, main: true }]);
+  assert.deepEqual(await rows(), { 'a.md': 'queue false false 0', 'docs/b.md': 'queue false false 0', 'docs/c.html': 'queue false false 0' },
+    'every doc of the enabled types, recursively: no dot-folders, node_modules, excluded paths or other types');
+  assert.equal((await call(port, 'GET', '/api/git')).status, 404);
+  assert.equal((await post('/api/switch', { branch: 'main' })).status, 404);
+  assert.equal((await get('/api/file?path=a.md')).base, null, 'nothing to mark new against before an update');
+
+  // No review state: every review action is refused and changes nothing.
+  const a = await get('/api/file?path=a.md');
+  const refused = [['accept', { path: 'a.md', hash: a.hash }], ['unaccept', { path: 'a.md' }], ['accept-all', { paths: ['a.md'] }],
+    ['skip', { path: 'a.md', on: true }], ['reject', { path: 'a.md', hash: a.hash }], ['pr', {}]] as const;
+  for (const [route, body] of refused) assert.equal((await post(`/api/${route}`, body)).status, 409, route);
+  assert.deepEqual([(await post('/api/accept', { path: 'a.md', hash: a.hash })).body.error, readFileSync(join(root, 'a.md'), 'utf8')],
+    [`No accept in a folder: ${basename(root)} is edited in place`, seed['a.md']]);
+
+  // The loop: a comment, Send locks the file, the agent's done brings it back updated; Show new marks against the text at send.
+  const anchor = { quote: 'B', prefix: '', suffix: '', path: [], raw: '' };
+  await post('/api/drafts', { path: 'docs/b.md', drafts: [{ kind: 'change', note: 'n', anchor }] });
+  assert.equal((await rows())['docs/b.md'], 'queue false false 1');
+  assert.deepEqual((await post('/api/send', {})).body.locked, ['docs/b.md']);
+  assert.equal((await rows())['docs/b.md'], 'working false false 0');
+  writeFileSync(join(root, 'docs/b.md'), '# B, by the agent\n');
+  assert.deepEqual((await post('/api/release', { path: join(root, 'docs/b.md') })).body, { released: true, updated: true });
+  assert.deepEqual([(await get('/api/file?path=docs%2Fb.md')).since, (await rows())['docs/b.md']], [seed['docs/b.md'], 'queue true false 0']);
+  // Updated means since your last send of it: the next send clears it, and an unchanged release leaves it clear.
+  await post('/api/drafts', { path: 'docs/b.md', drafts: [{ kind: 'change', note: 'again', anchor }] });
+  await post('/api/send', {});
+  assert.deepEqual((await post('/api/release', { path: 'docs/b.md' })).body, { released: true, updated: false });
+  assert.equal((await rows())['docs/b.md'], 'queue false false 0');
+
+  // Edits save in place, as versions rather than edit records: nothing to revert, the version list is the undo.
+  const saved = await post('/api/save', { path: 'docs/c.html', hash: sha(seed['docs/c.html']), raw: '<p>C2</p>\n' });
+  assert.deepEqual([saved.status, readFileSync(join(root, 'docs/c.html'), 'utf8'), (await rows())['docs/c.html']], [200, '<p>C2</p>\n', 'queue false false 0']);
+  assert.equal((await post('/api/revert', { path: 'docs/c.html' })).status, 404);
+  writeFileSync(join(root, 'new.md'), '# New\n');
+  assert.equal((await rows())['new.md'], 'queue false false 0', 'a new file lists on the next request');
+
+  // Versions: the first open is the original, a Save the user's, a change Trove notices (or the agent's release) the agent's.
+  const vs = async (p: string) => (await get(`/api/versions?path=${encodeURIComponent(p)}`)).map((v: any) => `${v.n} ${v.by}`);
+  assert.deepEqual(await vs('docs/b.md'), ['2 agent', '1 original'], 'the release: the text at send, then the agent\'s');
+  assert.deepEqual(await vs('docs/c.html'), ['2 user', '1 original'], 'a Save is the user\'s');
+  assert.equal(a.version, 1);
+  const two = '# A\n\nTwo.\n';
+  assert.equal((await post('/api/save', { path: 'a.md', hash: a.hash, raw: two })).status, 200, 'markdown saves whole without an index');
+  assert.equal(readFileSync(join(root, 'a.md'), 'utf8'), two);
+  // The agent writes it under an unsaved edit: Save is refused with the hash on disk, and Trove keeps the agent's text.
+  const three = '# A\n\nThree.\n';
+  writeFileSync(join(root, 'a.md'), three);
+  const conflict = await post('/api/save', { path: 'a.md', hash: sha(two), raw: '# A\n\nMine.\n' });
+  assert.deepEqual([conflict.status, conflict.body.hash, readFileSync(join(root, 'a.md'), 'utf8')], [409, sha(three), three], 'no silent overwrite');
+  assert.deepEqual(await vs('a.md'), ['3 agent', '2 user', '1 original']);
+  assert.deepEqual([(await get('/api/version?path=a.md&n=2')).text, (await get('/api/file?path=a.md')).version], [two, 3]);
+  assert.equal((await call(port, 'GET', '/api/version?path=a.md&n=9')).status, 404);
+  assert.equal((await post('/api/save', { path: 'a.md', hash: conflict.body.hash, raw: '# A\n\nMine.\n' })).status, 200, 'Save mine');
+  assert.deepEqual((await vs('a.md'))[0], '4 user');
+  // The last 50 are kept.
+  for (let k = 5; k <= 60; k++) await post('/api/save', { path: 'a.md', hash: sha(readFileSync(join(root, 'a.md'), 'utf8')), raw: `# A\n\n${k}\n` });
+  const kept = await vs('a.md');
+  assert.deepEqual([kept.length, kept[0], kept.at(-1)], [50, '60 user', '11 user'], 'numbering goes on past the cap');
+
+  // Unsaved edits live on the server: they survive a restart, and a Save clears them.
+  const onDisk = readFileSync(join(root, 'a.md'), 'utf8');
+  const edit = { text: '# A\n\nUnsaved.\n', base: sha(onDisk), was: onDisk };
+  assert.equal((await post('/api/unsaved', { path: 'a.md', edit: { text: 1 } })).status, 400);
+  assert.equal((await post('/api/unsaved', { path: 'a.md', edit })).status, 200);
+  await app.close();
+  ({ app, port } = await listen(opts));
+  assert.deepEqual(await get('/api/unsaved'), { 'a.md': edit }, 'kept across a restart');
+  assert.equal((await post('/api/save', { path: 'a.md', hash: edit.base, raw: edit.text })).status, 200);
+  assert.deepEqual(await get('/api/unsaved'), {}, 'Save clears it');
+  await post('/api/unsaved', { path: 'a.md', edit });
+  await post('/api/unsaved', { path: 'a.md', edit: null });
+  assert.deepEqual(await get('/api/unsaved'), {}, "Don't save clears it");
+  await app.close();
+
+  // A file as the root: its folder, with the file's type turned on there.
+  ({ app, port } = await listen({ root: join(root, 'notes.txt') }));
+  assert.deepEqual([app.info().root, (await rows())['notes.txt'], app.settings().types.txt], [root, 'queue false false 0', true]);
+  await app.close();
+
+  // Inside a repository, as a folder: tracked and untracked docs, not ignored ones; git is read, never written.
+  const { root: repo, sh } = newRepo('trove-folder-git-');
+  temps.push(repo);
+  plant(repo, { '.gitignore': 'docs/out/\n', 'docs/a.md': '# A\n', 'docs/out/x.md': '# x\n' });
+  sh('add', '.');
+  sh('commit', '-qm', 'a');
+  plant(repo, { 'docs/new.md': '# new\n' });
+  const docs = await listen({ root: join(repo, 'docs'), folder: true });
+  temps.push(docs.app.info().stateDir);
+  assert.deepEqual(Object.keys(await rows(docs.port)), ['a.md', 'new.md'], '.gitignore holds');
+  const edited = await call(docs.port, 'POST', '/api/save', { path: 'a.md', hash: sha('# A\n'), index: 0, raw: '# A, edited' });
+  assert.equal(edited.status, 200);
+  await call(docs.port, 'POST', '/api/drafts', { path: 'new.md', drafts: [{ kind: 'change', note: 'n', anchor }] });
+  assert.equal((await call(docs.port, 'POST', '/api/send', {})).status, 200);
+  assert.equal((await call(docs.port, 'POST', '/api/accept', { path: 'a.md', hash: edited.body.hash })).status, 409);
+  assert.deepEqual([sh('diff', '--cached', '--name-only'), sh('status', '--porcelain'), existsSync(join(repo, '.git', 'trove'))],
+    ['', ' M docs/a.md\n?? docs/new.md\n', false], 'nothing staged, nothing in the git dir: only the edit itself');
+  await docs.app.close();
+  const out = await listen({ root: join(repo, 'docs/out'), folder: true });
+  temps.push(out.app.info().stateDir);
+  assert.deepEqual(Object.keys(await rows(out.port)), ['x.md'], 'a folder git ignores whole is walked');
+  await out.app.close();
+  assert.equal(createApp({ root: join(repo, 'docs'), log: () => {} }).info().kind, 'git', 'without folder, the repository');
 }

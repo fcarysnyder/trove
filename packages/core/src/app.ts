@@ -1,4 +1,4 @@
-// The review server: a queue over a git working tree, comment drafts, the user's block edits, batches for the
+// The review server: a queue over a git working tree or a plain folder, comment drafts, the user's block edits, batches for the
 // agent, locks while it works, and the HTTP API the page talks to. Ported from the markdown-editor
 // skill's doc-review.mjs; every route behaves as it did there. Node built-ins only.
 import { execFile } from 'node:child_process';
@@ -10,11 +10,15 @@ import { basename, dirname, extname, join, relative, resolve, sep } from 'node:p
 import { blocks, splice } from './anchor.js';
 import { included, kindOf, loadSettings, mergeSettings, saveSettings } from './settings.js';
 import { agentAbove, alive, peerOf } from './presence.js';
-import { openSource, sha, withChanges } from './source.js';
-import { AGENT_LABELS, type Activity, type AgentId, type AgentInfo, type BlockEdit, type Draft, type FileEntry, type GitInfo, type GitScope, type Question, type Settings, type SourceInfo } from './types.js';
+import { folderStateDir, inGit, openFolder, openSource, sha, withChanges } from './source.js';
+import { versionStore } from './versions.js';
+import { AGENT_LABELS, DEFAULT_DOC_TYPES, type Activity, type AgentId, type AgentInfo, type AgentWaiting, type BlockEdit, type Draft, type FileEntry, type GitInfo, type GitScope, type Question, type Settings, type SourceInfo, type SourceKind, type UnsavedEdit } from './types.js';
 
 export interface AppOptions {
-  root: string; // any path inside a git working tree; anything else throws `not a git repository: <root>`
+  // A folder or a file. Inside a git working tree, that working tree; anywhere else, the folder (a file's folder) as a
+  // folder source. A file whose doc type is off in its folder turns that type on.
+  root: string;
+  folder?: boolean; // serve the folder as a folder source even inside a git working tree
   scope?: GitScope; // default from settings
   base?: string | null; // branch scope's base; default from settings
   exclude?: string[]; // replaces Settings.exclude for this run
@@ -28,7 +32,7 @@ export interface AppOptions {
   by?: ServerRecord['by']; // who runs this server, written to server.json; default 'cli'
 }
 
-/** `<git-dir>/trove/server.json`: the running server, so another process finds it from the repository alone. */
+/** `<state dir>/server.json`: the running server, so another process finds it from the repository or folder alone. */
 export interface ServerRecord { port: number; pid: number; startedAt: string; by: 'desktop' | 'cli' }
 
 export interface App {
@@ -37,14 +41,18 @@ export interface App {
   info(): SourceInfo;
   settings(): Settings;
   list(): FileEntry[];
-  /** Branch, worktrees and changed-path count, as GET /api/git answers. */
-  git(): GitInfo;
+  /** Branch, worktrees and changed-path count, as GET /api/git answers; null for a folder. */
+  git(): GitInfo | null;
+  /** Turn on the doc type of `path` (a file) in this source's settings when it is off: opening a file lists it. */
+  enableTypeFor(path: string): void;
   /** Run once a second: releases locked files that changed and then stayed quiet. */
   tick(now?: number): void;
   close(): Promise<void>;
 }
 
 const MAX_BYTES = 512 * 1024;
+/** What opens a path or URL in the system's own app: one argument, never a shell (on Windows explorer, not cmd's start). */
+const OPENER = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'";
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
@@ -64,18 +72,29 @@ function locate(text: string, needle: string, hint: number) {
   return needle ? best : Math.min(hint, text.length);
 }
 
+/** A JSON-lines file's records; a missing file is none, and a line cut short or corrupt is passed over. */
+function jsonl(file: string): any[] {
+  let text = '';
+  try { text = readFileSync(file, 'utf8'); } catch { return []; }
+  return text.split('\n').flatMap((l) => { try { return l ? [JSON.parse(l)] : []; } catch { return []; } });
+}
+
 interface EditRecord { before: string; saved?: string; blocks: BlockEdit[] }
 /** A rejected file's backup: the working text, the index copy (null: none) and its comment drafts. */
 interface Rejected { text: string; staged: string | null; drafts: Draft[]; at: string }
 type Result = [number, unknown];
 
+/** The source `root` names: a folder when asked for or outside any repository, else its git working tree. */
+const sourceFor = (root: string, folder?: boolean) => (folder || !inGit(root) ? openFolder(root) : openSource(root));
+
 export function createApp(o: AppOptions): App {
-  const source = openSource(resolve(o.root));
+  const asked = resolve(o.root);
+  const source = sourceFor(asked, o.folder);
   const { root: top, stateDir: dir } = source;
   const log = o.log ?? console.log;
   const quietMs = o.quietMs ?? 5000;
   const uiDir = o.uiDir ? realpathSync(o.uiDir) : null;
-  const files = { drafts: join(dir, 'drafts.json'), edits: join(dir, 'edits.json'), batches: join(dir, 'batches.jsonl'), events: join(dir, 'events.log'), state: join(dir, 'state.json'), server: join(dir, 'server.json') };
+  const files = { unsaved: join(dir, 'unsaved.json'), drafts: join(dir, 'drafts.json'), edits: join(dir, 'edits.json'), batches: join(dir, 'batches.jsonl'), events: join(dir, 'events.log'), state: join(dir, 'state.json'), server: join(dir, 'server.json'), activity: join(dir, 'activity.jsonl') };
 
   // Settings: the file, with this run's options on top until a POST changes the same key.
   let stored = loadSettings(dir);
@@ -84,6 +103,17 @@ export function createApp(o: AppOptions): App {
   if (o.base !== undefined) overrides.base = o.base;
   if (o.exclude !== undefined) overrides.exclude = o.exclude;
   let current = mergeSettings(stored, overrides);
+  function enableTypeFor(path: string) {
+    const type = kindOf(path, current) ? undefined : DEFAULT_DOC_TYPES.find((t) => t.extensions.some((e) => path.toLowerCase().endsWith(e)));
+    if (!type) return;
+    stored = mergeSettings(stored, { types: { [type.id]: true } });
+    saveSettings(dir, stored);
+    current = mergeSettings(stored, overrides);
+  }
+  // A file opened in a folder lists even when its type is off there: opening it turns the type on.
+  if (source.kind === 'folder' && statSync(asked).isFile()) enableTypeFor(asked);
+  // A folder's numbered copies of each file (versions.ts); a repository has git's history instead.
+  const versions = source.kind === 'folder' ? versionStore(dir) : null;
 
   // Locks, the agent's snapshots and its waiting question live on disk too, so a restart keeps them:
   // {working: {path: {hash, text}}, updated: {path: text}, question, seen, skipped, rejected}.
@@ -112,9 +142,16 @@ export function createApp(o: AppOptions): App {
   const serving = o.agent === undefined ? (process.env.CLAUDECODE ? 'claude' : null) : o.agent;
   let agent: Agent | null = serving ? attached(serving, undefined, agentAbove(process.pid, serving)) : saved.agent ?? null;
   let attachedHere = !!serving;
-  const agentInfo = (): AgentInfo => agent
-    ? { id: agent.id, label: agent.label, at: agent.at, connected: agent.pid ? alive(agent.pid) : attachedHere }
-    : { id: 'other', label: AGENT_LABELS.other, connected: false, at: null };
+  // What the agent waits on the user for, from its hooks or the desktop's terminal (POST /api/signal). Memory only.
+  let signal: { waiting: AgentWaiting | null; text?: string; since: string | null } = { waiting: null, since: null };
+  const unwait = () => { signal = { waiting: null, since: new Date().toISOString() }; };
+  // The user wrote or sent something: an agent whose turn ended is about to work again.
+  const resumed = () => { if (signal.waiting === 'idle') unwait(); };
+  const agentInfo = (): AgentInfo => ({
+    ...(agent ? { id: agent.id, label: agent.label, at: agent.at, connected: agent.pid ? alive(agent.pid) : attachedHere }
+      : { id: 'other' as const, label: AGENT_LABELS.other, connected: false, at: null }),
+    waiting: signal.waiting, ...(signal.text ? { waitingText: signal.text } : {}), since: signal.since,
+  });
   const Who = () => { const l = agentInfo().label; return l[0].toUpperCase() + l.slice(1); };
   const BUSY = (): Result => [409, { error: `${Who()} is working on this file` }];
   const saveState = () => writeFileSync(files.state, JSON.stringify({
@@ -122,19 +159,36 @@ export function createApp(o: AppOptions): App {
     seen: [...seen], skipped: [...skipped], rejected: Object.fromEntries(rejected), agent }));
   if (serving) saveState();
   const REJECTED: Result = [409, { error: 'Rejected: restore it first' }];
-  // What the agent drawer lists, newest last: the batches log's last sends, then what this run sees.
+  // What the agent drawer lists, newest last, kept in activity.jsonl so History survives a restart. An
+  // entry written again (a release that gets the agent's note later) is a second line with the same id.
+  const KEEP = 200;
   const activity: Activity[] = [];
+  const persist = (e: Activity) => appendFileSync(files.activity, `${JSON.stringify(e)}\n`);
   const note = (kind: Activity['kind'], text: string, more: Partial<Activity> = {}) => {
-    activity.push({ at: new Date().toISOString(), kind, text, ...more });
-    activity.splice(0, activity.length - 100);
+    const e: Activity = { id: randomUUID().slice(0, 8), at: new Date().toISOString(), kind, text, ...more };
+    activity.push(e);
+    activity.splice(0, activity.length - KEEP);
+    persist(e);
+    return e;
+  };
+  const counts = (items: { path: string | null }[]) => {
+    const n: Record<string, number> = {};
+    for (const c of items) n[c.path as string] = (n[c.path as string] ?? 0) + 1;
+    return n;
   };
   const sentEntry = (b: { id: string; sentAt: string; items: { path: string | null }[] }): Activity =>
-    ({ at: b.sentAt, kind: 'batch', text: b.id, comments: b.items.length, paths: [...new Set(b.items.map((c) => c.path as string))] });
-  try { activity.push(...readFileSync(files.batches, 'utf8').trim().split('\n').slice(-100).map((l) => sentEntry(JSON.parse(l)))); } catch {}
+    ({ id: b.id, at: b.sentAt, kind: 'batch', text: b.id, comments: b.items.length, paths: Object.keys(counts(b.items)), counts: counts(b.items) });
+  // ponytail: both logs are read whole at start; trim activity.jsonl if it ever gets slow.
+  // A later line with an entry's id replaces it (a re-written entry keeps its time, so its place); then the
+  // batches log's sends that activity.jsonl lacks, which is all of them in an older state dir.
+  const byId = new Map<string, Activity>();
+  for (const e of jsonl(files.activity)) if (e?.id) byId.set(e.id, e);
+  for (const b of jsonl(files.batches)) if (b?.id && !byId.has(b.id)) byId.set(b.id, sentEntry(b));
+  activity.push(...[...byId.values()].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).slice(-KEEP));
 
   function list(): FileEntry[] {
     const before = seen.size;
-    const out = source.list(current, seen, new Set(rejected.keys()));
+    const out = source.kind === 'git' ? source.list(current, seen, new Set(rejected.keys())) : source.list(current);
     // A rejected path the source reports again has new content (say, regenerated): it is live again.
     let dropped = false;
     for (const f of out) {
@@ -160,6 +214,14 @@ export function createApp(o: AppOptions): App {
   const hashOf = (rel: string) => { try { return sha(read(rel)); } catch { return null; } };
   const drafts = (): Record<string, Draft[]> => { try { return JSON.parse(readFileSync(files.drafts, 'utf8')); } catch { return {}; } };
   const saveDrafts = (d: Record<string, Draft[]>) => writeFileSync(files.drafts, JSON.stringify(d, null, 1));
+  const unsaved = (): Record<string, UnsavedEdit> => { try { return JSON.parse(readFileSync(files.unsaved, 'utf8')); } catch { return {}; } };
+  const setUnsaved = (rel: string, edit: UnsavedEdit | null) => {
+    const u = unsaved();
+    if (edit) u[rel] = edit;
+    else if (!u[rel]) return;
+    else delete u[rel];
+    writeFileSync(files.unsaved, JSON.stringify(u));
+  };
   // Files the user edited in this review: path -> {before: text before the first Save, saved: hash
   // of the last Save, blocks: one entry per edited block}. On disk, so Edited and every Revert
   // survive a restart; cleared by Accept or Revert all.
@@ -169,13 +231,25 @@ export function createApp(o: AppOptions): App {
   // The file's block edits as the page shows them: `ok` while the edit's text is still in the file.
   const editRows = (rel: string, text: string): BlockEdit[] => (edits()[rel]?.blocks ?? []).map((b) => ({ ...b, ok: locate(text, b.after, b.at) !== -1 }));
 
-  function release(rel: string) {
+  // `body`: the agent's note on what it changed (`done --note`). A file the quiet release already let go
+  // gets it on that release; one with no release to take it, as a message about the file.
+  function release(rel: string, body?: string) {
+    const said = body ? { from: 'agent' as const, body } : {};
     const w = working.get(rel);
-    if (!w) return false;
+    if (!w) {
+      const last = activity.findLast((e) => e.kind === 'release' && e.text === rel);
+      if (body && last && !last.body) persist(Object.assign(last, said));
+      else if (body) note('message', '', { ...said, paths: [rel] });
+      return false;
+    }
     working.delete(rel);
-    if (hashOf(rel) !== w.hash) updated.set(rel, w.text);
+    if (hashOf(rel) !== w.hash) {
+      updated.set(rel, w.text);
+      versions?.notice(rel, w.text); // what it was at the send, if Trove had no copy yet
+      versions?.add(rel, 'agent', read(rel));
+    }
     saveState();
-    note('release', rel);
+    note('release', rel, { paths: [rel], ...said });
     return true;
   }
   // Fallback release: the file changed after send and then stayed the same for quietMs.
@@ -199,25 +273,36 @@ export function createApp(o: AppOptions): App {
     const tail = readFileSync(files.events).subarray(eventsAt);
     const end = tail.lastIndexOf(10) + 1; // a line still being written waits
     eventsAt += end;
-    for (const line of tail.subarray(0, end).toString('utf8').split('\n')) if (line && !line.startsWith('batch ')) note('event', line);
+    for (const line of tail.subarray(0, end).toString('utf8').split('\n')) if (line && !/^(batch|message) /.test(line)) note('event', line);
   }
 
   const port = () => { const a = server.address(); return a && typeof a === 'object' ? a.port : 0; };
   const pick = ({ repo, worktree }: ReturnType<typeof source.place>) => ({ repo, worktree });
   const info = (): SourceInfo => ({
-    kind: 'git', root: top, name: basename(top), ...pick(source.place()), branch: source.branch(),
-    base: current.scope === 'branch' ? source.resolveBase(current) : null,
-    scope: current.scope, agent: agent?.id === 'claude' ? 'claude' : 'other', agentInfo: agentInfo(), port: port(), stateDir: dir, eventsLog: files.events, batchesLog: files.batches,
+    kind: source.kind, root: top, name: basename(top), ...pick(source.place()), branch: source.branch(),
+    base: source.kind === 'git' && current.scope === 'branch' ? source.resolveBase(current) : null,
+    scope: source.kind === 'git' ? current.scope : 'uncommitted', agent: agent?.id === 'claude' ? 'claude' : 'other', agentInfo: agentInfo(), port: port(), stateDir: dir, eventsLog: files.events, batchesLog: files.batches,
     doneCommand: (o.doneCommand ?? ((p) => `trove done <file> --port ${p}`))(port()),
   });
 
-  const git = (): GitInfo => {
+  const git = (): GitInfo | null => {
+    if (source.kind !== 'git') return null;
     const place = source.place();
     return {
     root: top, ...place, worktrees: withChanges(place.worktrees), branch: source.branch(), head: source.head(), branches: source.branches(),
     dirty: source.dirty(current), base: current.scope === 'branch' ? source.resolveBase(current) : null,
     };
   };
+
+  // A folder is edited in place: no review state, no git that writes, no HEAD to go back to. These routes answer a folder
+  // 409 (`No <what> in a folder`), or 404 with no `what`; the dispatcher checks once.
+  const GIT_ONLY: Record<string, string | null> = {
+    'POST /api/accept': 'accept', 'POST /api/unaccept': 'accept', 'POST /api/accept-all': 'accept', 'POST /api/skip': 'skip',
+    'POST /api/reject': 'reject', 'POST /api/pr': 'pull request', 'GET /api/git': null, 'POST /api/switch': null,
+  };
+  const repo = source as ReturnType<typeof openSource>; // for the GIT_ONLY routes, which only run on a repository
+  const NOT_GIT = (what: string | null): Result => (what ? [409, { error: `No ${what} in a folder: ${basename(top)} is edited in place` }]
+    : [404, { error: `${basename(top)} is open as a folder, without git` }]);
 
   const routes: Record<string, (q: URLSearchParams, body: any, req?: IncomingMessage) => Result> = {
     'GET /api/files': () => {
@@ -254,7 +339,8 @@ export function createApp(o: AppOptions): App {
       // revertable: the file is still exactly what the user's last Save wrote.
       // base: what Show new marks green against; since: the text before the agent's last update, if any.
       return [200, { path: rel, kind: f.kind, text, base: source.baseOf(rel, text, current), since: updated.get(rel) ?? null, hash: sha(text), locked: working.has(rel),
-        drafts: drafts()[rel] ?? [], edited: !!edit, revertable: edit?.saved === sha(text), edits: editRows(rel, text) }];
+        drafts: drafts()[rel] ?? [], edited: !!edit, revertable: edit?.saved === sha(text), edits: editRows(rel, text),
+        ...(versions ? { version: versions.notice(rel, text).n } : {}) }];
     },
     'POST /api/drafts': (_, { path, drafts: list }) => {
       const rel = listed(path);
@@ -274,7 +360,7 @@ export function createApp(o: AppOptions): App {
       if (rejected.has(rel)) return REJECTED;
       const now = hashOf(rel);
       if (now !== hash) return [409, { error: 'The file changed; read it again before accepting', hash: now }];
-      source.accept(rel);
+      repo.accept(rel);
       updated.delete(rel);
       skipped.delete(rel);
       saveState();
@@ -303,11 +389,11 @@ export function createApp(o: AppOptions): App {
       const text = read(rel);
       if (sha(text) !== hash) return [409, { error: 'The file changed; read it again before rejecting', hash: sha(text) }];
       const d = drafts();
-      rejected.set(rel, { text, staged: source.indexed(rel), drafts: d[rel] ?? [], at: new Date().toISOString() });
+      rejected.set(rel, { text, staged: repo.indexed(rel), drafts: d[rel] ?? [], at: new Date().toISOString() });
       updated.delete(rel);
       skipped.delete(rel);
       saveState(); // the backup is on disk before the file changes
-      source.reject(rel);
+      repo.reject(rel);
       if (d[rel]) { delete d[rel]; saveDrafts(d); }
       dropEdit(rel);
       return [200, { ok: true }];
@@ -318,7 +404,7 @@ export function createApp(o: AppOptions): App {
       const gone = rel && rejected.get(rel);
       if (!rel || !gone) return [404, { error: 'not rejected' }];
       mkdirSync(dirname(join(top, rel)), { recursive: true });
-      if (gone.staged !== null) {
+      if (gone.staged !== null && source.kind === 'git') {
         write(rel, gone.staged);
         source.accept(rel);
       }
@@ -333,7 +419,7 @@ export function createApp(o: AppOptions): App {
     'POST /api/accept-all': (_, { paths }) => {
       if (!Array.isArray(paths)) return [400, { error: 'paths required' }];
       const rels = [...new Set(paths.map(listed).filter((r): r is string => !!r && !working.has(r) && !rejected.has(r)))];
-      source.accept(...rels);
+      repo.accept(...rels);
       for (const rel of rels) { updated.delete(rel); skipped.delete(rel); dropEdit(rel); }
       saveState();
       return [200, { accepted: rels.length }];
@@ -343,7 +429,7 @@ export function createApp(o: AppOptions): App {
       if (!rel) return [404, { error: 'not in the review set' }];
       if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
-      source.unaccept(rel);
+      repo.unaccept(rel);
       return [200, { ok: true }];
     },
     'POST /api/save': (_, { path, hash, index, raw }) => {
@@ -353,10 +439,13 @@ export function createApp(o: AppOptions): App {
       if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
       const text = read(rel);
+      versions?.notice(rel, text); // a change on disk since the last copy is someone else's
       if (sha(text) !== hash) return [409, { error: 'The file changed since you started editing', hash: sha(text) }];
-      let next = raw; // HTML and text are edited as one whole file; markdown one block at a time
+      // HTML and text are edited as one whole file, and so is any file saved without an index (a folder's Save);
+      // markdown otherwise one block at a time.
+      let next = raw;
       let block: Omit<BlockEdit, 'id' | 'time'> = { before: text, after: raw, path: [], index: null, at: 0 };
-      if (f.kind === 'markdown') {
+      if (f.kind === 'markdown' && index !== undefined) {
         try { next = splice(text, index, raw); } catch { return [400, { error: `no block ${index}` }]; }
         const all = blocks(text);
         block = { before: all[index].raw.trimEnd(), after: raw.trimEnd(), path: all[index].path, index,
@@ -365,6 +454,8 @@ export function createApp(o: AppOptions): App {
       // Save never approves: an accepted file goes back to pending, and only Accept accepts.
       source.unstage(rel);
       write(rel, next);
+      // A folder keeps versions instead of edit records: its Save is the whole file, and the version list is its undo.
+      if (versions) return (versions.add(rel, 'user', next), setUnsaved(rel, null), [200, { hash: sha(next) }]);
       // One entry per block: a second Save of the same block keeps its original `before`.
       const e = edits();
       const rec = (e[rel] ??= { before: text, blocks: [] });
@@ -432,14 +523,17 @@ export function createApp(o: AppOptions): App {
       const changed = [...new Set(items.filter((c) => c.kind === 'change').map((c) => c.path as string))];
       for (const rel of changed) {
         source.unstage(rel);
+        if (source.kind === 'folder') updated.delete(rel); // a folder's Updated means since your last send of it
         const h = hashOf(rel);
         working.set(rel, { hash: h, last: h, at: 0, text: read(rel) });
       }
       saveState();
       const id = randomUUID().slice(0, 8);
       const sentPaths = new Set(items.map((c) => c.path));
-      appendFileSync(files.batches, `${JSON.stringify({ id, sentAt: new Date().toISOString(), items })}\n`);
-      note('batch', id, { comments: items.length, paths: [...sentPaths] as string[] });
+      const sentAt = new Date().toISOString();
+      appendFileSync(files.batches, `${JSON.stringify({ id, sentAt, items })}\n`);
+      note('batch', id, { id, at: sentAt, comments: items.length, paths: [...sentPaths] as string[], counts: counts(items) });
+      resumed();
       saveDrafts(keep);
       // A notice, not the batch itself: a long line is cut short on its way to the agent.
       const notice = `batch ${id}: ${items.length} ${items.length === 1 ? 'comment' : 'comments'} on ${sentPaths.size} ${sentPaths.size === 1 ? 'file' : 'files'}. Read it with: grep -F ${id} '${files.batches}'`;
@@ -467,25 +561,93 @@ export function createApp(o: AppOptions): App {
       if (typeof text !== 'string' || !['question', 'reply'].includes(kind)) return [400, { error: 'text, and kind question or reply' }];
       question = text.trim() ? { text: text.trim().slice(0, 300), kind, at: new Date().toISOString() } : null;
       saveState();
-      if (question) note(kind, question.text);
+      if (question) note(kind, question.text, { from: 'agent' });
       return [200, { question }];
     },
-    // `done <file>` from the agent and the page's Unlock button.
-    'POST /api/release': (_, { path }) => {
+    // `done <file> [--note <markdown>]` from the agent and the page's Unlock button.
+    'POST /api/release': (_, { path, note: body }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: `not in the review set: ${path}` }];
-      return [200, { released: release(rel), updated: updated.has(rel) }];
+      if (body !== undefined && typeof body !== 'string') return [400, { error: 'note is text' }];
+      return [200, { released: release(rel, body?.trim() || undefined), updated: updated.has(rel) }];
+    },
+    // A message in History: the agent's (`trove say`), or the user's from the page. The user's gets one line in
+    // the events log, like a batch's notice: the text itself may run to many lines, and the agent greps for it.
+    // typed: the page also typed it into the agent's terminal, so History records it and the events log stays quiet.
+    'POST /api/message': (_, { text, re, paths = [], from = 'user', typed = false }) => {
+      if (typeof text !== 'string' || !text.trim()) return [400, { error: 'text required' }];
+      if (re !== undefined && (typeof re !== 'string' || !/^[\w-]{1,40}$/.test(re))) return [400, { error: 're is an entry id' }];
+      if (!Array.isArray(paths) || (from !== 'user' && from !== 'agent')) return [400, { error: 'paths is a list, from is agent or user' }];
+      const rels: string[] = [];
+      for (const p of paths) {
+        const rel = listed(p);
+        if (!rel) return [404, { error: `not in the review set: ${p}` }];
+        if (!rels.includes(rel)) rels.push(rel);
+      }
+      const e = note('message', '', { from, body: text.trim(), ...(re ? { re } : {}), ...(rels.length ? { paths: rels } : {}) });
+      if (from === 'user') resumed();
+      if (from === 'user' && !typed) {
+        const notice = `message ${e.id}: from the reviewer${re ? `, re ${re}` : ''}. Read it with: grep -F ${e.id} '${files.activity}'`;
+        appendFileSync(files.events, `${notice}\n`);
+        log(notice);
+      }
+      return [200, e];
+    },
+    // One send's comments, for History's expanded batch.
+    'GET /api/batch': (q) => {
+      const b = jsonl(files.batches).find((x) => x?.id === q.get('id'));
+      return b ? [200, b] : [404, { error: 'no such batch' }];
     },
     'GET /api/source': () => [200, info()],
-    'GET /api/activity': () => (follow(), [200, { entries: activity }]),
+    'GET /api/versions': (q) => {
+      const rel = listed(q.get('path'));
+      return rel ? [200, versions?.list(rel) ?? []] : [404, { error: 'not in the review set' }];
+    },
+    // A folder's unsaved edits (UnsavedEdit), for every listed file.
+    'GET /api/unsaved': () => {
+      const have = new Set(list().map((f) => f.path));
+      return [200, Object.fromEntries(Object.entries(unsaved()).filter(([p]) => have.has(p)))];
+    },
+    'POST /api/unsaved': (_, { path, edit }) => {
+      const rel = listed(path);
+      if (!rel) return [404, { error: 'not in the review set' }];
+      const ok = edit === null || (edit && typeof edit === 'object' && ['text', 'base', 'was'].every((k) => typeof edit[k] === 'string'));
+      if (!ok) return [400, { error: 'edit is {text, base, was} or null' }];
+      setUnsaved(rel, edit && { text: edit.text, base: edit.base, was: edit.was });
+      return [200, { ok: true }];
+    },
+    'GET /api/version': (q) => {
+      const rel = listed(q.get('path'));
+      const v = rel && versions?.get(rel, Number(q.get('n')));
+      return v ? [200, v] : [404, { error: 'no such version' }];
+    },
+        'GET /api/activity': () => (follow(), [200, { entries: activity }]),
+    // `trove signal` from the agent's hooks, and the desktop's terminal: what the agent waits on the user for. The last one wins.
+    'POST /api/signal': (_, { kind, text }) => {
+      if (!['permission', 'question', 'idle', 'working'].includes(kind)) return [400, { error: 'kind is permission, question, idle or working' }];
+      if (text !== undefined && typeof text !== 'string') return [400, { error: 'text is a string' }];
+      if (kind === 'working') unwait();
+      else signal = { waiting: kind, ...(text?.trim() ? { text: text.trim().slice(0, 200) } : {}), since: new Date().toISOString() };
+      return [200, agentInfo()];
+    },
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
     // The file in the system's file manager. Never a shell: the path is one argument.
     'POST /api/reveal': (_, { path }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       const abs = join(top, rel);
-      execFile(...(process.platform === 'darwin' ? ['open', ['-R', abs]] : process.platform === 'win32' ? ['explorer', [`/select,${abs}`]] : ['xdg-open', [dirname(abs)]]) as [string, string[]], () => {});
+      execFile(OPENER, process.platform === 'darwin' ? ['-R', abs] : process.platform === 'win32' ? [`/select,${abs}`] : [dirname(abs)], () => {});
       return [200, {}];
+    },
+    // An HTML file in the default browser as this server serves it, the frame's URL, so its relative assets resolve and
+    // the browser opens it whatever app owns .html. Nothing else opens: Trove may be the system's app for markdown.
+    'POST /api/open': (_, { path }) => {
+      const rel = listed(path);
+      if (!rel) return [404, { error: 'not in the review set' }];
+      if (kindOf(rel, current) !== 'html') return [400, { error: 'only HTML files open in the browser' }];
+      const url = `http://127.0.0.1:${port()}/raw/${rel.split('/').map(encodeURIComponent).join('/')}`;
+      execFile(OPENER, [url], () => {});
+      return [200, { url }];
     },
     'POST /api/agent': (_, { id, label }, req) => {
       if (id !== null && !Object.hasOwn(AGENT_LABELS, id)) return [400, { error: 'id is claude, codex, other or null' }];
@@ -493,6 +655,7 @@ export function createApp(o: AppOptions): App {
       if (id === null && agent) note('detach', agent.label);
       agent = id === null ? null : attached(id, label?.trim(), agentAbove(peerOf(req!.socket.remotePort!), id));
       attachedHere = id !== null;
+      signal = { waiting: null, since: null }; // a new session, or none
       saveState();
       if (agent) note('attach', agent.label);
       return [200, agentInfo()];
@@ -501,19 +664,19 @@ export function createApp(o: AppOptions): App {
     // The same as running `git switch <branch>` by hand, no more: no stash, no discard. Git itself
     // refuses when uncommitted changes would be overwritten; its message is the answer.
     'POST /api/switch': (_, { branch }) => {
-      const target = typeof branch === 'string' ? source.branches().find((b) => b.name === branch) : undefined;
+      const target = typeof branch === 'string' ? repo.branches().find((b) => b.name === branch) : undefined;
       if (!target) return [404, { error: `no such branch: ${branch}` }];
-      if (target.current) return [200, git()];
+      if (target.current) return [200, git()!];
       if (target.worktree) return [409, { error: `${branch} is checked out in ${target.worktree}`, worktree: target.worktree }];
       if (working.size) return [409, { error: `${Who()} is working on a file` }];
-      const failed = source.switchTo(branch);
+      const failed = repo.switchTo(branch);
       if (failed) return [409, { error: failed }];
       // What the review listed belongs to the branch it was on: start the committed set over from
       // what git reports here, so a file committed there does not show as committed here.
       seen.clear();
       list();
       saveState();
-      return [200, git()];
+      return [200, git()!];
     },
     'GET /api/settings': () => [200, current],
     // A partial merge. Keys this run got from options (--scope, --exclude) give way to the user's
@@ -568,8 +731,10 @@ export function createApp(o: AppOptions): App {
       return reply(404);
     }
 
-    const route = routes[`${req.method} ${pathname}`];
+    const key = `${req.method} ${pathname}`;
+    const route = routes[key];
     if (!route) return reply(404);
+    if (source.kind !== 'git' && key in GIT_ONLY) return json(NOT_GIT(GIT_ONLY[key]));
     // A route that throws (say, a listed file vanished or is a dangling link) answers 500 instead of
     // taking the server down.
     const run = (body?: unknown) => { try { json(route(searchParams, body, req)); } catch (error) { json([500, { error: (error as Error).message }]); } };
@@ -603,32 +768,45 @@ export function createApp(o: AppOptions): App {
   const forget = () => { try { if (JSON.parse(readFileSync(files.server, 'utf8')).port === port()) rmSync(files.server); } catch {} };
 
   return {
-    server, info, list, tick, git,
+    server, info, list, tick, git, enableTypeFor,
     settings: () => current,
     close: () => new Promise<void>((ok) => { forget(); server.close(() => ok()); server.closeAllConnections(); }),
   };
 }
 
-/** The server running on the repository at `root`, from its server.json: its pid lives and its port answers
- * for this root (pids get reused). null when none, or `root` is not in a git repository. */
-export async function running(root: string): Promise<ServerRecord | null> {
-  let top: string, r: ServerRecord;
-  try {
-    const source = openSource(resolve(root));
-    top = source.root;
-    r = JSON.parse(readFileSync(join(source.stateDir, 'server.json'), 'utf8'));
-  } catch { return null; }
+/** The server whose server.json is in `stateDir`, while its pid lives and its port answers for this root and kind (pids get reused). */
+async function recordIn(stateDir: string, top: string, kind: SourceKind): Promise<ServerRecord | null> {
+  let r: ServerRecord;
+  try { r = JSON.parse(readFileSync(join(stateDir, 'server.json'), 'utf8')); } catch { return null; }
   if (!alive(r.pid)) return null;
   const answer = await call(r.port, 'GET', '/api/source').catch(() => null);
-  return answer?.status === 200 && answer.body?.root === top ? r : null;
+  return answer?.status === 200 && answer.body?.root === top && (answer.body.kind ?? 'git') === kind ? r : null;
+}
+
+/** The server running on the repository `root` is in, else on the folder `root` names or the nearest folder above it. null when none. */
+export async function running(root: string): Promise<ServerRecord | null> {
+  const abs = resolve(root);
+  try {
+    const source = openSource(abs);
+    const r = await recordIn(source.stateDir, source.root, 'git');
+    if (r) return r;
+  } catch {}
+  let dir: string;
+  try { dir = realpathSync(statSync(abs).isDirectory() ? abs : dirname(abs)); } catch { return null; }
+  for (;;) {
+    const r = await recordIn(folderStateDir(dir), dir, 'folder');
+    if (r || dirname(dir) === dir) return r;
+    dir = dirname(dir);
+  }
 }
 
 /** Bind on 127.0.0.1. `port` 0 picks a free one. Resolves once listening; runs the quiet-release tick.
- * Throws when a server already runs on this repository, unless `force`. */
+ * Throws when a server already runs on this repository or folder, unless `force`. */
 export async function serve(options: AppOptions & { port?: number; force?: boolean }) {
-  const other = options.force ? null : await running(options.root);
+  const at = options.force ? null : sourceFor(resolve(options.root), options.folder);
+  const other = at && await recordIn(at.stateDir, at.root, at.kind);
   if (other) {
-    throw new Error(`Trove is already serving this repository at http://127.0.0.1:${other.port} (${other.by === 'desktop' ? 'desktop app' : 'trove serve'}).\n`
+    throw new Error(`Trove is already serving this ${at.kind === 'git' ? 'repository' : 'folder'} at http://127.0.0.1:${other.port} (${other.by === 'desktop' ? 'desktop app' : 'trove serve'}).\n`
       + `Attach with: trove attach --port ${other.port} --agent claude. Pass --force to start another.`);
   }
   const app = createApp(options);

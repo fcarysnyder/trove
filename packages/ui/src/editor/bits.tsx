@@ -7,6 +7,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import { dirOf, folderText, nameOf } from '@/lib/text';
 
+/** An underlined tab trigger (radix Tabs): the Agent pane's and Home's. */
+export const TAB = '-mb-px flex items-center gap-1.5 border-b-2 border-transparent font-semibold text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground data-[state=active]:border-foreground data-[state=active]:text-foreground';
+
 export const Count = ({ n, className }: { n: number; className?: string }) => (
   <Badge variant="secondary" className={cn('h-4 min-w-4 rounded-full px-1 text-[11px] leading-4 tabular-nums', className)}>{n}</Badge>
 );
@@ -25,13 +28,14 @@ export function IconButton({ label, tip, children, className, side, ...props }: 
   );
 }
 
-/** Folder (truncated from its start) then the file name. */
+/** Folder (truncated from its start) then the file name. Its holder gives the full path (a title or a tooltip). */
 export function PathLabel({ path, className, nameClass }: { path: string; className?: string; nameClass?: string }) {
   const dir = dirOf(path);
   return (
-    <span className={cn('flex min-w-0 items-center', className)} title={path}>
-      {dir && <span className="folder min-w-0 font-normal text-muted-foreground">{folderText(dir)}</span>}
-      <span className={cn('shrink-0 truncate', nameClass)}>{nameOf(path)}</span>
+    <span className={cn('flex min-w-0 items-center', className)}>
+      {/* The folder gives way first; the name truncates only once it is gone. */}
+      {dir && <span className="folder min-w-0 shrink-[100] font-normal text-muted-foreground">{folderText(dir)}</span>}
+      <span className={cn('min-w-0 truncate', nameClass)}>{nameOf(path)}</span>
     </span>
   );
 }

@@ -3,21 +3,25 @@
 Trove productizes the `markdown-editor` skill from `crossnokaye/design-plugins`
 (`.claude/skills/markdown-editor/`, the source of truth for today's behaviour; its README and
 SKILL.md describe every state, key and route). The goal: a general-purpose editor for AI-written
-markdown and HTML, driven by git, that runs three ways from one codebase:
+markdown and HTML, driven by git or by a plain folder, that runs three ways from one codebase:
 
 1. **Claude Code plugin** (`plugins/trove`, skill `markdown-editor`): the exact experience of
    today's skill. Install from this repo, say "review my docs", get the same page and workflow.
 2. **CLI** (`trove serve`, `trove done|ask|reply`): the plugin's runtime, also installable from
    npm for other agents and terminals.
-3. **Desktop app** (`apps/desktop`, Electron): zero state asks for a git repository (and a
-   branch scope); each repository gets a window. A folder that is not a repository stays on the
-   zero state with "Not a git repository. Try again." and cannot be opened.
+3. **Desktop app** (`apps/desktop`, Electron): Home lists Pinned and Recent sources (a repository's
+   `git · <branch>` badge opens it on another branch); Open has Folder (a repository's top-level folder
+   opens as the repository, any other folder as a folder), File (its folder, the file selected) and
+   Clone. Each source gets a window, which starts the agent its recent remembers. Finder opens
+   documents in Trove (Open With, the Dock icon), each in its folder.
 
 ## Principles
 
-- A source is a git repository, nothing else; anything outside a working tree is refused with
-  `not a git repository: <path>`. Git's index is the only approval state. Accept is the only
-  `git add`; the tool never commits.
+- A source is a git working tree or a folder. In a repository, git's index is the only approval
+  state, Accept is the only `git add` and the tool never commits. A folder (anything outside a
+  working tree, or a folder opened as one inside it) has no review state and runs no git command
+  that writes: files are edited in place, saved or not, and commits happen elsewhere. Opening a
+  file opens its folder as a folder with the file selected.
 - Comments are feedback on the document, never instructions to the agent.
 - The plugin runtime stays Node built-ins only: one bundled server file and static UI assets,
   committed under `plugins/trove/dist`, so install-from-git needs no build. Node 22+.
@@ -56,7 +60,30 @@ openSource(root)               the working tree root is in; throws `not a git re
   unstage(rel)                 restore --staged
   baseOf(rel, text)            staged copy, else HEAD
   stateDir                     <git-dir>/trove/ (renamed from doc-review/ on first run if that exists)
+
+openFolder(root)               the folder root names (a file's folder); no git writes, ever
+  list(): FileEntry[]          every enabled-type file, recursively, minus dot-folders, node_modules and
+                               excludes; inside a repository `git ls-files -co --exclude-standard` so
+                               .gitignore holds (a folder git ignores whole is walked); capped at 10,000
+  unstage(rel)                 nothing: there is no index
+  baseOf(rel)                  null: Show new marks against `since` (the text before the agent's last update)
+  stateDir                     ~/.trove/folders/<sha1 of the realpath, 12 chars>/
 ```
+
+A folder has no review state: every file lists as `queue` (or `working` while locked), and
+accept, unaccept, accept-all, skip, reject and pr answer 409; `GET /api/git` and `POST /api/switch`
+answer 404. Comments, Send, locks, `done`/`ask`/`reply`, edits and their reverts work as in a
+repository; Updated means the agent changed the file since your last send of it (a send clears it).
+The state dir keeps drafts, edits, batches, events, state and settings. The page shows the folder's
+name instead of the switcher; the tree shows file-type icons with the markers that still mean
+something (comments, locked, updated, edited), no review filters, no Pending only and no progress
+pill; the doc footer has only Unlock or Revert all edits, and no footer without either; Enter, S and
+X do nothing (j/k still walk the tree); an editor's Cancel reads Don't save; Show new is on only
+for a file with `since`; Settings' Source shows the folder and its state dir. `SourceInfo` fills
+`repo`/`worktree` from the folder (branch null, scope uncommitted). `serve --root <folder or file>` serves a folder outside a
+repository, or with `--folder` inside one; a file's URL carries `?file=<rel>`, and the desktop
+opens one in a window that already shows its folder through the page's `#file=` hash. `running()`
+finds a folder's server from the folder, a file in it or a folder below it.
 
 Git scopes: `uncommitted` is today's `git status --porcelain=v1 -z -uall` over the enabled
 extensions; `branch` unions in `git diff --name-only <merge-base>...HEAD`, where the base is
@@ -186,10 +213,11 @@ the tier2 Send split button. Light values are a first pass; adjust for contrast.
 
 Integration (after all four): `pnpm install && pnpm build && pnpm test`, `pnpm build:plugin`,
 run the plugin's selftest and open the page on a real repo, run the desktop app on a repo and on
-a plain folder (refused), commit `plugins/trove/dist`.
+a plain folder (opens as a folder), commit `plugins/trove/dist`.
 
 ## Out of scope for this pass
 
 WYSIWYG editing, real MDX compilation, multi-user, publishing or sync, Safari, Windows packaging,
 npm publishing (the bin works from the repo; publishing is a follow-up), per-file history views,
-sources that are not git repositories (folder mode was built and removed).
+review state in a folder (Accept, Skip, Reject, Create PR), and committing from a folder (its
+commits happen elsewhere).

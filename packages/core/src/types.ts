@@ -72,7 +72,7 @@ export interface FileEntry {
 export interface FileRow extends FileEntry {
   state: FileState;
   updated: boolean; // the agent changed it after a send; cleared by Accept
-  edited: boolean; // the user saved an edit in this review
+  edited: boolean; // the user saved an edit in this review (never in a folder, which keeps versions instead)
   drafts: number; // unsent comments
 }
 
@@ -82,6 +82,21 @@ export interface Anchor {
   suffix: string;
   path: string[]; // heading path above the passage
   raw: string; // up to 400 chars of the block's source (HTML: outerHTML around the selection)
+  /** HTML: the elements a pointer or loop mark is about, in pick order. quote, raw and path still describe the first. */
+  targets?: ElementTarget[];
+  /** HTML: the loop drawn around `targets`, in the frame's document coordinates, rounded, at most 64 points. */
+  shape?: { kind: 'loop'; points: [number, number][] };
+}
+
+/** One element of an HTML file, with what finds it in source. Values from the rendered page; text and html are clipped. */
+export interface ElementTarget {
+  selector: string; // a CSS selector that matched it in the frame
+  tag: string;
+  id?: string;
+  classes?: string[];
+  testIds?: string[]; // data-testid and data-component values on it and its ancestors, nearest first
+  text?: string; // its text, whitespace collapsed, up to 160 chars
+  html: string; // its outerHTML, up to 400 chars
 }
 
 export type CommentKind = 'change' | 'explain';
@@ -118,11 +133,15 @@ export type AgentTool = 'claude' | 'codex';
 export type UpdateState = { state: 'none' } | { state: 'downloading'; version: string } | { state: 'ready'; version: string } | { state: 'error'; message: string };
 /** Where the desktop starts an agent: 'Trove' is the terminal in the window's Agent pane, the rest are macOS terminal apps. */
 export type TerminalApp = 'Trove' | 'Terminal' | 'iTerm' | 'Ghostty' | 'WezTerm' | 'kitty' | 'Alacritty';
+/** What the agent waits on the user for: a permission prompt, a question (an elicitation dialog), or its turn ended. */
+export type AgentWaiting = 'permission' | 'question' | 'idle';
 /**
  * The agent attached to a server, set by `trove attach` (POST /api/agent) and kept in state.json.
- * With nothing attached: {id: 'other', label: 'the agent', connected: false, at: null}.
+ * With nothing attached: {id: 'other', label: 'the agent', connected: false, at: null, waiting: null, since: null}.
+ * waiting, waitingText and since: the last POST /api/signal (memory only; attach, detach, a send or a message of the
+ * user's while it is idle clear it); null: working, or no signal yet.
  */
-export interface AgentInfo { id: AgentId; label: string; connected: boolean; at: string | null }
+export interface AgentInfo { id: AgentId; label: string; connected: boolean; at: string | null; waiting: AgentWaiting | null; waitingText?: string; since: string | null }
 /** The label an agent gets when attach names none. */
 export const AGENT_LABELS: Record<AgentId, string> = { claude: 'Claude', codex: 'Codex', other: 'the agent' };
 
@@ -130,27 +149,41 @@ export const AGENT_LABELS: Record<AgentId, string> = { claude: 'Claude', codex: 
 export const attachPrompt = (port: number | string) =>
   `Start the markdown-editor skill attached to the Trove server already running on port ${port}: run its attach command instead of serve, stream the events log it prints, and handle batches as the skill says.`;
 /** The shell command that starts `tool` in `root` with attachPrompt; `exec` replaces the shell (the desktop's Terminal script). */
-export const attachCommand = (tool: AgentTool, root: string, port: number | string, exec = false) =>
-  `cd '${root.replaceAll("'", "'\\''")}' && ${exec ? 'exec ' : ''}${tool} "${attachPrompt(port)}"`;
+/** How much an agent Trove starts may do without asking: each tool's flags. Bypass is the default. */
+export type AgentMode = 'ask' | 'auto' | 'bypass';
+export const AGENT_MODES: AgentMode[] = ['bypass', 'auto', 'ask'];
+const MODE_FLAGS: Record<AgentTool, Record<AgentMode, string>> = {
+  claude: { ask: '--permission-mode manual', auto: '--permission-mode auto', bypass: '--dangerously-skip-permissions' },
+  codex: { ask: '-a untrusted', auto: '-a on-failure -s workspace-write', bypass: '--dangerously-bypass-approvals-and-sandbox' },
+};
+export const attachCommand = (tool: AgentTool, root: string, port: number | string, exec = false, mode: AgentMode = 'bypass') =>
+  `cd '${root.replaceAll("'", "'\\''")}' && ${exec ? 'exec ' : ''}${tool} ${MODE_FLAGS[tool][mode]} "${attachPrompt(port)}"`;
 
 /** A repository's main working tree: the first entry of `git worktree list`. */
 export interface RepoRef { root: string; name: string }
 /** The worktree a root is: its folder's basename, its branch (null when detached), and whether it is the main checkout. */
 export interface WorktreeRef { path: string; name: string; branch: string | null; main: boolean }
 
+/**
+ * git: a working tree; the index is the approval state. folder: a plain folder, or one opened as a folder inside a
+ * repository: files are edited in place, with no review state and no git command that writes. Comments, Send, edits,
+ * locks and the agent's updates work as in a repository; accept, unaccept, accept-all, skip, reject and pr answer 409.
+ */
+export type SourceKind = 'git' | 'folder';
+
 export interface SourceInfo {
-  kind: 'git';
-  root: string; // absolute path of the git toplevel
+  kind: SourceKind;
+  root: string; // absolute path of the git toplevel, or of the folder
   name: string; // last path segment, for titles
-  repo: RepoRef; // the repository this root belongs to (its main checkout)
-  worktree: WorktreeRef; // this root as a worktree of that repository
-  branch: string | null; // current branch (null when detached)
+  repo: RepoRef; // the repository this root belongs to (its main checkout); a folder: {root, name}
+  worktree: WorktreeRef; // this root as a worktree of that repository; a folder: {path: root, name, branch: null, main: true}
+  branch: string | null; // current branch (null when detached, and for a folder)
   base: string | null; // branch scope: the resolved base ref
-  scope: GitScope;
+  scope: GitScope; // always 'uncommitted' for a folder
   agent: 'claude' | 'other'; // compatibility: agentInfo.id === 'claude' ? 'claude' : 'other'
   agentInfo: AgentInfo;
   port: number;
-  stateDir: string; // where drafts, edits, batches and state live
+  stateDir: string; // where drafts, edits, batches and state live: <git-dir>/trove, or ~/.trove/folders/<hash> for a folder
   eventsLog: string;
   batchesLog: string;
   doneCommand: string; // what the agent runs after each file, e.g. `trove done <file> --port 4824`
@@ -162,18 +195,28 @@ export interface SourceInfo {
 // with 400, 404, 409 (hash or lock conflict; may carry `hash`), 413, 415 or 500.
 
 /**
- * One line of what the agent drawer lists. batch: a send (text: its id); release: a locked file let go
- * (`done`, Unlock or the quiet release); question / reply: `ask` / `reply`; attach / detach: text is the
- * agent's label; event: any other events-log line, as written.
+ * One line of what the agent drawer lists. batch: a send (text and id: its id); release: a locked file let go
+ * (`done`, Unlock or the quiet release; text: the path; body: the agent's `done --note`); question / reply:
+ * `ask` / `reply`; attach / detach: text is the agent's label; message: `trove say` (from 'agent') or the
+ * page's History composer (from 'user'), text empty and body the message; event: any other events-log line, as written.
+ * Kept in `<stateDir>/activity.jsonl`, one entry per line; a later line with the same id replaces it.
  */
 export interface Activity {
+  id: string;
   at: string;
-  kind: 'batch' | 'release' | 'question' | 'reply' | 'attach' | 'detach' | 'event';
+  kind: 'batch' | 'release' | 'question' | 'reply' | 'attach' | 'detach' | 'event' | 'message';
   text: string;
   paths?: string[];
   comments?: number;
+  from?: 'agent' | 'user'; // who wrote `body` (and question / reply's text)
+  body?: string; // markdown
+  re?: string; // the id of the entry this one answers
+  counts?: Record<string, number>; // batch: comments per path (absent on entries written before 0.8)
 }
-export interface ActivityResponse { entries: Activity[] } // GET /api/activity: newest last, at most 100
+export interface ActivityResponse { entries: Activity[] } // GET /api/activity: newest last, at most 200
+/** POST /api/message -> Activity. from defaults to 'user'; a user's message adds one line to events.log
+ * (`message <id>: from the reviewer[, re <id>]. Read it with: grep -F <id> '<activity.jsonl>'`). Each path must be in the review set. */
+export interface MessageBody { text: string; re?: string; paths?: string[]; from?: 'agent' | 'user'; typed?: boolean }
 
 export interface FilesResponse { files: FileRow[]; question: Question | null } // GET /api/files
 export interface DraftsResponse { drafts: Record<string, Draft[]>; edits: Record<string, BlockEdit[]> } // GET /api/drafts
@@ -182,7 +225,7 @@ export interface FileResponse { // GET /api/file?path=
   kind: DocKind;
   text: string;
   hash: string;
-  base: string | null; // what Show new marks against (staged copy, else HEAD)
+  base: string | null; // what Show new marks against (staged copy, else HEAD; null for a folder, where Show new marks against `since`)
   since: string | null; // the text before the agent's last update, if any
   locked: boolean;
   drafts: Draft[];
@@ -190,22 +233,43 @@ export interface FileResponse { // GET /api/file?path=
   revertable: boolean; // the file is still exactly what the user's last Save wrote
   edits: BlockEdit[];
   rejected?: boolean; // the backed-up text of a rejected file, read-only (locked); base is the file on disk now
+  version?: number; // a folder: the number of the version the text on disk is (see Version); absent in a repository
 }
+/**
+ * Who made one of a folder file's versions: the first copy Trove saw (on first open), a Save from the page, or anyone
+ * else (the agent's release, or a change on disk Trove notices). A repository keeps none: git has the history.
+ */
+export type VersionBy = 'original' | 'user' | 'agent';
+/** GET /api/versions?path= -> Version[], newest first, the last 50; [] in a repository. */
+export interface Version { n: number; at: string; by: VersionBy }
+/**
+ * A folder file's edits not yet written, kept server side in `<stateDir>/unsaved.json` so they survive a restart.
+ * GET /api/unsaved -> Record<path, UnsavedEdit>; POST /api/unsaved {path, edit: UnsavedEdit | null} -> {ok} sets or clears one.
+ * A successful POST /api/save clears the file's; a Save against a stale `base` is refused with 409 as any save.
+ */
+export interface UnsavedEdit { text: string; base: string /* the hash on disk it was edited from */; was: string /* that text */ }
+/** GET /api/version?path=&n= -> one version with its text; 404 when it is gone. */
+export interface VersionText extends Version { text: string }
 export interface SaveDraftsBody { path: string; drafts: Draft[] } // POST /api/drafts -> {ok}
 export interface AcceptBody { path: string; hash: string } // POST /api/accept -> {ok}
 export interface UnacceptBody { path: string } // POST /api/unaccept -> {ok}
 export interface AcceptAllBody { paths: string[] } // POST /api/accept-all -> {accepted: n}; unlisted, working and rejected paths are passed over; no hash
 export interface SkipBody { path: string; on: boolean } // POST /api/skip -> {ok}; no git write
-export interface RejectBody { path: string; hash: string } // POST /api/reject -> {ok}; tracked: back to HEAD, new: deleted; backed up first
+export interface RejectBody { path: string; hash: string } // POST /api/reject -> {ok}; tracked: back to HEAD, new: deleted; backed up first. 409 for a folder
 export interface RestoreBody { path: string } // POST /api/restore -> {ok}; the index copy, the working text and the drafts come back
-export interface SaveBody { path: string; hash: string; index?: number; raw: string } // POST /api/save -> {hash}
+export interface SaveBody { path: string; hash: string; index?: number; raw: string } // POST /api/save -> {hash}; no index: raw is the whole file (any kind). 409 {error, hash} when the file is not `hash` any more
 export interface RevertBody { path: string; edit?: string; hash?: string } // POST /api/revert -> {hash}
 export interface SendBody { paths?: string[]; kind?: CommentKind } // POST /api/send
 export interface SendResponse { id: string; comments: number; files: number; locked: string[] }
-export interface PrResponse { id: string; files: number } // POST /api/pr {} -> 409 while a file waits for review (queue or working)
+export interface PrResponse { id: string; files: number } // POST /api/pr {} -> 409 while a file waits for review (queue or working), and for a folder
 export interface AskBody { text: string; kind?: 'question' | 'reply' } // POST /api/ask -> {question}
-export interface ReleaseBody { path: string } // POST /api/release -> {released, updated}
+export interface ReleaseBody { path: string; note?: string } // POST /api/release -> {released, updated}; note: markdown for History, on this release (or the file's last one, or a message about it)
 export interface AgentBody { id: AgentId | null; label?: string } // POST /api/agent -> AgentInfo; id null detaches
+/**
+ * POST /api/signal -> AgentInfo: `trove signal` from the plugin's hooks, and the desktop's terminal (OSC 9, typing).
+ * The last signal wins; 'working' clears waiting. text: the tool name or the notification's message, up to 200 chars.
+ */
+export interface SignalBody { kind: AgentWaiting | 'working'; text?: string }
 export type SourceResponse = SourceInfo; // GET /api/source
 export type SettingsResponse = Settings; // GET /api/settings; POST /api/settings takes Partial<Settings>, returns Settings
 
@@ -213,7 +277,7 @@ export type SettingsResponse = Settings; // GET /api/settings; POST /api/setting
 export interface BranchInfo { name: string; current: boolean; worktree: string | null; upstream?: string; lastCommit: string }
 /** One worktree of the repository, main checkout first. `name`: the folder's basename. `changes`: its uncommitted doc paths, by its own settings (GitInfo and GitProbe only). */
 export interface WorktreeInfo { path: string; name: string; branch: string | null; head: string; current: boolean; main: boolean; changes?: number }
-/** GET /api/git: where the source stands, for the repository and branch switcher. */
+/** GET /api/git: where the source stands, for the repository and branch switcher. 404 for a folder, as is POST /api/switch. */
 export interface GitInfo {
   root: string;
   repo: RepoRef;
@@ -233,7 +297,7 @@ export interface GitInfo {
 export interface SwitchBody { branch: string }
 
 export interface BatchItem { path: string; kind: CommentKind; note: string; anchor: Anchor }
-export interface Batch { id: string; sentAt: string; items: BatchItem[] } // one line of batches.jsonl
+export interface Batch { id: string; sentAt: string; items: BatchItem[] } // one line of batches.jsonl; GET /api/batch?id= answers one
 
 // ---- Desktop bridge --------------------------------------------------------------------------
 // Exposed by the Electron preload as `window.trove` on the zero-state page (start.html) and in
@@ -252,36 +316,50 @@ export interface GitProbe {
 export interface Recent {
   path: string;
   name: string;
-  kind: 'git';
+  kind: SourceKind;
   openedAt: string;
   scope?: GitScope;
   base?: string | null;
-  agent?: AgentTool | null; // the last agent choice on the start page's Agent step
+  agent?: AgentTool | null; // the agent last started with it; opening it starts that agent again
   repo?: string; // the repository's name (RepoRef.name)
   worktree?: string; // a linked worktree's name; absent for the main checkout
+  file?: string; // opened with Open file: the file's absolute path; the recent reads as it and reopens it selected in its folder
+  pinned?: boolean; // kept at the top of Home and never dropped from the recents
 }
 
 /** How a recent reads: `<repo> / <worktree>` for a linked worktree, `<repo>` for the main checkout, `name` for older entries. */
 export const recentName = (r: Pick<Recent, 'name' | 'repo' | 'worktree'>) => (r.repo ? (r.worktree ? `${r.repo} / ${r.worktree}` : r.repo) : r.name);
 
-/** `agent`: start the server, then a Terminal session of that tool attached to it, then the window. */
-export interface OpenRequest { path: string; scope?: GitScope; base?: string | null; agent?: AgentTool | null }
+/**
+ * `agent`: start the server, then a Terminal session of that tool attached to it, then the window; undefined starts the one
+ * the recent remembers, if any, and null none. `path`: a folder, or a
+ * file, which opens its folder as a folder source with the file selected (in a window already showing it, if one is open).
+ * `kind`: 'folder' serves a folder as a folder even inside a repository; default git for a repository's top-level folder, else folder.
+ */
+export interface OpenRequest { path: string; scope?: GitScope; base?: string | null; agent?: AgentTool | null; kind?: SourceKind }
 
 export interface TroveBridge {
-  /** Native folder picker. null when cancelled; `git` null when the folder is not in a git repository (it cannot be opened). */
+  /** Native folder picker. null when cancelled; `git` null when the folder is not in a git repository. */
   pickFolder(): Promise<{ path: string; git: GitProbe | null } | null>;
+  /** Native file picker for documents of the doc types. null when cancelled. */
+  pickFile(): Promise<string | null>;
   /** Inspect a path (a recent, or a staged one) without opening it. null when it is not a folder; `git` null when it is not in a repository. */
   probe(path: string): Promise<{ path: string; git: GitProbe | null } | null>;
-  /** Start a server for the repository and open it in a window; the zero-state window closes if it is the only one. Rejects `not a git repository: <path>` for anything else. */
+  /** Start a server for the repository or folder and open it in a window; the zero-state window closes if it is the only one. */
   open(req: OpenRequest): Promise<void>;
   recents(): Promise<Recent[]>;
   forget(path: string): Promise<void>;
+  /** Pin or unpin a recent. */
+  pin(path: string, pinned: boolean): Promise<void>;
   /** Which agent CLIs are on the user's login-shell PATH. */
   tools(): Promise<Record<AgentTool, boolean>>;
   /** 'Trove' and the terminal apps installed, and where agents start (the app setting, else Trove). */
   terminals(): Promise<{ installed: TerminalApp[]; current: TerminalApp }>;
   /** Start agents in `t` from now on, in every window. Rejects when it is not installed. */
   setTerminal(t: TerminalApp): Promise<void>;
+  /** The permission mode agents start with (app setting, default bypass), and setting it for the next start. */
+  mode(): Promise<AgentMode>;
+  setMode(m: AgentMode): Promise<void>;
   /** The update the app has found, and `onUpdate` for each change. */
   update(): Promise<UpdateState>;
   onUpdate(cb: (s: UpdateState) => void): void;
@@ -305,6 +383,10 @@ export interface TroveBridge {
   worktreeDir(): Promise<string>;
   /** Make `path` (an existing folder) where new worktrees go, for every window; then that path. */
   setWorktreeDir(path: string): Promise<string>;
+  /** The agent waits on the user (or no longer): "● " leads the window's title and the Dock badge counts the window. */
+  attention(on: boolean): void;
+  /** The terminal app agents start in (the app setting), to the front; nothing when that is Trove. */
+  showTerminal(): Promise<void>;
   /** This window's agent terminal: one pty per repository window, which main starts when the terminal setting is 'Trove'. */
   pty: {
     /** Start `tool` in the repository when no session is running (the Start button after it exits). */

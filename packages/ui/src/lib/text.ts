@@ -1,7 +1,8 @@
 import type { DocKind } from '@trove/core/types';
 
 export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
-export const dirOf = (path: string) => path.split('/').slice(0, -1).join('/');
+/** The folder a path is in: '' for a relative top-level name, '/' for one at the root. */
+export const dirOf = (path: string) => path.split('/').slice(0, -1).join('/') || (path.startsWith('/') ? '/' : '');
 export const nameOf = (path: string) => path.split('/').at(-1) ?? path;
 /** LRM marks keep a folder's slashes in order inside the rtl box that truncates its start. */
 export const folderText = (dir: string) => `\u200E${dir}/\u200E`;
@@ -17,6 +18,8 @@ export const ago = (iso: string) => {
   return f.format(-Math.round(s / 86400), 'day');
 };
 export const mod = typeof navigator !== 'undefined' && /Mac/.test(navigator.userAgent) ? 'Cmd' : 'Ctrl';
+/** Cmd/Ctrl+Enter, as a key hint: what saves an edit and sends a note or a message. */
+export const sendKey = mod === 'Cmd' ? '⌘↵' : 'Ctrl ↵';
 export const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 // ponytail: home is guessed from the path (/Users/<name>, /home/<name>); the server could send it if that misses.
 export const tilde = (p: string) => p.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~');

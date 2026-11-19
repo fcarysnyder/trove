@@ -8,12 +8,13 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PROGRESS, stateInfo } from '@/lib/status';
+import { copy } from '@/lib/copy';
 import { dirOf, folderText, nameOf, plural } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { dismissQuestion, reveal, step, togglePanel, visible } from './actions';
 import { Count, IconButton } from './bits';
 import { Icon } from './StateIcon';
-import { get, set, useNames, useStore } from './store';
+import { get, set, useFolder, useNames, useStore } from './store';
 import { Switcher } from './Switcher';
 
 const SEG: Record<string, string> = {
@@ -24,6 +25,7 @@ const SEG: Record<string, string> = {
 export function TopBar() {
   useStore((s) => s.files);
   const source = useStore((s) => s.source);
+  const folder = useFolder();
   const offline = useStore((s) => s.offline);
   const hasSettings = useStore((s) => s.hasSettings);
   const current = useStore((s) => s.current?.path);
@@ -49,7 +51,8 @@ export function TopBar() {
         <Switcher />
       </div>
       <div className="flex items-center gap-2">
-        <Progress />
+        {/* A folder has no review to make progress on. */}
+        {!folder && <Progress />}
         <span className="text-xs text-muted-foreground tabular-nums">{pos || '–'} / {list.length}</span>
         <IconButton label="Previous file" tip="Previous file (←, k)" onClick={() => step(-1)}><ChevronLeft /></IconButton>
         <IconButton label="Next file" tip="Next file (→, j)" onClick={() => step(1)}><ChevronRight /></IconButton>
@@ -171,9 +174,8 @@ function Connect() {
   const start = (tool: AgentTool) => {
     setOpen(false);
     setStarting(tool);
-    bridge!.open({ path: source.root, agent: tool }).catch((e: unknown) => { setStarting(null); toast(e instanceof Error ? e.message : String(e)); });
+    bridge!.open({ path: source.root, agent: tool, kind: source.kind }).catch((e: unknown) => { setStarting(null); toast(e instanceof Error ? e.message : String(e)); });
   };
-  const copy = (text: string) => navigator.clipboard.writeText(text).then(() => toast('Copied'), () => toast('Copy failed'));
   const rows = [
     ...TOOLS.map(([tool, label]) => [label, attachCommand(tool, source.root, source.port)] as const),
     ['Events log', source.eventsLog], ['Done command', source.doneCommand],

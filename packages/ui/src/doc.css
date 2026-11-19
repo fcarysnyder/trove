@@ -38,12 +38,17 @@
 .block-body img { max-width: 100%; }
 .block-body pre.fm, .preview pre.fm { color: var(--muted-foreground); font-size: 12px; background: var(--card); padding: 12px; border-radius: var(--radius); white-space: pre-wrap; }
 .block-body pre.text { background: none; padding: 0; white-space: pre-wrap; font: 13px/1.6 var(--font-mono); }
+/* HTML source: line numbers as counters, so the text anchors measure is the file's own. */
+.block-body pre.text.lines { counter-reset: ln; padding-left: 3.5em; }
+.block-body pre.lines > span::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 3em; margin-left: -3.5em; margin-right: .5em; text-align: right; color: var(--muted-foreground); user-select: none; }
 
 /* Show new: flat bars in the left gutter beside the changed lines, a red bar where a block went. */
 .chg, .gone::before { position: absolute; left: -7px; width: 6px; border-left: 2px solid var(--good); }
 .chg.cut { border-color: var(--destructive); }
 .chg.agent { border-color: var(--agent); }
 .chg.mine { border-color: var(--foreground); }
+/* A folder's unsaved block: the same flat gutter bar, in the unsaved colour. */
+.block.unsaved::before { content: ''; position: absolute; top: 0; bottom: 0; left: -7px; width: 6px; border-left: 2px solid var(--dirty); }
 .gone { position: relative; height: 0; margin: 0 -8px; }
 .gone::before { content: ''; top: -8px; height: 16px; border-color: var(--destructive); }
 ::highlight(added) { background: var(--hl-added); }
@@ -81,3 +86,13 @@ textarea.quiet:focus { outline: 1px solid var(--border); outline-offset: 4px; }
   .animate-spin { animation-duration: 3s; }
   .flash { animation: none; }
 }
+
+/* History's messages: class="block-body msg", the document's markdown, smaller and tighter for the Agent pane. */
+.msg { font-size: 13px; overflow-wrap: anywhere; }
+.msg > :first-child { margin-top: 0; }
+.msg > :last-child { margin-bottom: 0; }
+.msg :is(p, pre, table, blockquote, hr, ul, ol) { margin: 0.5em 0; }
+.msg :is(h1, h2, h3, h4, h5, h6) { font-size: 13px; font-weight: 600; margin: 0.75em 0 0.25em; }
+.msg :is(ul, ol) { padding-left: 20px; }
+.msg code { font-size: 12px; }
+.msg pre { padding: 8px; }

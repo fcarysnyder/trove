@@ -1,12 +1,13 @@
 // One small store for the editor. Actions (actions.ts) read and write it directly, so the 2s poll
 // always sees the latest state; components subscribe to slices with useStore.
-import type { Activity, Anchor, BlockEdit, CommentKind, Draft, FileResponse, FileRow, GitInfo, Question, Recent, Settings, SourceInfo } from '@trove/core/types';
+import type { Activity, Anchor, BlockEdit, CommentKind, Draft, FileResponse, FileRow, GitInfo, Question, Recent, Settings, SourceInfo, UnsavedEdit, VersionBy } from '@trove/core/types';
 import { AGENT_LABELS, DEFAULT_SETTINGS } from '@trove/core/types';
 import type { AnchorHit } from '@trove/core/anchor';
 import { useSyncExternalStore } from 'react';
 import { load } from '@/lib/storage';
 import { normalizeOff, type FilterKey } from '@/lib/filter';
 import { names, type Names } from '@/lib/status';
+import type { Mark, Pt, Tool } from './doc/annotate';
 
 export interface Editing {
   index: number | null; // null: the whole file (HTML, plain text)
@@ -17,12 +18,22 @@ export interface Editing {
   style?: Record<string, string>; // inline: the rendered block's type, so the source is set the way it reads
 }
 
+
+/** The open file shown read-only with Show new marks: a version (`n`) against the text open now, or the agent's text against yours (Compare, n null). */
+export interface View { path: string; n: number | null; text: string; base: string; by?: VersionBy; at?: string }
+
 export interface Pick {
   anchor: Anchor;
   text: string;
   range: Range;
   block: number | null; // markdown block index; null in the HTML frame
 }
+
+/** A passage added to chat: its file and what it says (an element's tag first). */
+/** A control of the HTML page's own, hidden there and offered on the annotate toolbar: its label and the element it clicks. */
+export interface PageTool { label: string; el: HTMLElement }
+
+export interface ChatRef { path: string; quote: string; tag?: string }
 
 export interface State {
   source: SourceInfo | null; // null: an old server without /api/source
@@ -48,6 +59,9 @@ export interface State {
   query: string; // the Files search (page state, not persisted)
   scope: 'file' | 'all';
   showNew: boolean;
+  htmlView: 'preview' | 'source'; // an HTML file shows rendered or as text
+  drawer: boolean; // the agent's terminal drawer is open (desktop)
+  chat: ChatRef[]; // passages added to the History message box, sent with the next message
   hidden: { files: boolean; changes: boolean };
   activity: Activity[]; // the top of the Changes thread, loaded while the column shows
   committedOpen: boolean;
@@ -55,6 +69,17 @@ export interface State {
   rejecting: boolean; // the open file's Reject confirm is showing
   closedDirs: string[];
   settingsOpen: boolean;
+  unsaved: Record<string, UnsavedEdit>; // a folder's unsaved edits by path, kept by the server (unsaved.json)
+  view: View | null;
+  conflict: { text: string; hash: string; at: string | null } | null; // Save found the file changed on disk: the agent's text, its hash, when
+  // Marking an HTML file (doc/annotate.ts)
+  tool: Tool;
+  pageTools: PageTool[]; // the HTML page's own controls marked data-trove-toolbar, shown on the annotate toolbar
+  mark: Mark | null; // its note card is open
+  markKind: CommentKind; // what the card adds: a change or a question
+  hover: Element | null; // the Pointer's outline
+  drawing: Pt[] | null; // a loop being drawn, document coordinates
+  flash: { k: number; at: number } | null; // a comment's elements, outlined for a moment
 }
 
 let state: State = {
@@ -81,6 +106,9 @@ let state: State = {
   query: '',
   scope: load<'file' | 'all'>('scope', 'file') === 'all' ? 'all' : 'file',
   showNew: load<boolean | null>('show-new', null) ?? true,
+  htmlView: 'preview',
+  drawer: false,
+  chat: [],
   hidden: { files: load<boolean>('hide-files', false) === true, changes: load<boolean>('hide-changes', false) === true},
   activity: [],
   committedOpen: false,
@@ -88,6 +116,16 @@ let state: State = {
   rejecting: false,
   closedDirs: [],
   settingsOpen: false,
+  unsaved: {},
+  view: null,
+  conflict: null,
+  tool: 'text',
+  pageTools: [],
+  mark: null,
+  markKind: 'change',
+  hover: null,
+  drawing: null,
+  flash: null,
 };
 
 const listeners = new Set<() => void>();
@@ -102,3 +140,6 @@ export const useStore = <T,>(pick: (s: State) => T): T => useSyncExternalStore(s
 /** The attached agent's label; a server without agentInfo says only claude or other, and one without /api/source was Claude's. */
 const labelOf = (s: SourceInfo | null) => s?.agentInfo?.label ?? AGENT_LABELS[s?.agent ?? 'claude'];
 export const useNames = (): Names => names(useStore((s) => labelOf(s.source)));
+/** The source is a folder: edited in place, with no review state. */
+export const isFolder = (s: State) => s.source?.kind === 'folder';
+export const useFolder = () => useStore(isFolder);

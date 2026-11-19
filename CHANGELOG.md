@@ -9,6 +9,37 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+Trove is no longer only for git repositories. A plain folder or a single
+file opens as an editor: every document in the folder, unsaved edits you Save
+or don't, and numbered versions of every save and every change the agent
+makes. The Agent pane becomes a chat with a thread per file, and comments and edits still to send are its Changes. The agent's
+terminal is a drawer that opens itself when the agent needs you.
+HTML files gain Pointer and Circle tools for commenting on elements.
+
+### Added
+
+- Open a plain folder or a single file, from Home, File > Open Folder (⌘O) and Open File (⇧⌘O), a drop, or Finder's Open With. Trove can be chosen as the default app for Markdown, MDX, HTML and text files without becoming it on install. A repository's top-level folder opens for review; any other folder opens as a plain folder. `trove serve --root <folder or file>` does the same, and `--folder` does it inside a repository.
+- In a folder, edits stay unsaved until you Save (⌘S) or don't. Each edited block has a bar and the file's row a dot, and unsaved edits survive a restart. Save asks before overwriting a change the agent made meanwhile: Compare, Keep the agent's, or Save mine.
+- A folder keeps the last 50 versions of each file: the original, your saves and the agent's changes. The `vN` badge beside the file name lists them, and Restore brings one back as unsaved edits.
+- Home lists pinned and recent repositories, folders and files. A repository's `git · branch` badge opens it on another branch. Open is its own screen with Folder, File and Clone.
+- On an HTML file, a toolbar adds Pointer (V: click an element, shift-click for more) and Circle (O: circle part of the page). Comments carry each element's selector, id, classes, test ids, text and HTML, and numbered badges mark them on the page. The plugin's new `html-prototype` skill has the agent study how a page is built and make changes in its own classes, tokens and patterns.
+- The Agent pane is one conversation with the agent. Each file gets a thread card with its comments, the agent's notes and replies, and its own reply box. History is kept across restarts.
+- `trove say` posts a markdown message to the page, `--file` puts it in that file's thread, and `--re` answers an entry. `trove done --note` says what changed. Both read long text from stdin with `-`.
+- On the desktop the agent's terminal is a drawer beside the Agent pane (⌘J), so Chat stays in view. The agent keeps running while it is hidden. It opens itself for a permission prompt or a question and hides again once you answer. The plugin's hooks (`PermissionRequest`, `Notification`, `Stop`) and Codex's OSC 9 terminal notifications drive it. The window title and Dock also show when the agent needs you, as does the file header when the Agent pane is hidden.
+- With the agent in Trove's terminal, a Chat message is typed straight into it, and a slash command runs there with the drawer open. Chat shows when the agent is working, prompts you to answer in the terminal when it asks something, and counts the threads waiting on you, with up and down to step through them.
+- Agents Trove starts run with bypass permissions by default. The mode menu under the message box sets bypass, auto or ask for the next start.
+- Add to chat (A) puts a selected passage into Chat's message box as a quote.
+- An HTML page's own controls marked `data-trove-toolbar` (a dev-tools toggle, say) are hidden on the page and offered on Trove's annotate toolbar.
+- An HTML file has Preview and Source tabs; Source shows the HTML with line numbers, and you can comment on it like a text file.
+- One Start menu offers Claude Code or Codex. Home filters its lists by All, Folders or Files. The folder name in the top bar lists pinned and recent sources with Open Folder and Open File, and right-clicking the Files tree's root shows the folder in Finder or opens another.
+- Click a file's path to copy it. Right-click any path to copy the absolute or relative path or the file name, Show in Finder, or, for HTML, Open in browser.
+
+### Changed
+
+- Comment cards, the selection toolbar and every menu, popover, tooltip and dialog stay inside the window, flipping and scrolling as they grow.
+- Comments, inputs and the Agent pane are built from shadcn components.
+- The start page's setup steps are gone. A window opens straight away, and the agent a recent remembers starts again. The terminal app choice is under Trove > Start Agents In.
+
 ## [0.7.0] - 2026-10-28
 
 Trove 0.7.0 puts the agent's terminal inside the window. On the desktop,

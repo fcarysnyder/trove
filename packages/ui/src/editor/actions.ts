@@ -1,18 +1,19 @@
 // The editor's behaviour, ported from the old page's script: polling, opening, stepping, accepting,
 // drafts, edits and sending. Components call these; they read and write the store.
-import type { ActivityResponse, BlockEdit, CommentKind, Draft, DraftsResponse, FileResponse, FileRow, FilesResponse, GitInfo, Recent, SendBody, Settings, SourceInfo } from '@trove/core/types';
+import type { ActivityResponse, BlockEdit, CommentKind, DocKind, Draft, DraftsResponse, FileResponse, FileRow, FilesResponse, GitInfo, MessageBody, Recent, SendBody, Settings, SourceInfo, UnsavedEdit, Version, VersionText } from '@trove/core/types';
+import { blocks, splice } from '@trove/core/anchor';
 import { toast } from 'sonner';
 import { api, ApiError, optional } from '@/lib/api';
 import { passes, normalizeOff, type FilterKey } from '@/lib/filter';
 import { inFolders, stepFrom } from '@/lib/status';
 import { save } from '@/lib/storage';
 import { kindOf } from '@/lib/text';
-import { get, set, type State } from './store';
+import { get, isFolder, set, type State } from './store';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** Whether the search and filters leave a file in the tree. */
-export const shown = (s: State = get()) => (f: FileRow) => passes(f, s.filterOff, s.query);
+/** Whether the search and filters leave a file in the tree. A folder has no review states to filter: the search only. */
+export const shown = (s: State = get()) => (f: FileRow) => passes(f, isFolder(s) ? [] : s.filterOff, s.query);
 /** The tree's folders, the n / N position and stepping follow this list: committed and rejected files have their own sections; the search and filters narrow it. */
 export const visible = (s: State = get()) => s.files.filter((f) => inFolders(f) && shown(s)(f));
 export const entry = (s: State = get()) => s.files.find((f) => f.path === s.current?.path);
@@ -21,8 +22,8 @@ export function sendable(s: State = get()): [comments: number, files: number] {
   const live = s.files.filter((f) => f.drafts && f.state !== 'working' && f.state !== 'rejected');
   return [live.reduce((n, f) => n + f.drafts, 0), live.length];
 }
-/** An open editor, composer or note edit is never replaced under the user. */
-const busy = (s: State) => !!(s.editing || s.composer || s.noteEdit);
+/** An open editor, composer, note edit or element mark is never replaced under the user. */
+const busy = (s: State) => !!(s.editing || s.composer || s.noteEdit || s.mark);
 
 export async function loadAll() {
   const { drafts, edits } = await api<DraftsResponse>('drafts');
@@ -49,8 +50,8 @@ export async function refresh() {
   const now = get();
   if (now.current && !busy(now)) {
     const fresh = await api<FileResponse>(`file?path=${encodeURIComponent(now.current.path)}`).catch(() => null);
-    const cur = get().current;
-    if (fresh && fresh.path === cur?.path && !busy(get()) && (fresh.hash !== cur.hash || fresh.locked !== cur.locked)) show(fresh);
+    // Against what the server last said: the page may show unsaved text, or a version read-only.
+    if (fresh && fresh.path === get().current?.path && fresh.path === disk?.path && !busy(get()) && (fresh.hash !== disk.hash || fresh.locked !== disk.locked)) show(fresh);
   }
 }
 
@@ -70,11 +71,25 @@ export async function open(path: string) {
   await refresh();
 }
 
+/** The open file as the server last sent it; `current` is what the page shows of it. */
+let disk: FileResponse | null = null;
+
+/** What the page shows of `file`: a version or Compare, read-only with Show new marks against its base; else a folder's unsaved text; else the disk's. */
+function compose(file: FileResponse, s: State): NonNullable<State['current']> {
+  const view = s.view?.path === file.path ? s.view : null;
+  const text = view?.text ?? (isFolder(s) ? s.unsaved[file.path]?.text : undefined) ?? file.text;
+  return { ...file, kind: kindOf(file.path, file.kind), text, ...(view ? { base: view.base, since: null, locked: true } : {}) };
+}
+
 export function show(file: FileResponse) {
+  disk = file;
   const s = get();
   const same = file.path === s.current?.path;
+  const view = same ? s.view : null;
   set({
-    current: { ...file, kind: kindOf(file.path, file.kind) },
+    current: compose(file, { ...s, view }),
+    view,
+    conflict: same ? s.conflict : null,
     editing: null,
     pick: null,
     // A composer belongs to the file it was opened on.
@@ -225,17 +240,27 @@ export async function saveDrafts(path: string, drafts: Draft[]) {
   await refresh();
 }
 
-export function addComment(note: string) {
+/** Add the composer's comment, or `draft` (an element mark, which has no composer). */
+export function addComment(note: string, draft?: Pick<Draft, 'kind' | 'anchor'>) {
   const { composer, current } = get();
-  if (!note || !composer || !current) return;
-  set({ composer: null });
-  void saveDrafts(current.path, [...current.drafts, { kind: composer.kind, note, anchor: composer.anchor }]);
+  const d = draft ?? composer;
+  if (!note || !d || !current) return;
+  if (!draft) set({ composer: null });
+  void saveDrafts(current.path, [...current.drafts, { kind: d.kind, note, anchor: d.anchor }]);
 }
 
-/** Save an edit (hash-checked). Returns an error to show in the editor, or null once saved and reloaded. */
+/** Save an edit (hash-checked). Returns an error to show in the editor, or null once saved and reloaded. A folder's edit is only kept, as unsaved. */
 export async function saveEdit(index: number | null, raw: string): Promise<string | null> {
   const { current, editing } = get();
   if (!current || !editing) return null;
+  if (isFolder(get())) {
+    let text = raw;
+    if (index != null) try { text = splice(current.text, index, raw); } catch { return `No block ${index}`; }
+    keep(current.path, text);
+    set({ editing: null });
+    if (disk) show(disk);
+    return null;
+  }
   try {
     await api('save', { path: current.path, hash: editing.hash, ...(index == null ? {} : { index }), raw });
   } catch (e) {
@@ -243,6 +268,92 @@ export async function saveEdit(index: number | null, raw: string): Promise<strin
   }
   await open(current.path);
   return null;
+}
+
+// ---- a folder's unsaved edits, Save and versions -----------------------------------------------
+
+/** The page's copy at once; the server's (unsaved.json) after, so the edits outlive a restart. */
+function setUnsaved(path: string, edit: UnsavedEdit | null) {
+  const unsaved = { ...get().unsaved };
+  if (edit) unsaved[path] = edit;
+  else delete unsaved[path];
+  set({ unsaved });
+  void api('unsaved', { path, edit }).catch((e) => toast(errText(e)));
+}
+/** `text` as the open file's unsaved text, based on what is on disk when the first edit was kept; back to that text is no edit. */
+function keep(path: string, text: string) {
+  if (disk?.path !== path) return;
+  const from = get().unsaved[path] ?? { was: disk.text, base: disk.hash };
+  setUnsaved(path, text === from.was ? null : { text, base: from.base, was: from.was });
+}
+const reshow = () => { if (disk) show(disk); };
+
+/** The blocks of `text` that `base` lacks (markdown), else the whole file as one. */
+export function unsavedBlocks(text: string, base: string, kind: DocKind): number[] {
+  if (kind !== 'markdown') return text === base ? [] : [0];
+  const old = new Set(blocks(base).map((b) => b.raw.trimEnd()));
+  return blocks(text).flatMap((b, i) => (old.has(b.raw.trimEnd()) ? [] : [i]));
+}
+
+/** Write the open file's unsaved text, hash-checked against the disk it was based on (`hash`: Save mine, over the agent's). Changed since: the conflict dialog. */
+export async function saveFile(hash?: string) {
+  const { current, unsaved } = get();
+  const buf = current && unsaved[current.path];
+  if (!current || !buf) return;
+  const q = `path=${encodeURIComponent(current.path)}`;
+  try {
+    await api('save', { path: current.path, hash: hash ?? buf.base, raw: buf.text });
+  } catch (e) {
+    if (!(e instanceof ApiError && e.status === 409 && e.hash)) return void toast(errText(e));
+    const [theirs, versions] = await Promise.all([api<FileResponse>(`file?${q}`), api<Version[]>(`versions?${q}`).catch(() => [])]);
+    set({ conflict: { text: theirs.text, hash: theirs.hash, at: versions.find((v) => v.by === 'agent')?.at ?? null }, view: null });
+    return;
+  }
+  set({ unsaved: Object.fromEntries(Object.entries(get().unsaved).filter(([p]) => p !== current.path)), view: null, conflict: null }); // the server cleared its copy
+  await open(current.path);
+}
+
+/** Don't save, or Keep the agent's: drop the open file's unsaved edits. */
+export function discard() {
+  const { current } = get();
+  if (current) setUnsaved(current.path, null);
+  set({ view: null, conflict: null });
+  reshow();
+}
+
+/** The agent's text, marked against yours, read-only; the rail keeps Keep theirs and Save mine. */
+export function compare() {
+  const { current, conflict, unsaved } = get();
+  const buf = current && unsaved[current.path];
+  if (!current || !conflict || !buf) return;
+  set({ view: { path: current.path, n: null, text: conflict.text, base: buf.text } });
+  reshow();
+}
+
+export const versionsOf = (path: string) => api<Version[]>(`versions?path=${encodeURIComponent(path)}`);
+
+/** The open file marked against version `n`, read-only, until Restore or Esc. */
+export async function pickVersion(n: number) {
+  const { current } = get();
+  if (!current || !disk) return;
+  let v: VersionText;
+  try { v = await api<VersionText>(`version?path=${encodeURIComponent(current.path)}&n=${n}`); } catch (e) { return void toast(errText(e)); }
+  set({ view: { path: current.path, n, text: get().unsaved[current.path]?.text ?? disk.text, base: v.text, by: v.by, at: v.at } });
+  reshow();
+}
+
+/** The picked version's text becomes the open file's unsaved edits: Save or Don't save from there. */
+export function restoreVersion() {
+  const { view } = get();
+  if (!view || view.n == null) return;
+  set({ view: null });
+  keep(view.path, view.base);
+  reshow();
+}
+
+export function closeView() {
+  set({ view: null });
+  reshow();
 }
 
 export const cancelEdit = () => {
@@ -314,13 +425,13 @@ export async function loadRecents() {
   const probes = await Promise.all(list.map((r) => bridge.probe(r.path).catch(() => null)));
   set({ recents: list.map((r, k) => {
     const git = probes[k]?.git;
-    return { ...r, changes: git ? git.worktrees.find((w) => w.current)?.changes ?? 0 : null };
+    return { ...r, changes: git ? git.worktrees.find((w) => w.current)?.changes ?? 0 : r.kind === 'folder' && probes[k] ? 0 : null };
   }) });
 }
 
-/** A recent repository in its own window, with the scope it was last opened with. */
+/** A recent in its own window as it was last opened: its file selected in its folder, else with its kind and scope. */
 export async function openRecent(r: Recent) {
-  await window.trove?.open({ path: r.path, scope: r.scope, base: r.base }).catch((e) => toast(errText(e)));
+  await window.trove?.open(r.file ? { path: r.file } : { path: r.path, scope: r.scope, base: r.base, kind: r.kind }).catch((e) => toast(errText(e)));
 }
 
 /** Another worktree is another root: a new window on the desktop, else a dialog with the command that serves it. */
@@ -368,6 +479,9 @@ export function flash(el: Element | null | undefined, block: ScrollLogicalPositi
   el.classList.add('flash');
 }
 
+/** The file the address asks for: `?file=` (a window or the CLI opening a file) or `#file=` (the desktop opening one in a window already open). */
+const asked = () => new URLSearchParams(location.hash.slice(1)).get('file') ?? new URLSearchParams(location.search).get('file');
+
 let started = false;
 export async function init() {
   if (started) return; // StrictMode runs effects twice in development
@@ -377,13 +491,21 @@ export async function init() {
     optional<Settings>('settings').catch(() => null),
   ]);
   set({ source, ...(settings ? { settings, hasSettings: true } : {}) });
+  if (source?.kind === 'folder') set({ unsaved: await api<Record<string, UnsavedEdit>>('unsaved').catch(() => ({})) });
+  // The desktop asks before closing a window with unsaved edits (main's will-prevent-unload); the server keeps them either way.
+  addEventListener('beforeunload', (e) => { if (window.trove && Object.keys(get().unsaved).length) e.preventDefault(); });
   // Show new: what this browser last chose, else the source's default.
   const remembered = localStorageHas('show-new');
   if (settings && !remembered) set({ showNew: settings.showNew });
   await Promise.all([refresh(), loadGit()]);
   const waiting = (f: FileRow) => f.state === 'queue' || f.state === 'working';
-  const first = visible().find(waiting) ?? get().files.find(waiting); // the remembered filters may hide every waiting file
-  if (first) await open(first.path);
+  const first = asked() ?? (visible().find(waiting) ?? get().files.find(waiting))?.path; // the remembered filters may hide every waiting file
+  if (first) await reveal(first);
+  addEventListener('hashchange', () => {
+    const path = asked();
+    history.replaceState(null, '', location.pathname + location.search); // so asking for the same file again is a change
+    if (path) void reveal(path);
+  });
   if (!get().hidden.changes) void loadActivity();
   setInterval(() => { void refresh(); void loadGit(); void loadSource(); if (!get().hidden.changes) void loadActivity(); }, 2000);
 }
@@ -391,6 +513,17 @@ export async function init() {
 export async function loadActivity() {
   const res = await optional<ActivityResponse>('activity').catch(() => undefined);
   if (res !== undefined && JSON.stringify(res?.entries ?? []) !== JSON.stringify(get().activity)) set({ activity: res?.entries ?? [] });
+}
+/** A message to the agent from History, new or a reply; it reaches the agent as one events-log line. False when it failed (a toast says why). */
+export async function sendMessage(body: MessageBody) {
+  try {
+    await api('message', body);
+  } catch (e) {
+    toast(errText(e));
+    return false;
+  }
+  await loadActivity();
+  return true;
 }
 /** The attached agent changes under the page (`trove attach`, `detach`): its colour and name follow. */
 async function loadSource() {
