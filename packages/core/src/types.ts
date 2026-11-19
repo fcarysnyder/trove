@@ -230,6 +230,12 @@ export interface FileResponse { // GET /api/file?path=
 export type VersionBy = 'original' | 'user' | 'agent';
 /** GET /api/versions?path= -> Version[], newest first, the last 50; [] in a repository. */
 export interface Version { n: number; at: string; by: VersionBy }
+/**
+ * A folder file's edits not yet written, kept server side in `<stateDir>/unsaved.json` so they survive a restart.
+ * GET /api/unsaved -> Record<path, UnsavedEdit>; POST /api/unsaved {path, edit: UnsavedEdit | null} -> {ok} sets or clears one.
+ * A successful POST /api/save clears the file's; a Save against a stale `base` is refused with 409 as any save.
+ */
+export interface UnsavedEdit { text: string; base: string /* the hash on disk it was edited from */; was: string /* that text */ }
 /** GET /api/version?path=&n= -> one version with its text; 404 when it is gone. */
 export interface VersionText extends Version { text: string }
 export interface SaveDraftsBody { path: string; drafts: Draft[] } // POST /api/drafts -> {ok}

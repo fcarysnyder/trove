@@ -12,7 +12,7 @@ import { included, kindOf, loadSettings, mergeSettings, saveSettings } from './s
 import { agentAbove, alive, peerOf } from './presence.js';
 import { folderStateDir, inGit, openFolder, openSource, sha, withChanges } from './source.js';
 import { versionStore } from './versions.js';
-import { AGENT_LABELS, DEFAULT_DOC_TYPES, type Activity, type AgentId, type AgentInfo, type BlockEdit, type Draft, type FileEntry, type GitInfo, type GitScope, type Question, type Settings, type SourceInfo, type SourceKind } from './types.js';
+import { AGENT_LABELS, DEFAULT_DOC_TYPES, type Activity, type AgentId, type AgentInfo, type BlockEdit, type Draft, type FileEntry, type GitInfo, type GitScope, type Question, type Settings, type SourceInfo, type SourceKind, type UnsavedEdit } from './types.js';
 
 export interface AppOptions {
   // A folder or a file. Inside a git working tree, that working tree; anywhere else, the folder (a file's folder) as a
@@ -94,7 +94,7 @@ export function createApp(o: AppOptions): App {
   const log = o.log ?? console.log;
   const quietMs = o.quietMs ?? 5000;
   const uiDir = o.uiDir ? realpathSync(o.uiDir) : null;
-  const files = { drafts: join(dir, 'drafts.json'), edits: join(dir, 'edits.json'), batches: join(dir, 'batches.jsonl'), events: join(dir, 'events.log'), state: join(dir, 'state.json'), server: join(dir, 'server.json'), activity: join(dir, 'activity.jsonl') };
+  const files = { unsaved: join(dir, 'unsaved.json'), drafts: join(dir, 'drafts.json'), edits: join(dir, 'edits.json'), batches: join(dir, 'batches.jsonl'), events: join(dir, 'events.log'), state: join(dir, 'state.json'), server: join(dir, 'server.json'), activity: join(dir, 'activity.jsonl') };
 
   // Settings: the file, with this run's options on top until a POST changes the same key.
   let stored = loadSettings(dir);
@@ -205,6 +205,14 @@ export function createApp(o: AppOptions): App {
   const hashOf = (rel: string) => { try { return sha(read(rel)); } catch { return null; } };
   const drafts = (): Record<string, Draft[]> => { try { return JSON.parse(readFileSync(files.drafts, 'utf8')); } catch { return {}; } };
   const saveDrafts = (d: Record<string, Draft[]>) => writeFileSync(files.drafts, JSON.stringify(d, null, 1));
+  const unsaved = (): Record<string, UnsavedEdit> => { try { return JSON.parse(readFileSync(files.unsaved, 'utf8')); } catch { return {}; } };
+  const setUnsaved = (rel: string, edit: UnsavedEdit | null) => {
+    const u = unsaved();
+    if (edit) u[rel] = edit;
+    else if (!u[rel]) return;
+    else delete u[rel];
+    writeFileSync(files.unsaved, JSON.stringify(u));
+  };
   // Files the user edited in this review: path -> {before: text before the first Save, saved: hash
   // of the last Save, blocks: one entry per edited block}. On disk, so Edited and every Revert
   // survive a restart; cleared by Accept or Revert all.
@@ -438,7 +446,7 @@ export function createApp(o: AppOptions): App {
       source.unstage(rel);
       write(rel, next);
       // A folder keeps versions instead of edit records: its Save is the whole file, and the version list is its undo.
-      if (versions) return (versions.add(rel, 'user', next), [200, { hash: sha(next) }]);
+      if (versions) return (versions.add(rel, 'user', next), setUnsaved(rel, null), [200, { hash: sha(next) }]);
       // One entry per block: a second Save of the same block keeps its original `before`.
       const e = edits();
       const rec = (e[rel] ??= { before: text, blocks: [] });
@@ -582,6 +590,19 @@ export function createApp(o: AppOptions): App {
     'GET /api/versions': (q) => {
       const rel = listed(q.get('path'));
       return rel ? [200, versions?.list(rel) ?? []] : [404, { error: 'not in the review set' }];
+    },
+    // A folder's unsaved edits (UnsavedEdit), for every listed file.
+    'GET /api/unsaved': () => {
+      const have = new Set(list().map((f) => f.path));
+      return [200, Object.fromEntries(Object.entries(unsaved()).filter(([p]) => have.has(p)))];
+    },
+    'POST /api/unsaved': (_, { path, edit }) => {
+      const rel = listed(path);
+      if (!rel) return [404, { error: 'not in the review set' }];
+      const ok = edit === null || (edit && typeof edit === 'object' && ['text', 'base', 'was'].every((k) => typeof edit[k] === 'string'));
+      if (!ok) return [400, { error: 'edit is {text, base, was} or null' }];
+      setUnsaved(rel, edit && { text: edit.text, base: edit.base, was: edit.was });
+      return [200, { ok: true }];
     },
     'GET /api/version': (q) => {
       const rel = listed(q.get('path'));

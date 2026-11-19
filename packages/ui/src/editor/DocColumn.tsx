@@ -163,7 +163,7 @@ function DocView() {
   const buf = useStore((s) => s.unsaved[current.path]);
   // A version or Compare always shows its marks; a folder otherwise has only the text before the agent's last update.
   const layered = (showNew || !!view) && !editing && current.kind === 'markdown' && (!folder || !!current.since || !!current.base);
-  const edited = folder && buf && !view ? new Set(unsavedBlocks(current.text, buf.base, current.kind)) : null;
+  const edited = folder && buf && !view ? new Set(unsavedBlocks(current.text, buf.was, current.kind)) : null;
 
   // Show new: tints, badges and bars, measured on the rendered blocks.
   useLayoutEffect(() => {
@@ -415,7 +415,7 @@ function DocFooter() {
     if (buf) {
       return (
         <div className={row}>
-          <span className={label}>{plural(Math.max(1, unsavedBlocks(buf.text, buf.base, current.kind).length), 'unsaved edit')}</span>
+          <span className={label}>{plural(Math.max(1, unsavedBlocks(buf.text, buf.was, current.kind).length), 'unsaved edit')}</span>
           <Button variant="outline" disabled={busy} onClick={act(discard)}>Don't save</Button>
           <Button disabled={busy} onClick={act(() => saveFile())}>Save<Kbd className="bg-primary-foreground/15 text-primary-foreground">{SAVE_KEY}</Kbd></Button>
         </div>

@@ -1,14 +1,14 @@
 // The editor's behaviour, ported from the old page's script: polling, opening, stepping, accepting,
 // drafts, edits and sending. Components call these; they read and write the store.
-import type { ActivityResponse, BlockEdit, CommentKind, DocKind, Draft, DraftsResponse, FileResponse, FileRow, FilesResponse, GitInfo, MessageBody, Recent, SendBody, Settings, SourceInfo, Version, VersionText } from '@trove/core/types';
+import type { ActivityResponse, BlockEdit, CommentKind, DocKind, Draft, DraftsResponse, FileResponse, FileRow, FilesResponse, GitInfo, MessageBody, Recent, SendBody, Settings, SourceInfo, UnsavedEdit, Version, VersionText } from '@trove/core/types';
 import { blocks, splice } from '@trove/core/anchor';
 import { toast } from 'sonner';
 import { api, ApiError, optional } from '@/lib/api';
 import { passes, normalizeOff, type FilterKey } from '@/lib/filter';
 import { inFolders, stepFrom } from '@/lib/status';
-import { load, save } from '@/lib/storage';
+import { save } from '@/lib/storage';
 import { kindOf } from '@/lib/text';
-import { get, isFolder, set, type State, type Unsaved } from './store';
+import { get, isFolder, set, type State } from './store';
 import { getAnn } from './doc/annotate';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -273,19 +273,19 @@ export async function saveEdit(index: number | null, raw: string): Promise<strin
 
 // ---- a folder's unsaved edits, Save and versions -----------------------------------------------
 
-const unsavedKey = () => `unsaved:${get().source?.root}`;
-function setUnsaved(path: string, buf: Unsaved | null) {
+/** The page's copy at once; the server's (unsaved.json) after, so the edits outlive a restart. */
+function setUnsaved(path: string, edit: UnsavedEdit | null) {
   const unsaved = { ...get().unsaved };
-  if (buf) unsaved[path] = buf;
+  if (edit) unsaved[path] = edit;
   else delete unsaved[path];
   set({ unsaved });
-  save(unsavedKey(), unsaved);
+  void api('unsaved', { path, edit }).catch((e) => toast(errText(e)));
 }
 /** `text` as the open file's unsaved text, based on what is on disk when the first edit was kept; back to that text is no edit. */
 function keep(path: string, text: string) {
   if (disk?.path !== path) return;
-  const was = get().unsaved[path] ?? { base: disk.text, hash: disk.hash };
-  setUnsaved(path, text === was.base ? null : { text, hash: was.hash, base: was.base });
+  const from = get().unsaved[path] ?? { was: disk.text, base: disk.hash };
+  setUnsaved(path, text === from.was ? null : { text, base: from.base, was: from.was });
 }
 const reshow = () => { if (disk) show(disk); };
 
@@ -303,15 +303,14 @@ export async function saveFile(hash?: string) {
   if (!current || !buf) return;
   const q = `path=${encodeURIComponent(current.path)}`;
   try {
-    await api('save', { path: current.path, hash: hash ?? buf.hash, raw: buf.text });
+    await api('save', { path: current.path, hash: hash ?? buf.base, raw: buf.text });
   } catch (e) {
     if (!(e instanceof ApiError && e.status === 409 && e.hash)) return void toast(errText(e));
     const [theirs, versions] = await Promise.all([api<FileResponse>(`file?${q}`), api<Version[]>(`versions?${q}`).catch(() => [])]);
     set({ conflict: { text: theirs.text, hash: theirs.hash, at: versions.find((v) => v.by === 'agent')?.at ?? null }, view: null });
     return;
   }
-  setUnsaved(current.path, null);
-  set({ view: null, conflict: null });
+  set({ unsaved: Object.fromEntries(Object.entries(get().unsaved).filter(([p]) => p !== current.path)), view: null, conflict: null }); // the server cleared its copy
   await open(current.path);
 }
 
@@ -493,8 +492,8 @@ export async function init() {
     optional<Settings>('settings').catch(() => null),
   ]);
   set({ source, ...(settings ? { settings, hasSettings: true } : {}) });
-  if (source?.kind === 'folder') set({ unsaved: load(unsavedKey(), {}) });
-  // The desktop asks before closing a window with unsaved edits (main's will-prevent-unload); a browser keeps them for the next load.
+  if (source?.kind === 'folder') set({ unsaved: await api<Record<string, UnsavedEdit>>('unsaved').catch(() => ({})) });
+  // The desktop asks before closing a window with unsaved edits (main's will-prevent-unload); the server keeps them either way.
   addEventListener('beforeunload', (e) => { if (window.trove && Object.keys(get().unsaved).length) e.preventDefault(); });
   // Show new: what this browser last chose, else the source's default.
   const remembered = localStorageHas('show-new');

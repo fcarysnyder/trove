@@ -776,6 +776,20 @@ async function folderCase(temps: string[]) {
   for (let k = 5; k <= 60; k++) await post('/api/save', { path: 'a.md', hash: sha(readFileSync(join(root, 'a.md'), 'utf8')), raw: `# A\n\n${k}\n` });
   const kept = await vs('a.md');
   assert.deepEqual([kept.length, kept[0], kept.at(-1)], [50, '60 user', '11 user'], 'numbering goes on past the cap');
+
+  // Unsaved edits live on the server: they survive a restart, and a Save clears them.
+  const onDisk = readFileSync(join(root, 'a.md'), 'utf8');
+  const edit = { text: '# A\n\nUnsaved.\n', base: sha(onDisk), was: onDisk };
+  assert.equal((await post('/api/unsaved', { path: 'a.md', edit: { text: 1 } })).status, 400);
+  assert.equal((await post('/api/unsaved', { path: 'a.md', edit })).status, 200);
+  await app.close();
+  ({ app, port } = await listen(opts));
+  assert.deepEqual(await get('/api/unsaved'), { 'a.md': edit }, 'kept across a restart');
+  assert.equal((await post('/api/save', { path: 'a.md', hash: edit.base, raw: edit.text })).status, 200);
+  assert.deepEqual(await get('/api/unsaved'), {}, 'Save clears it');
+  await post('/api/unsaved', { path: 'a.md', edit });
+  await post('/api/unsaved', { path: 'a.md', edit: null });
+  assert.deepEqual(await get('/api/unsaved'), {}, "Don't save clears it");
   await app.close();
 
   // A file as the root: its folder, with the file's type turned on there.
