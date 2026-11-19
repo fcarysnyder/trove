@@ -2,8 +2,9 @@
 // trove 0.7.0: bundled CLI and engine (@trove/core, marked). Node 22+, no dependencies.
 
 // bin/trove.mjs
-import { existsSync as existsSync4, realpathSync as realpathSync4 } from "node:fs";
-import { basename as basename5, dirname as dirname3, join as join5, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync4, realpathSync as realpathSync4, statSync as statSync3 } from "node:fs";
+import { basename as basename5, dirname as dirname4, join as join6, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
+import { text as stdin } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -26,10 +27,10 @@ var AGENT_LABELS = { claude: "Claude", codex: "Codex", other: "the agent" };
 
 // ../core/src/app.ts
 import { execFile } from "node:child_process";
-import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, realpathSync as realpathSync2, rmSync as rmSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync3, readFileSync as readFileSync3, realpathSync as realpathSync2, rmSync as rmSync3, statSync as statSync2, writeFileSync as writeFileSync3 } from "node:fs";
 import { createServer, request } from "node:http";
 import { randomUUID } from "node:crypto";
-import { basename as basename3, dirname as dirname2, extname, join as join3, relative, resolve, sep } from "node:path";
+import { basename as basename3, dirname as dirname2, extname, join as join4, relative, resolve, sep } from "node:path";
 
 // ../core/src/vendor/marked.esm.mjs
 function I() {
@@ -1604,7 +1605,8 @@ var alive = (pid) => {
 // ../core/src/source.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename as basename2, dirname, join as join2 } from "node:path";
 var sha = (text) => createHash("sha1").update(text).digest("hex");
 function gitAt(cwd) {
@@ -1685,6 +1687,14 @@ var gitTop = (dir) => {
     return null;
   }
 };
+var folderOf = (path) => statSync(path).isDirectory() ? path : dirname(path);
+var inGit = (path) => {
+  try {
+    return gitTop(folderOf(path)) !== null;
+  } catch {
+    return false;
+  }
+};
 function probeGit(path) {
   let dir = path;
   try {
@@ -1700,7 +1710,7 @@ function probeGit(path) {
   return { branch: g.branch(), branches, defaultBase: g.defaultBase(), local: g.branches(top), ...place, worktrees: withChanges(place.worktrees) };
 }
 function openSource(root) {
-  const top = gitTop(statSync(root).isDirectory() ? root : dirname(root));
+  const top = gitTop(folderOf(root));
   if (!top) throw new Error(`not a git repository: ${root}`);
   const g = gitAt(top);
   const { git, tryGit, branch, defaultBase } = g;
@@ -1722,6 +1732,7 @@ function openSource(root) {
   };
   const entry = (path, kind, untracked, staged) => ({ path, kind, untracked, staged });
   return {
+    kind: "git",
     root: top,
     // realpath of the toplevel
     stateDir,
@@ -1806,9 +1817,99 @@ function openSource(root) {
     }
   };
 }
+var folderStateDir = (top) => join2(homedir(), ".trove", "folders", sha(top).slice(0, 12));
+var MAX_PATHS = 1e4;
+function walk(top, s, git) {
+  const keep = (p) => included(p, s) && !p.split("/").slice(0, -1).some((d) => d.startsWith(".") || d === "node_modules");
+  const spec = pathspec(s);
+  if (spec && git) {
+    try {
+      const listed = execFileSync2("git", ["ls-files", "-co", "--exclude-standard", "-z", "--", ...spec], { cwd: top, encoding: "utf8", maxBuffer: 64 << 20, stdio: "pipe" }).split("\0").filter((p) => p && keep(p) && existsSync(join2(top, p)));
+      if (listed.length) return [...new Set(listed)].slice(0, MAX_PATHS);
+    } catch {
+    }
+  }
+  const out2 = [];
+  const dirs = [""];
+  let seen = 0;
+  for (let k2 = 0; k2 < dirs.length && seen < MAX_PATHS; k2++) {
+    let entries;
+    try {
+      entries = readdirSync(join2(top, dirs[k2]), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (++seen > MAX_PATHS) break;
+      const rel = dirs[k2] ? `${dirs[k2]}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        if (!e.name.startsWith(".") && e.name !== "node_modules") dirs.push(rel);
+      } else if (e.isFile() && keep(rel)) out2.push(rel);
+    }
+  }
+  return out2;
+}
+function openFolder(root) {
+  const top = realpathSync(folderOf(root));
+  const stateDir = folderStateDir(top);
+  mkdirSync(stateDir, { recursive: true });
+  const self = { root: top, name: basename2(top) };
+  const git = inGit(top);
+  return {
+    kind: "folder",
+    root: top,
+    stateDir,
+    place: () => ({ repo: self, worktree: { path: top, name: self.name, branch: null, main: true } }),
+    branch: () => null,
+    list: (s) => walk(top, s, git).map((path) => ({ path, kind: kindOf(path, s), untracked: false, staged: false })),
+    /** Save and Send: nothing is staged here. */
+    unstage: (_rel) => {
+    },
+    baseOf: (_rel, _text, _s) => null
+  };
+}
+
+// ../core/src/versions.ts
+import { mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync as readFileSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join3 } from "node:path";
+var KEEP_VERSIONS = 50;
+function versionStore(stateDir) {
+  const dirOf = (rel) => join3(stateDir, "versions", sha(rel));
+  const numbers = (rel) => {
+    try {
+      return readdirSync2(dirOf(rel)).map((f) => parseInt(f, 10)).filter((n) => n > 0).sort((a, b) => b - a);
+    } catch {
+      return [];
+    }
+  };
+  const get = (rel, n) => {
+    try {
+      return JSON.parse(readFileSync2(join3(dirOf(rel), `${n}.json`), "utf8"));
+    } catch {
+      return null;
+    }
+  };
+  const list = (rel) => numbers(rel).flatMap((n) => {
+    const v = get(rel, n);
+    return v ? [{ n: v.n, at: v.at, by: v.by }] : [];
+  });
+  function add(rel, by, text) {
+    const [last] = numbers(rel);
+    const prev = last ? get(rel, last) : null;
+    if (prev && prev.text === text) return { n: prev.n, at: prev.at, by: prev.by };
+    const v = { n: (last ?? 0) + 1, at: (/* @__PURE__ */ new Date()).toISOString(), by, text };
+    mkdirSync2(dirOf(rel), { recursive: true });
+    writeFileSync2(join3(dirOf(rel), `${v.n}.json`), JSON.stringify(v));
+    for (const old of numbers(rel).slice(KEEP_VERSIONS)) rmSync2(join3(dirOf(rel), `${old}.json`), { force: true });
+    return { n: v.n, at: v.at, by };
+  }
+  const notice = (rel, text) => add(rel, numbers(rel).length ? "agent" : "original", text);
+  return { list, get, add, notice };
+}
 
 // ../core/src/app.ts
 var MAX_BYTES = 512 * 1024;
+var OPENER = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
 var CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'";
 var TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -1836,22 +1937,48 @@ function locate(text, needle, hint) {
   }
   return needle ? best : Math.min(hint, text.length);
 }
+function jsonl(file) {
+  let text = "";
+  try {
+    text = readFileSync3(file, "utf8");
+  } catch {
+    return [];
+  }
+  return text.split("\n").flatMap((l3) => {
+    try {
+      return l3 ? [JSON.parse(l3)] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+var sourceFor = (root, folder) => folder || !inGit(root) ? openFolder(root) : openSource(root);
 function createApp(o) {
-  const source = openSource(resolve(o.root));
+  const asked = resolve(o.root);
+  const source = sourceFor(asked, o.folder);
   const { root: top, stateDir: dir } = source;
   const log = o.log ?? console.log;
   const quietMs = o.quietMs ?? 5e3;
   const uiDir = o.uiDir ? realpathSync2(o.uiDir) : null;
-  const files = { drafts: join3(dir, "drafts.json"), edits: join3(dir, "edits.json"), batches: join3(dir, "batches.jsonl"), events: join3(dir, "events.log"), state: join3(dir, "state.json"), server: join3(dir, "server.json") };
+  const files = { unsaved: join4(dir, "unsaved.json"), drafts: join4(dir, "drafts.json"), edits: join4(dir, "edits.json"), batches: join4(dir, "batches.jsonl"), events: join4(dir, "events.log"), state: join4(dir, "state.json"), server: join4(dir, "server.json"), activity: join4(dir, "activity.jsonl") };
   let stored = loadSettings(dir);
   const overrides = {};
   if (o.scope !== void 0) overrides.scope = o.scope;
   if (o.base !== void 0) overrides.base = o.base;
   if (o.exclude !== void 0) overrides.exclude = o.exclude;
   let current = mergeSettings(stored, overrides);
+  function enableTypeFor(path) {
+    const type = kindOf(path, current) ? void 0 : DEFAULT_DOC_TYPES.find((t) => t.extensions.some((e) => path.toLowerCase().endsWith(e)));
+    if (!type) return;
+    stored = mergeSettings(stored, { types: { [type.id]: true } });
+    saveSettings(dir, stored);
+    current = mergeSettings(stored, overrides);
+  }
+  if (source.kind === "folder" && statSync2(asked).isFile()) enableTypeFor(asked);
+  const versions = source.kind === "folder" ? versionStore(dir) : null;
   let saved = {};
   try {
-    saved = JSON.parse(readFileSync2(files.state, "utf8"));
+    saved = JSON.parse(readFileSync3(files.state, "utf8"));
   } catch {
   }
   const working = new Map(
@@ -1866,13 +1993,25 @@ function createApp(o) {
   const serving = o.agent === void 0 ? process.env.CLAUDECODE ? "claude" : null : o.agent;
   let agent = serving ? attached(serving, void 0, agentAbove(process.pid, serving)) : saved.agent ?? null;
   let attachedHere = !!serving;
-  const agentInfo = () => agent ? { id: agent.id, label: agent.label, at: agent.at, connected: agent.pid ? alive(agent.pid) : attachedHere } : { id: "other", label: AGENT_LABELS.other, connected: false, at: null };
+  let signal2 = { waiting: null, since: null };
+  const unwait = () => {
+    signal2 = { waiting: null, since: (/* @__PURE__ */ new Date()).toISOString() };
+  };
+  const resumed = () => {
+    if (signal2.waiting === "idle") unwait();
+  };
+  const agentInfo = () => ({
+    ...agent ? { id: agent.id, label: agent.label, at: agent.at, connected: agent.pid ? alive(agent.pid) : attachedHere } : { id: "other", label: AGENT_LABELS.other, connected: false, at: null },
+    waiting: signal2.waiting,
+    ...signal2.text ? { waitingText: signal2.text } : {},
+    since: signal2.since
+  });
   const Who = () => {
     const l3 = agentInfo().label;
     return l3[0].toUpperCase() + l3.slice(1);
   };
   const BUSY = () => [409, { error: `${Who()} is working on this file` }];
-  const saveState = () => writeFileSync2(files.state, JSON.stringify({
+  const saveState = () => writeFileSync3(files.state, JSON.stringify({
     working: Object.fromEntries([...working].map(([p, w]) => [p, { hash: w.hash, text: w.text }])),
     updated: Object.fromEntries(updated),
     question,
@@ -1883,19 +2022,30 @@ function createApp(o) {
   }));
   if (serving) saveState();
   const REJECTED = [409, { error: "Rejected: restore it first" }];
+  const KEEP = 200;
   const activity = [];
+  const persist = (e) => appendFileSync(files.activity, `${JSON.stringify(e)}
+`);
   const note = (kind, text, more = {}) => {
-    activity.push({ at: (/* @__PURE__ */ new Date()).toISOString(), kind, text, ...more });
-    activity.splice(0, activity.length - 100);
+    const e = { id: randomUUID().slice(0, 8), at: (/* @__PURE__ */ new Date()).toISOString(), kind, text, ...more };
+    activity.push(e);
+    activity.splice(0, activity.length - KEEP);
+    persist(e);
+    return e;
   };
-  const sentEntry = (b) => ({ at: b.sentAt, kind: "batch", text: b.id, comments: b.items.length, paths: [...new Set(b.items.map((c) => c.path))] });
-  try {
-    activity.push(...readFileSync2(files.batches, "utf8").trim().split("\n").slice(-100).map((l3) => sentEntry(JSON.parse(l3))));
-  } catch {
-  }
+  const counts = (items) => {
+    const n = {};
+    for (const c of items) n[c.path] = (n[c.path] ?? 0) + 1;
+    return n;
+  };
+  const sentEntry = (b) => ({ id: b.id, at: b.sentAt, kind: "batch", text: b.id, comments: b.items.length, paths: Object.keys(counts(b.items)), counts: counts(b.items) });
+  const byId = /* @__PURE__ */ new Map();
+  for (const e of jsonl(files.activity)) if (e?.id) byId.set(e.id, e);
+  for (const b of jsonl(files.batches)) if (b?.id && !byId.has(b.id)) byId.set(b.id, sentEntry(b));
+  activity.push(...[...byId.values()].sort((a, b) => a.at < b.at ? -1 : a.at > b.at ? 1 : 0).slice(-KEEP));
   function list() {
     const before = seen.size;
-    const out2 = source.list(current, seen, new Set(rejected.keys()));
+    const out2 = source.kind === "git" ? source.list(current, seen, new Set(rejected.keys())) : source.list(current);
     let dropped = false;
     for (const f of out2) {
       if (rejected.delete(f.path)) dropped = true;
@@ -1916,8 +2066,8 @@ function createApp(o) {
     return list().find((f) => f.path === rel) ?? null;
   }
   const listed = (p) => find(p)?.path ?? null;
-  const read = (rel) => readFileSync2(join3(top, rel), "utf8");
-  const write = (rel, text) => writeFileSync2(join3(top, rel), text);
+  const read = (rel) => readFileSync3(join4(top, rel), "utf8");
+  const write = (rel, text) => writeFileSync3(join4(top, rel), text);
   const hashOf = (rel) => {
     try {
       return sha(read(rel));
@@ -1927,20 +2077,34 @@ function createApp(o) {
   };
   const drafts = () => {
     try {
-      return JSON.parse(readFileSync2(files.drafts, "utf8"));
+      return JSON.parse(readFileSync3(files.drafts, "utf8"));
     } catch {
       return {};
     }
   };
-  const saveDrafts = (d) => writeFileSync2(files.drafts, JSON.stringify(d, null, 1));
+  const saveDrafts = (d) => writeFileSync3(files.drafts, JSON.stringify(d, null, 1));
+  const unsaved = () => {
+    try {
+      return JSON.parse(readFileSync3(files.unsaved, "utf8"));
+    } catch {
+      return {};
+    }
+  };
+  const setUnsaved = (rel, edit) => {
+    const u = unsaved();
+    if (edit) u[rel] = edit;
+    else if (!u[rel]) return;
+    else delete u[rel];
+    writeFileSync3(files.unsaved, JSON.stringify(u));
+  };
   const edits = () => {
     try {
-      return JSON.parse(readFileSync2(files.edits, "utf8"));
+      return JSON.parse(readFileSync3(files.edits, "utf8"));
     } catch {
       return {};
     }
   };
-  const saveEdits = (e) => writeFileSync2(files.edits, JSON.stringify(e));
+  const saveEdits = (e) => writeFileSync3(files.edits, JSON.stringify(e));
   const dropEdit = (rel) => {
     const e = edits();
     if (e[rel]) {
@@ -1949,13 +2113,23 @@ function createApp(o) {
     }
   };
   const editRows = (rel, text) => (edits()[rel]?.blocks ?? []).map((b) => ({ ...b, ok: locate(text, b.after, b.at) !== -1 }));
-  function release(rel) {
+  function release(rel, body) {
+    const said = body ? { from: "agent", body } : {};
     const w = working.get(rel);
-    if (!w) return false;
+    if (!w) {
+      const last = activity.findLast((e) => e.kind === "release" && e.text === rel);
+      if (body && last && !last.body) persist(Object.assign(last, said));
+      else if (body) note("message", "", { ...said, paths: [rel] });
+      return false;
+    }
     working.delete(rel);
-    if (hashOf(rel) !== w.hash) updated.set(rel, w.text);
+    if (hashOf(rel) !== w.hash) {
+      updated.set(rel, w.text);
+      versions?.notice(rel, w.text);
+      versions?.add(rel, "agent", read(rel));
+    }
     saveState();
-    note("release", rel);
+    note("release", rel, { paths: [rel], ...said });
     return true;
   }
   function tick(now = Date.now()) {
@@ -1979,24 +2153,24 @@ function createApp(o) {
     const n = size(files.events);
     if (n === eventsAt) return;
     if (n < eventsAt) eventsAt = 0;
-    const tail = readFileSync2(files.events).subarray(eventsAt);
+    const tail = readFileSync3(files.events).subarray(eventsAt);
     const end = tail.lastIndexOf(10) + 1;
     eventsAt += end;
-    for (const line of tail.subarray(0, end).toString("utf8").split("\n")) if (line && !line.startsWith("batch ")) note("event", line);
+    for (const line of tail.subarray(0, end).toString("utf8").split("\n")) if (line && !/^(batch|message) /.test(line)) note("event", line);
   }
   const port = () => {
     const a = server.address();
     return a && typeof a === "object" ? a.port : 0;
   };
-  const pick = ({ repo, worktree }) => ({ repo, worktree });
+  const pick = ({ repo: repo2, worktree }) => ({ repo: repo2, worktree });
   const info = () => ({
-    kind: "git",
+    kind: source.kind,
     root: top,
     name: basename3(top),
     ...pick(source.place()),
     branch: source.branch(),
-    base: current.scope === "branch" ? source.resolveBase(current) : null,
-    scope: current.scope,
+    base: source.kind === "git" && current.scope === "branch" ? source.resolveBase(current) : null,
+    scope: source.kind === "git" ? current.scope : "uncommitted",
     agent: agent?.id === "claude" ? "claude" : "other",
     agentInfo: agentInfo(),
     port: port(),
@@ -2006,6 +2180,7 @@ function createApp(o) {
     doneCommand: (o.doneCommand ?? ((p) => `trove done <file> --port ${p}`))(port())
   });
   const git = () => {
+    if (source.kind !== "git") return null;
     const place = source.place();
     return {
       root: top,
@@ -2018,6 +2193,18 @@ function createApp(o) {
       base: current.scope === "branch" ? source.resolveBase(current) : null
     };
   };
+  const GIT_ONLY = {
+    "POST /api/accept": "accept",
+    "POST /api/unaccept": "accept",
+    "POST /api/accept-all": "accept",
+    "POST /api/skip": "skip",
+    "POST /api/reject": "reject",
+    "POST /api/pr": "pull request",
+    "GET /api/git": null,
+    "POST /api/switch": null
+  };
+  const repo = source;
+  const NOT_GIT = (what) => what ? [409, { error: `No ${what} in a folder: ${basename3(top)} is edited in place` }] : [404, { error: `${basename3(top)} is open as a folder, without git` }];
   const routes = {
     "GET /api/files": () => {
       const d = drafts();
@@ -2051,7 +2238,7 @@ function createApp(o) {
         path: rel,
         kind: f.kind,
         text: gone.text,
-        base: existsSync2(join3(top, rel)) ? read(rel) : null,
+        base: existsSync2(join4(top, rel)) ? read(rel) : null,
         since: null,
         hash: sha(gone.text),
         locked: true,
@@ -2074,7 +2261,8 @@ function createApp(o) {
         drafts: drafts()[rel] ?? [],
         edited: !!edit,
         revertable: edit?.saved === sha(text),
-        edits: editRows(rel, text)
+        edits: editRows(rel, text),
+        ...versions ? { version: versions.notice(rel, text).n } : {}
       }];
     },
     "POST /api/drafts": (_2, { path, drafts: list2 }) => {
@@ -2095,7 +2283,7 @@ function createApp(o) {
       if (rejected.has(rel)) return REJECTED;
       const now = hashOf(rel);
       if (now !== hash) return [409, { error: "The file changed; read it again before accepting", hash: now }];
-      source.accept(rel);
+      repo.accept(rel);
       updated.delete(rel);
       skipped.delete(rel);
       saveState();
@@ -2124,11 +2312,11 @@ function createApp(o) {
       const text = read(rel);
       if (sha(text) !== hash) return [409, { error: "The file changed; read it again before rejecting", hash: sha(text) }];
       const d = drafts();
-      rejected.set(rel, { text, staged: source.indexed(rel), drafts: d[rel] ?? [], at: (/* @__PURE__ */ new Date()).toISOString() });
+      rejected.set(rel, { text, staged: repo.indexed(rel), drafts: d[rel] ?? [], at: (/* @__PURE__ */ new Date()).toISOString() });
       updated.delete(rel);
       skipped.delete(rel);
       saveState();
-      source.reject(rel);
+      repo.reject(rel);
       if (d[rel]) {
         delete d[rel];
         saveDrafts(d);
@@ -2141,8 +2329,8 @@ function createApp(o) {
       const rel = listed(path);
       const gone = rel && rejected.get(rel);
       if (!rel || !gone) return [404, { error: "not rejected" }];
-      mkdirSync2(dirname2(join3(top, rel)), { recursive: true });
-      if (gone.staged !== null) {
+      mkdirSync3(dirname2(join4(top, rel)), { recursive: true });
+      if (gone.staged !== null && source.kind === "git") {
         write(rel, gone.staged);
         source.accept(rel);
       }
@@ -2157,7 +2345,7 @@ function createApp(o) {
     "POST /api/accept-all": (_2, { paths }) => {
       if (!Array.isArray(paths)) return [400, { error: "paths required" }];
       const rels = [...new Set(paths.map(listed).filter((r) => !!r && !working.has(r) && !rejected.has(r)))];
-      source.accept(...rels);
+      repo.accept(...rels);
       for (const rel of rels) {
         updated.delete(rel);
         skipped.delete(rel);
@@ -2171,7 +2359,7 @@ function createApp(o) {
       if (!rel) return [404, { error: "not in the review set" }];
       if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
-      source.unaccept(rel);
+      repo.unaccept(rel);
       return [200, { ok: true }];
     },
     "POST /api/save": (_2, { path, hash, index, raw: raw2 }) => {
@@ -2181,10 +2369,11 @@ function createApp(o) {
       if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
       const text = read(rel);
+      versions?.notice(rel, text);
       if (sha(text) !== hash) return [409, { error: "The file changed since you started editing", hash: sha(text) }];
       let next = raw2;
       let block = { before: text, after: raw2, path: [], index: null, at: 0 };
-      if (f.kind === "markdown") {
+      if (f.kind === "markdown" && index !== void 0) {
         try {
           next = splice(text, index, raw2);
         } catch {
@@ -2201,6 +2390,7 @@ function createApp(o) {
       }
       source.unstage(rel);
       write(rel, next);
+      if (versions) return versions.add(rel, "user", next), setUnsaved(rel, null), [200, { hash: sha(next) }];
       const e = edits();
       const rec = e[rel] ??= { before: text, blocks: [] };
       rec.saved = sha(next);
@@ -2266,15 +2456,18 @@ function createApp(o) {
       const changed = [...new Set(items.filter((c) => c.kind === "change").map((c) => c.path))];
       for (const rel of changed) {
         source.unstage(rel);
+        if (source.kind === "folder") updated.delete(rel);
         const h2 = hashOf(rel);
         working.set(rel, { hash: h2, last: h2, at: 0, text: read(rel) });
       }
       saveState();
       const id = randomUUID().slice(0, 8);
       const sentPaths = new Set(items.map((c) => c.path));
-      appendFileSync(files.batches, `${JSON.stringify({ id, sentAt: (/* @__PURE__ */ new Date()).toISOString(), items })}
+      const sentAt = (/* @__PURE__ */ new Date()).toISOString();
+      appendFileSync(files.batches, `${JSON.stringify({ id, sentAt, items })}
 `);
-      note("batch", id, { comments: items.length, paths: [...sentPaths] });
+      note("batch", id, { id, at: sentAt, comments: items.length, paths: [...sentPaths], counts: counts(items) });
+      resumed();
       saveDrafts(keep);
       const notice = `batch ${id}: ${items.length} ${items.length === 1 ? "comment" : "comments"} on ${sentPaths.size} ${sentPaths.size === 1 ? "file" : "files"}. Read it with: grep -F ${id} '${files.batches}'`;
       appendFileSync(files.events, `${notice}
@@ -2303,26 +2496,95 @@ function createApp(o) {
       if (typeof text !== "string" || !["question", "reply"].includes(kind)) return [400, { error: "text, and kind question or reply" }];
       question = text.trim() ? { text: text.trim().slice(0, 300), kind, at: (/* @__PURE__ */ new Date()).toISOString() } : null;
       saveState();
-      if (question) note(kind, question.text);
+      if (question) note(kind, question.text, { from: "agent" });
       return [200, { question }];
     },
-    // `done <file>` from the agent and the page's Unlock button.
-    "POST /api/release": (_2, { path }) => {
+    // `done <file> [--note <markdown>]` from the agent and the page's Unlock button.
+    "POST /api/release": (_2, { path, note: body }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: `not in the review set: ${path}` }];
-      return [200, { released: release(rel), updated: updated.has(rel) }];
+      if (body !== void 0 && typeof body !== "string") return [400, { error: "note is text" }];
+      return [200, { released: release(rel, body?.trim() || void 0), updated: updated.has(rel) }];
+    },
+    // A message in History: the agent's (`trove say`), or the user's from the page. The user's gets one line in
+    // the events log, like a batch's notice: the text itself may run to many lines, and the agent greps for it.
+    "POST /api/message": (_2, { text, re: re2, paths = [], from = "user" }) => {
+      if (typeof text !== "string" || !text.trim()) return [400, { error: "text required" }];
+      if (re2 !== void 0 && (typeof re2 !== "string" || !/^[\w-]{1,40}$/.test(re2))) return [400, { error: "re is an entry id" }];
+      if (!Array.isArray(paths) || from !== "user" && from !== "agent") return [400, { error: "paths is a list, from is agent or user" }];
+      const rels = [];
+      for (const p of paths) {
+        const rel = listed(p);
+        if (!rel) return [404, { error: `not in the review set: ${p}` }];
+        if (!rels.includes(rel)) rels.push(rel);
+      }
+      const e = note("message", "", { from, body: text.trim(), ...re2 ? { re: re2 } : {}, ...rels.length ? { paths: rels } : {} });
+      if (from === "user") {
+        resumed();
+        const notice = `message ${e.id}: from the reviewer${re2 ? `, re ${re2}` : ""}. Read it with: grep -F ${e.id} '${files.activity}'`;
+        appendFileSync(files.events, `${notice}
+`);
+        log(notice);
+      }
+      return [200, e];
+    },
+    // One send's comments, for History's expanded batch.
+    "GET /api/batch": (q2) => {
+      const b = jsonl(files.batches).find((x2) => x2?.id === q2.get("id"));
+      return b ? [200, b] : [404, { error: "no such batch" }];
     },
     "GET /api/source": () => [200, info()],
+    "GET /api/versions": (q2) => {
+      const rel = listed(q2.get("path"));
+      return rel ? [200, versions?.list(rel) ?? []] : [404, { error: "not in the review set" }];
+    },
+    // A folder's unsaved edits (UnsavedEdit), for every listed file.
+    "GET /api/unsaved": () => {
+      const have = new Set(list().map((f) => f.path));
+      return [200, Object.fromEntries(Object.entries(unsaved()).filter(([p]) => have.has(p)))];
+    },
+    "POST /api/unsaved": (_2, { path, edit }) => {
+      const rel = listed(path);
+      if (!rel) return [404, { error: "not in the review set" }];
+      const ok = edit === null || edit && typeof edit === "object" && ["text", "base", "was"].every((k2) => typeof edit[k2] === "string");
+      if (!ok) return [400, { error: "edit is {text, base, was} or null" }];
+      setUnsaved(rel, edit && { text: edit.text, base: edit.base, was: edit.was });
+      return [200, { ok: true }];
+    },
+    "GET /api/version": (q2) => {
+      const rel = listed(q2.get("path"));
+      const v = rel && versions?.get(rel, Number(q2.get("n")));
+      return v ? [200, v] : [404, { error: "no such version" }];
+    },
     "GET /api/activity": () => (follow(), [200, { entries: activity }]),
+    // `trove signal` from the agent's hooks, and the desktop's terminal: what the agent waits on the user for. The last one wins.
+    "POST /api/signal": (_2, { kind, text }) => {
+      if (!["permission", "question", "idle", "working"].includes(kind)) return [400, { error: "kind is permission, question, idle or working" }];
+      if (text !== void 0 && typeof text !== "string") return [400, { error: "text is a string" }];
+      if (kind === "working") unwait();
+      else signal2 = { waiting: kind, ...text?.trim() ? { text: text.trim().slice(0, 200) } : {}, since: (/* @__PURE__ */ new Date()).toISOString() };
+      return [200, agentInfo()];
+    },
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
     // The file in the system's file manager. Never a shell: the path is one argument.
     "POST /api/reveal": (_2, { path }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: "not in the review set" }];
-      const abs = join3(top, rel);
-      execFile(...process.platform === "darwin" ? ["open", ["-R", abs]] : process.platform === "win32" ? ["explorer", [`/select,${abs}`]] : ["xdg-open", [dirname2(abs)]], () => {
+      const abs = join4(top, rel);
+      execFile(OPENER, process.platform === "darwin" ? ["-R", abs] : process.platform === "win32" ? [`/select,${abs}`] : [dirname2(abs)], () => {
       });
       return [200, {}];
+    },
+    // An HTML file in the default browser as this server serves it, the frame's URL, so its relative assets resolve and
+    // the browser opens it whatever app owns .html. Nothing else opens: Trove may be the system's app for markdown.
+    "POST /api/open": (_2, { path }) => {
+      const rel = listed(path);
+      if (!rel) return [404, { error: "not in the review set" }];
+      if (kindOf(rel, current) !== "html") return [400, { error: "only HTML files open in the browser" }];
+      const url = `http://127.0.0.1:${port()}/raw/${rel.split("/").map(encodeURIComponent).join("/")}`;
+      execFile(OPENER, [url], () => {
+      });
+      return [200, { url }];
     },
     "POST /api/agent": (_2, { id, label }, req) => {
       if (id !== null && !Object.hasOwn(AGENT_LABELS, id)) return [400, { error: "id is claude, codex, other or null" }];
@@ -2330,6 +2592,7 @@ function createApp(o) {
       if (id === null && agent) note("detach", agent.label);
       agent = id === null ? null : attached(id, label?.trim(), agentAbove(peerOf(req.socket.remotePort), id));
       attachedHere = id !== null;
+      signal2 = { waiting: null, since: null };
       saveState();
       if (agent) note("attach", agent.label);
       return [200, agentInfo()];
@@ -2338,12 +2601,12 @@ function createApp(o) {
     // The same as running `git switch <branch>` by hand, no more: no stash, no discard. Git itself
     // refuses when uncommitted changes would be overwritten; its message is the answer.
     "POST /api/switch": (_2, { branch }) => {
-      const target = typeof branch === "string" ? source.branches().find((b) => b.name === branch) : void 0;
+      const target = typeof branch === "string" ? repo.branches().find((b) => b.name === branch) : void 0;
       if (!target) return [404, { error: `no such branch: ${branch}` }];
       if (target.current) return [200, git()];
       if (target.worktree) return [409, { error: `${branch} is checked out in ${target.worktree}`, worktree: target.worktree }];
       if (working.size) return [409, { error: `${Who()} is working on a file` }];
-      const failed = source.switchTo(branch);
+      const failed = repo.switchTo(branch);
       if (failed) return [409, { error: failed }];
       seen.clear();
       list();
@@ -2397,22 +2660,24 @@ function createApp(o) {
           return reply(404);
         }
         const abs = resolve(top, rel);
-        if (!abs.startsWith(top + sep) || abs.startsWith(join3(top, ".git") + sep)) return reply(404);
+        if (!abs.startsWith(top + sep) || abs.startsWith(join4(top, ".git") + sep)) return reply(404);
         let body = rejected.get(relative(top, abs).split(sep).join("/"))?.text;
         if (body == null) try {
-          if (statSync2(abs).isFile()) body = readFileSync2(abs);
+          if (statSync2(abs).isFile()) body = readFileSync3(abs);
         } catch {
         }
         if (body == null) return reply(404);
         return reply(200, body, { "content-type": TYPES[extname(abs).toLowerCase()] ?? "application/octet-stream" });
       }
       const file = asset(pathname);
-      if (file) return reply(200, readFileSync2(file), { "content-type": TYPES[extname(file).toLowerCase()] ?? "application/octet-stream", "content-security-policy": CSP });
+      if (file) return reply(200, readFileSync3(file), { "content-type": TYPES[extname(file).toLowerCase()] ?? "application/octet-stream", "content-security-policy": CSP });
       if (pathname === "/" && !uiDir) return reply(404, "No UI is built for this server; it answers /api/ only. Pass --ui <dir>.\n", { "content-type": "text/plain; charset=utf-8" });
       return reply(404);
     }
-    const route = routes[`${req.method} ${pathname}`];
+    const key = `${req.method} ${pathname}`;
+    const route = routes[key];
     if (!route) return reply(404);
+    if (source.kind !== "git" && key in GIT_ONLY) return json(NOT_GIT(GIT_ONLY[key]));
     const run = (body) => {
       try {
         json(route(searchParams, body, req));
@@ -2449,10 +2714,10 @@ function createApp(o) {
     }
   });
   const record = () => ({ port: port(), pid: process.pid, startedAt: (/* @__PURE__ */ new Date()).toISOString(), by: o.by ?? "cli" });
-  server.on("listening", () => writeFileSync2(files.server, JSON.stringify(record())));
+  server.on("listening", () => writeFileSync3(files.server, JSON.stringify(record())));
   const forget = () => {
     try {
-      if (JSON.parse(readFileSync2(files.server, "utf8")).port === port()) rmSync2(files.server);
+      if (JSON.parse(readFileSync3(files.server, "utf8")).port === port()) rmSync3(files.server);
     } catch {
     }
   };
@@ -2462,6 +2727,7 @@ function createApp(o) {
     list,
     tick,
     git,
+    enableTypeFor,
     settings: () => current,
     close: () => new Promise((ok) => {
       forget();
@@ -2470,23 +2736,42 @@ function createApp(o) {
     })
   };
 }
-async function running(root) {
-  let top, r;
+async function recordIn(stateDir, top, kind) {
+  let r;
   try {
-    const source = openSource(resolve(root));
-    top = source.root;
-    r = JSON.parse(readFileSync2(join3(source.stateDir, "server.json"), "utf8"));
+    r = JSON.parse(readFileSync3(join4(stateDir, "server.json"), "utf8"));
   } catch {
     return null;
   }
   if (!alive(r.pid)) return null;
   const answer = await call(r.port, "GET", "/api/source").catch(() => null);
-  return answer?.status === 200 && answer.body?.root === top ? r : null;
+  return answer?.status === 200 && answer.body?.root === top && (answer.body.kind ?? "git") === kind ? r : null;
+}
+async function running(root) {
+  const abs = resolve(root);
+  try {
+    const source = openSource(abs);
+    const r = await recordIn(source.stateDir, source.root, "git");
+    if (r) return r;
+  } catch {
+  }
+  let dir;
+  try {
+    dir = realpathSync2(statSync2(abs).isDirectory() ? abs : dirname2(abs));
+  } catch {
+    return null;
+  }
+  for (; ; ) {
+    const r = await recordIn(folderStateDir(dir), dir, "folder");
+    if (r || dirname2(dir) === dir) return r;
+    dir = dirname2(dir);
+  }
 }
 async function serve(options) {
-  const other = options.force ? null : await running(options.root);
+  const at2 = options.force ? null : sourceFor(resolve(options.root), options.folder);
+  const other = at2 && await recordIn(at2.stateDir, at2.root, at2.kind);
   if (other) {
-    throw new Error(`Trove is already serving this repository at http://127.0.0.1:${other.port} (${other.by === "desktop" ? "desktop app" : "trove serve"}).
+    throw new Error(`Trove is already serving this ${at2.kind === "git" ? "repository" : "folder"} at http://127.0.0.1:${other.port} (${other.by === "desktop" ? "desktop app" : "trove serve"}).
 Attach with: trove attach --port ${other.port} --agent claude. Pass --force to start another.`);
   }
   const app = createApp(options);
@@ -2525,10 +2810,10 @@ function call(port, method, path, body, headers = {}) {
 // ../core/src/selftest.ts
 import assert from "node:assert/strict";
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { appendFileSync as appendFileSync2, existsSync as existsSync3, mkdirSync as mkdirSync3, mkdtempSync, readFileSync as readFileSync3, realpathSync as realpathSync3, rmSync as rmSync3, symlinkSync, writeFileSync as writeFileSync3 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync3, mkdirSync as mkdirSync4, mkdtempSync, readFileSync as readFileSync4, realpathSync as realpathSync3, rmSync as rmSync4, symlinkSync, writeFileSync as writeFileSync4 } from "node:fs";
 import { request as request2 } from "node:http";
-import { tmpdir } from "node:os";
-import { basename as basename4, join as join4 } from "node:path";
+import { homedir as homedir2, tmpdir } from "node:os";
+import { basename as basename4, dirname as dirname3, join as join5 } from "node:path";
 var listen = async (o) => {
   const app = createApp({ log: () => {
   }, agent: "other", ...o });
@@ -2541,7 +2826,7 @@ var raw = (port, path) => new Promise((ok) => request2({ host: "127.0.0.1", port
 }).end());
 var gitIn = (root) => (...args) => execFileSync3("git", args, { cwd: root, encoding: "utf8" });
 var newRepo = (prefix) => {
-  const root = mkdtempSync(join4(tmpdir(), prefix));
+  const root = mkdtempSync(join5(tmpdir(), prefix));
   const sh = gitIn(root);
   sh("init", "-q", "-b", "main");
   sh("config", "user.email", "t@t");
@@ -2556,9 +2841,10 @@ async function selftest() {
     await branchCase(temps);
     await switchCase(temps);
     await agentCase(temps);
-    notARepo(temps);
+    await folderCase(temps);
+    await historyCase(temps);
   } finally {
-    for (const t of temps) rmSync3(t, { recursive: true, force: true });
+    for (const t of temps) rmSync4(t, { recursive: true, force: true });
   }
 }
 async function pure() {
@@ -2617,33 +2903,33 @@ async function gitCase(temps) {
   const doc = DOC;
   const { root, sh } = newRepo("trove-git-");
   temps.push(root);
-  writeFileSync3(join4(root, "a.md"), doc);
-  mkdirSync3(join4(root, "gen"));
-  writeFileSync3(join4(root, "gen/x.md"), "# gen\n");
-  writeFileSync3(join4(root, "r.md"), "# R\n");
+  writeFileSync4(join5(root, "a.md"), doc);
+  mkdirSync4(join5(root, "gen"));
+  writeFileSync4(join5(root, "gen/x.md"), "# gen\n");
+  writeFileSync4(join5(root, "r.md"), "# R\n");
   sh("add", ".");
   sh("commit", "-qm", "base");
   sh("mv", "r.md", "r \xE9 \xF1.md");
-  writeFileSync3(join4(root, "a.md"), doc.replace("Para one.", "Para one, changed."));
-  writeFileSync3(join4(root, "b.md"), "# B\n");
-  for (const out2 of ["x.mdx", "t.txt", "c.html"]) writeFileSync3(join4(root, out2), "<h1>C</h1><p>Hi</p>\n");
-  writeFileSync3(join4(root, "gen/x.md"), "# gen 2\n");
-  const gitDir = join4(root, ".git");
-  mkdirSync3(join4(gitDir, "doc-review"));
-  writeFileSync3(join4(gitDir, "doc-review", "events.log"), "old\n");
-  const ui = mkdtempSync(join4(tmpdir(), "trove-ui-"));
+  writeFileSync4(join5(root, "a.md"), doc.replace("Para one.", "Para one, changed."));
+  writeFileSync4(join5(root, "b.md"), "# B\n");
+  for (const out2 of ["x.mdx", "t.txt", "c.html"]) writeFileSync4(join5(root, out2), "<h1>C</h1><p>Hi</p>\n");
+  writeFileSync4(join5(root, "gen/x.md"), "# gen 2\n");
+  const gitDir = join5(root, ".git");
+  mkdirSync4(join5(gitDir, "doc-review"));
+  writeFileSync4(join5(gitDir, "doc-review", "events.log"), "old\n");
+  const ui = mkdtempSync(join5(tmpdir(), "trove-ui-"));
   temps.push(ui);
-  mkdirSync3(join4(ui, "assets"));
-  writeFileSync3(join4(ui, "index.html"), "<!doctype html><title>Trove</title>");
-  writeFileSync3(join4(ui, "assets", "app.js"), "export {};\n");
-  writeFileSync3(join4(tmpdir(), "trove-outside.txt"), "secret");
+  mkdirSync4(join5(ui, "assets"));
+  writeFileSync4(join5(ui, "index.html"), "<!doctype html><title>Trove</title>");
+  writeFileSync4(join5(ui, "assets", "app.js"), "export {};\n");
+  writeFileSync4(join5(tmpdir(), "trove-outside.txt"), "secret");
   const lines = [];
   const opts = { root, exclude: ["gen/**"] };
   const { app, port } = await listen({ ...opts, quietMs: 300, log: (l3) => lines.push(l3), uiDir: ui });
   const stateDir = app.info().stateDir;
-  const files = { drafts: join4(stateDir, "drafts.json"), edits: join4(stateDir, "edits.json"), batches: join4(stateDir, "batches.jsonl") };
-  assert.equal(readFileSync3(join4(gitDir, "trove", "events.log"), "utf8"), "old\n", "doc-review/ became trove/");
-  assert.equal(existsSync3(join4(gitDir, "doc-review")), false);
+  const files = { drafts: join5(stateDir, "drafts.json"), edits: join5(stateDir, "edits.json"), batches: join5(stateDir, "batches.jsonl") };
+  assert.equal(readFileSync4(join5(gitDir, "trove", "events.log"), "utf8"), "old\n", "doc-review/ became trove/");
+  assert.equal(existsSync3(join5(gitDir, "doc-review")), false);
   const post = (path, body, headers) => call(port, "POST", path, body, headers);
   const get = (path, p = port) => call(p, "GET", path);
   const states = async () => Object.fromEntries((await get("/api/files")).body.files.map((f) => [f.path, f.state]));
@@ -2661,7 +2947,7 @@ async function gitCase(temps) {
     [info.kind, info.branch, info.scope, info.base, info.agent, info.port, info.doneCommand],
     ["git", "main", "uncommitted", null, "other", port, `trove done <file> --port ${port}`]
   );
-  assert.equal(info.eventsLog, join4(stateDir, "events.log"));
+  assert.equal(info.eventsLog, join5(stateDir, "events.log"));
   assert.deepEqual((await get("/api/settings")).body.exclude, ["gen/**"], "options override settings for this run");
   assert.equal((await post("/api/settings", { theme: "loud" })).status, 400);
   assert.equal((await post("/api/settings", { theme: "dark" }, { origin: "https://evil.example" })).status, 403);
@@ -2671,13 +2957,13 @@ async function gitCase(temps) {
   assert.equal((await get("/api/file?path=t.txt")).body.kind, "text");
   await post("/api/settings", { types: { txt: false } });
   assert.equal((await states())["t.txt"], void 0);
-  assert.equal(JSON.parse(readFileSync3(join4(stateDir, "settings.json"), "utf8")).theme, "dark", "saved per source");
-  assert.equal(JSON.parse(readFileSync3(join4(stateDir, "settings.json"), "utf8")).exclude.length, 0, "a run override is not saved");
-  assert.deepEqual(probeGit(join4(root, "gen"))?.branch, "main");
-  symlinkSync(join4(root, "gone.md"), join4(root, "l.md"));
+  assert.equal(JSON.parse(readFileSync4(join5(stateDir, "settings.json"), "utf8")).theme, "dark", "saved per source");
+  assert.equal(JSON.parse(readFileSync4(join5(stateDir, "settings.json"), "utf8")).exclude.length, 0, "a run override is not saved");
+  assert.deepEqual(probeGit(join5(root, "gen"))?.branch, "main");
+  symlinkSync(join5(root, "gone.md"), join5(root, "l.md"));
   assert.equal((await get("/api/file?path=l.md")).status, 500);
   assert.equal((await get("/api/files")).status, 200);
-  rmSync3(join4(root, "l.md"));
+  rmSync4(join5(root, "l.md"));
   const page = await raw(port, "/");
   assert.deepEqual([page.status, page.type, page.text], [200, "text/html; charset=utf-8", "<!doctype html><title>Trove</title>"]);
   assert.match(page.csp, /script-src 'self';/, "no inline scripts");
@@ -2692,7 +2978,7 @@ async function gitCase(temps) {
   await bare.app.close();
   const html = (await get("/api/file?path=c.html")).body;
   assert.equal((await post("/api/save", { path: "c.html", hash: html.hash, raw: "<p>Whole</p>\n" })).status, 200);
-  assert.equal(readFileSync3(join4(root, "c.html"), "utf8"), "<p>Whole</p>\n");
+  assert.equal(readFileSync4(join5(root, "c.html"), "utf8"), "<p>Whole</p>\n");
   assert.equal(staged(), "", "an HTML save does not stage");
   assert.equal((await post("/api/accept", { path: "c.html", hash: sha("<p>Whole</p>\n") })).status, 200);
   assert.equal((await states())["c.html"], "accepted");
@@ -2705,16 +2991,21 @@ async function gitCase(temps) {
   for (const path of ["a.md", "c.html"]) assert.equal((await post("/api/unaccept", { path })).status, 200);
   assert.equal(staged(), "");
   assert.equal((await post("/api/reveal", { path: "../etc/passwd" })).status, 404, "reveal: only a file in the set");
+  assert.equal((await post("/api/open", { path: "../etc/passwd" })).status, 404, "open: only a file in the set");
+  assert.equal((await post("/api/open", { path: "nope.html" })).status, 404, "open: an unlisted file");
+  assert.equal((await post("/api/open", { path: "a.md" })).status, 400, "open: HTML only; Trove may be the app for markdown");
+  assert.equal((await post("/api/open", { path: "c.html" }, { origin: "https://evil.example" })).status, 403, "open: same origin only");
   assert.equal((await post("/api/accept", { path: "a.md" }, { host: "evil.example" })).status, 403);
   assert.equal((await post("/api/accept", { path: "a.md" }, { origin: "https://evil.example" })).status, 403);
   assert.equal((await post("/api/accept", { path: "a.md" }, { origin: "" })).status, 403);
   assert.equal((await post("/api/accept", { path: "a.md" }, { "content-type": "text/plain" })).status, 415);
   assert.equal((await post("/api/drafts", { path: "a.md", drafts: ["x".repeat(600 * 1024)] })).status, 413);
-  for (const path of ["../etc/passwd", "gen/x.md", join4(root, ".git/config")]) {
+  for (const path of ["../etc/passwd", "gen/x.md", join5(root, ".git/config")]) {
     assert.equal((await get(`/api/file?path=${encodeURIComponent(path)}`)).status, 404, path);
   }
   assert.equal(staged(), "", "nothing refused touched the index");
   const shown = (await get("/api/file?path=a.md")).body.hash;
+  assert.deepEqual([(await get("/api/file?path=a.md")).body.version, (await get("/api/versions?path=a.md")).body], [void 0, []], "a repository keeps no versions: git has them");
   const stale = await post("/api/accept", { path: "a.md", hash: "stale" });
   assert.deepEqual([stale.status, stale.body.hash], [409, shown], "accepting a version the user did not see is refused");
   assert.equal(staged(), "", "a refused accept leaves the index alone");
@@ -2731,7 +3022,7 @@ async function gitCase(temps) {
   const file = (await get("/api/file?path=a.md")).body;
   assert.equal((await post("/api/save", { path: "a.md", hash: "stale", index: 2, raw: "X" })).status, 409);
   sh("add", "a.md");
-  const beforeEdit = readFileSync3(join4(root, "a.md"), "utf8");
+  const beforeEdit = readFileSync4(join5(root, "a.md"), "utf8");
   const saved = await post("/api/save", { path: "a.md", hash: file.hash, index: 2, raw: "Para one, edited." });
   assert.equal(saved.status, 200);
   assert.equal(staged(), "", "a save unstages and does not stage");
@@ -2742,21 +3033,21 @@ async function gitCase(temps) {
   await again.app.close();
   assert.equal((await post("/api/save", { path: "a.md", hash: saved.body.hash, index: 2, raw: "Para one, twice." })).status, 200);
   assert.equal((await post("/api/revert", { path: "a.md" })).status, 200);
-  assert.equal(readFileSync3(join4(root, "a.md"), "utf8"), beforeEdit, "revert restores the text before the first edit");
+  assert.equal(readFileSync4(join5(root, "a.md"), "utf8"), beforeEdit, "revert restores the text before the first edit");
   assert.deepEqual([(await row("a.md")).edited, staged()], [false, ""]);
   assert.equal((await post("/api/revert", { path: "a.md" })).status, 404, "nothing left to revert");
   const s2 = await post("/api/save", { path: "a.md", hash: sha(beforeEdit), index: 2, raw: "Para two." });
   assert.equal(s2.status, 200);
-  writeFileSync3(join4(root, "a.md"), readFileSync3(join4(root, "a.md"), "utf8") + "\nMore.\n");
+  writeFileSync4(join5(root, "a.md"), readFileSync4(join5(root, "a.md"), "utf8") + "\nMore.\n");
   assert.equal((await get("/api/file?path=a.md")).body.revertable, false);
   assert.equal((await post("/api/revert", { path: "a.md" })).status, 409);
-  writeFileSync3(join4(root, "a.md"), doc.replace("Para one.", "Para two."));
+  writeFileSync4(join5(root, "a.md"), doc.replace("Para one.", "Para two."));
   const now = (await get("/api/file?path=a.md")).body.hash;
   assert.equal((await post("/api/accept", { path: "a.md", hash: now })).status, 200);
   assert.deepEqual([(await row("a.md")).state, (await row("a.md")).edited], ["accepted", false]);
-  assert.equal(JSON.parse(readFileSync3(files.edits, "utf8"))["a.md"], void 0, "the snapshot is gone");
-  const base = readFileSync3(join4(root, "a.md"), "utf8");
-  const saveBlock = async (index, raw2) => post("/api/save", { path: "a.md", hash: sha(readFileSync3(join4(root, "a.md"), "utf8")), index, raw: raw2 });
+  assert.equal(JSON.parse(readFileSync4(files.edits, "utf8"))["a.md"], void 0, "the snapshot is gone");
+  const base = readFileSync4(join5(root, "a.md"), "utf8");
+  const saveBlock = async (index, raw2) => post("/api/save", { path: "a.md", hash: sha(readFileSync4(join5(root, "a.md"), "utf8")), index, raw: raw2 });
   await saveBlock(2, "Para X.");
   await saveBlock(2, "Para Y.");
   await saveBlock(4, "- z");
@@ -2765,50 +3056,50 @@ async function gitCase(temps) {
   const later = await restart();
   assert.equal((await get("/api/file?path=a.md", later.port)).body.edits.length, 2, "edits survive a restart");
   await later.app.close();
-  const withList = readFileSync3(join4(root, "a.md"), "utf8");
+  const withList = readFileSync4(join5(root, "a.md"), "utf8");
   assert.equal((await post("/api/revert", { path: "a.md", edit: editsNow[0].id, hash: sha(withList) })).status, 200);
-  assert.equal(readFileSync3(join4(root, "a.md"), "utf8"), withList.replace("Para Y.", "Para two."), "only that block changed");
+  assert.equal(readFileSync4(join5(root, "a.md"), "utf8"), withList.replace("Para Y.", "Para two."), "only that block changed");
   assert.equal(staged(), "", "reverting does not stage");
-  writeFileSync3(join4(root, "a.md"), readFileSync3(join4(root, "a.md"), "utf8").replace("- z", "- w"));
+  writeFileSync4(join5(root, "a.md"), readFileSync4(join5(root, "a.md"), "utf8").replace("- z", "- w"));
   assert.equal((await get("/api/file?path=a.md")).body.edits[0].ok, false);
   assert.equal((await post("/api/revert", { path: "a.md", edit: editsNow[1].id })).status, 409, "refused once the text changed");
-  writeFileSync3(join4(root, "a.md"), readFileSync3(join4(root, "a.md"), "utf8").replace("- w", "- z"));
+  writeFileSync4(join5(root, "a.md"), readFileSync4(join5(root, "a.md"), "utf8").replace("- w", "- z"));
   assert.equal((await post("/api/revert", { path: "a.md", edit: editsNow[1].id })).status, 200);
-  assert.equal(readFileSync3(join4(root, "a.md"), "utf8"), base, "both reverts give back the original bytes");
+  assert.equal(readFileSync4(join5(root, "a.md"), "utf8"), base, "both reverts give back the original bytes");
   assert.equal((await row("a.md")).edited, false, "the last revert clears Edited");
   await saveBlock(2, "Para Z.");
-  assert.equal((await post("/api/accept", { path: "a.md", hash: sha(readFileSync3(join4(root, "a.md"), "utf8")) })).status, 200);
+  assert.equal((await post("/api/accept", { path: "a.md", hash: sha(readFileSync4(join5(root, "a.md"), "utf8")) })).status, 200);
   assert.deepEqual((await get("/api/file?path=a.md")).body.edits, [], "Accept clears the edits");
   const anchor = makeAnchor("Para two.", 0, 4, ["A"]);
   await post("/api/drafts", { path: "a.md", drafts: [{ kind: "change", note: "shorter", anchor }] });
   await post("/api/drafts", { path: "b.md", drafts: [{ kind: "explain", note: "why?", anchor }] });
-  assert.equal(JSON.parse(readFileSync3(files.drafts, "utf8"))["a.md"][0].note, "shorter");
-  const stored = JSON.parse(readFileSync3(files.drafts, "utf8"));
-  writeFileSync3(files.drafts, JSON.stringify({ ...stored, "gone.md": [{ kind: "change", note: "x", anchor }] }));
+  assert.equal(JSON.parse(readFileSync4(files.drafts, "utf8"))["a.md"][0].note, "shorter");
+  const stored = JSON.parse(readFileSync4(files.drafts, "utf8"));
+  writeFileSync4(files.drafts, JSON.stringify({ ...stored, "gone.md": [{ kind: "change", note: "x", anchor }] }));
   assert.deepEqual(Object.keys((await get("/api/drafts")).body.drafts).sort(), ["a.md", "b.md"], "only listed files");
   assert.equal((await call(port, "GET", "/api/drafts", void 0, { host: "evil.example" })).status, 403);
-  writeFileSync3(files.drafts, JSON.stringify(stored));
-  const atSend = readFileSync3(join4(root, "a.md"), "utf8");
+  writeFileSync4(files.drafts, JSON.stringify(stored));
+  const atSend = readFileSync4(join5(root, "a.md"), "utf8");
   const sent = await post("/api/send", {});
   assert.deepEqual([sent.body.comments, sent.body.files, sent.body.locked], [2, 2, ["a.md"]]);
   assert.deepEqual(await states(), { "a.md": "working", "b.md": "queue", "c.html": "queue", "r \xE9 \xF1.md": "accepted" }, "explain-only files do not lock");
   assert.equal(staged(), "", "sending unstages");
   assert.deepEqual(lines, [`batch ${sent.body.id}: 2 comments on 2 files. Read it with: grep -F ${sent.body.id} '${files.batches}'`]);
-  assert.equal(readFileSync3(join4(stateDir, "events.log"), "utf8"), `old
+  assert.equal(readFileSync4(join5(stateDir, "events.log"), "utf8"), `old
 ${lines[0]}
 `, "the notice goes to the events log");
-  assert.equal(JSON.parse(readFileSync3(files.batches, "utf8")).items.length, 2);
-  assert.deepEqual(JSON.parse(readFileSync3(files.drafts, "utf8")), {});
-  const busy = await post("/api/accept", { path: "a.md", hash: sha(readFileSync3(join4(root, "a.md"), "utf8")) });
+  assert.equal(JSON.parse(readFileSync4(files.batches, "utf8")).items.length, 2);
+  assert.deepEqual(JSON.parse(readFileSync4(files.drafts, "utf8")), {});
+  const busy = await post("/api/accept", { path: "a.md", hash: sha(readFileSync4(join5(root, "a.md"), "utf8")) });
   assert.deepEqual([busy.status, busy.body.error], [409, "The agent is working on this file"], "locked: no accept");
   assert.equal((await post("/api/unaccept", { path: "a.md" })).status, 409, "locked: no undo accept");
-  assert.equal((await post("/api/save", { path: "a.md", hash: sha(readFileSync3(join4(root, "a.md"), "utf8")), index: 2, raw: "Y" })).status, 409, "locked: no edit");
+  assert.equal((await post("/api/save", { path: "a.md", hash: sha(readFileSync4(join5(root, "a.md"), "utf8")), index: 2, raw: "Y" })).status, 409, "locked: no edit");
   assert.equal((await post("/api/send", {})).status, 400, "nothing left to send");
   await post("/api/drafts", { path: "a.md", drafts: [{ kind: "change", note: "later", anchor }] });
   await post("/api/drafts", { path: "b.md", drafts: [{ kind: "explain", note: "now", anchor }] });
   const partial = await post("/api/send", {});
   assert.deepEqual([partial.body.comments, partial.body.locked], [1, []]);
-  assert.equal(JSON.parse(readFileSync3(files.batches, "utf8").trim().split("\n").at(-1)).items[0].path, "b.md");
+  assert.equal(JSON.parse(readFileSync4(files.batches, "utf8").trim().split("\n").at(-1)).items[0].path, "b.md");
   assert.deepEqual(Object.keys((await get("/api/drafts")).body.drafts), ["a.md"], "the locked file keeps its drafts");
   const ex = { kind: "explain", note: "why", anchor };
   const ch = { kind: "change", note: "fix", anchor };
@@ -2833,8 +3124,8 @@ ${lines[0]}
   assert.equal((await post("/api/ask", { text: "x", kind: "nope" })).status, 400);
   await post("/api/ask", { text: "" });
   assert.equal((await get("/api/files")).body.question, null, "an empty text clears it");
-  writeFileSync3(join4(root, "a.md"), doc.replace("Para one.", "Para, by the agent."));
-  assert.deepEqual((await post("/api/release", { path: join4(root, "a.md") })).body, { released: true, updated: true });
+  writeFileSync4(join5(root, "a.md"), doc.replace("Para one.", "Para, by the agent."));
+  assert.deepEqual((await post("/api/release", { path: join5(root, "a.md") })).body, { released: true, updated: true });
   const after = (await get("/api/files")).body.files.find((f) => f.path === "a.md");
   assert.deepEqual([after.state, after.updated], ["queue", true]);
   assert.equal((await get("/api/file?path=a.md")).body.since, atSend, "an updated file keeps its text from the send");
@@ -2846,7 +3137,7 @@ ${lines[0]}
   await post("/api/send", {});
   app.tick(0);
   assert.equal(await working(), 1, "unchanged stays locked");
-  writeFileSync3(join4(root, "a.md"), "edited\n");
+  writeFileSync4(join5(root, "a.md"), "edited\n");
   app.tick(1e3);
   assert.equal(await working(), 1, "still changing stays locked");
   app.tick(1200);
@@ -2864,12 +3155,12 @@ ${lines[0]}
   assert.deepEqual([(await states())["b.md"], indexed("b.md")], ["skipped", ""], "skipping touches no git state");
   await post("/api/skip", { path: "b.md", on: false });
   assert.equal((await states())["b.md"], "queue");
-  writeFileSync3(join4(root, "a.md"), doc.replace("Para one.", "Para, to reject."));
-  const aText = readFileSync3(join4(root, "a.md"), "utf8");
+  writeFileSync4(join5(root, "a.md"), doc.replace("Para one.", "Para, to reject."));
+  const aText = readFileSync4(join5(root, "a.md"), "utf8");
   await post("/api/skip", { path: "a.md", on: true });
   assert.equal((await post("/api/reject", { path: "a.md", hash: "stale" })).status, 409);
   assert.equal((await post("/api/reject", { path: "a.md", hash: sha(aText) })).status, 200);
-  assert.equal(readFileSync3(join4(root, "a.md"), "utf8"), sh("show", "HEAD:a.md"), "a tracked file goes back to HEAD");
+  assert.equal(readFileSync4(join5(root, "a.md"), "utf8"), sh("show", "HEAD:a.md"), "a tracked file goes back to HEAD");
   assert.deepEqual([(await states())["a.md"], indexed("a.md")], ["rejected", ""]);
   const shownGone = (await get("/api/file?path=a.md")).body;
   assert.deepEqual([shownGone.text, shownGone.locked, shownGone.rejected, shownGone.base], [aText, true, true, sh("show", "HEAD:a.md")], "a rejected file shows what was rejected, read-only, against the file now");
@@ -2877,21 +3168,21 @@ ${lines[0]}
   assert.equal((await post("/api/save", { path: "a.md", hash: sha(aText), index: 2, raw: "X" })).status, 409, "no editing a rejected file");
   assert.equal((await post("/api/reject", { path: "a.md", hash: sha(aText) })).status, 409, "already rejected");
   assert.equal((await post("/api/restore", { path: "a.md" })).status, 200);
-  assert.deepEqual([readFileSync3(join4(root, "a.md"), "utf8"), (await states())["a.md"]], [aText, "queue"], "restore puts it back, no longer skipped");
+  assert.deepEqual([readFileSync4(join5(root, "a.md"), "utf8"), (await states())["a.md"]], [aText, "queue"], "restore puts it back, no longer skipped");
   await post("/api/drafts", { path: "b.md", drafts: [{ kind: "change", note: "keep me", anchor }] });
-  const bText = readFileSync3(join4(root, "b.md"), "utf8");
+  const bText = readFileSync4(join5(root, "b.md"), "utf8");
   assert.equal((await post("/api/reject", { path: "b.md", hash: sha(bText) })).status, 200);
-  assert.equal(existsSync3(join4(root, "b.md")), false, "a new file is deleted");
+  assert.equal(existsSync3(join5(root, "b.md")), false, "a new file is deleted");
   assert.equal((await get("/api/drafts")).body.drafts["b.md"], void 0, "its drafts go with it");
   assert.equal((await post("/api/send", { paths: ["b.md"] })).status, 400, "nothing of a rejected file is sent");
   const afterRestart = await restart();
   assert.equal((await get("/api/files", afterRestart.port)).body.files.find((f) => f.path === "b.md")?.state, "rejected", "the backup survives a restart");
   await afterRestart.app.close();
   assert.equal((await post("/api/restore", { path: "b.md" })).status, 200);
-  assert.equal(readFileSync3(join4(root, "b.md"), "utf8"), bText);
+  assert.equal(readFileSync4(join5(root, "b.md"), "utf8"), bText);
   assert.equal((await get("/api/drafts")).body.drafts["b.md"][0].note, "keep me", "and its drafts come back");
   assert.equal((await post("/api/reject", { path: "b.md", hash: sha(bText) })).status, 200);
-  writeFileSync3(join4(root, "b.md"), "# B, regenerated\n");
+  writeFileSync4(join5(root, "b.md"), "# B, regenerated\n");
   assert.equal((await states())["b.md"], "queue");
   assert.equal((await post("/api/restore", { path: "b.md" })).status, 404);
   assert.equal((await post("/api/pr", {})).status, 409, "pending files: no PR");
@@ -2900,24 +3191,24 @@ ${lines[0]}
   const pr = await post("/api/pr", {});
   assert.equal(pr.status, 200);
   assert.equal(lines.at(-1), `pr ${pr.body.id}: the review is done; commit the ${pr.body.files} staged files and open a pull request.`);
-  assert.equal(readFileSync3(join4(stateDir, "events.log"), "utf8").trim().split("\n").at(-1), lines.at(-1), "the request goes to the events log");
+  assert.equal(readFileSync4(join5(stateDir, "events.log"), "utf8").trim().split("\n").at(-1), lines.at(-1), "the request goes to the events log");
   assert.equal(sh("rev-parse", "HEAD"), head, "Trove never commits");
   await app.close();
-  rmSync3(join4(tmpdir(), "trove-outside.txt"), { force: true });
+  rmSync4(join5(tmpdir(), "trove-outside.txt"), { force: true });
 }
 async function branchCase(temps) {
   const { root, sh } = newRepo("trove-branch-");
   temps.push(root);
-  for (const f of ["old.md", "same.md", "edit.md"]) writeFileSync3(join4(root, f), `# ${f}
+  for (const f of ["old.md", "same.md", "edit.md"]) writeFileSync4(join5(root, f), `# ${f}
 `);
   sh("add", ".");
   sh("commit", "-qm", "base");
   sh("checkout", "-qb", "feature");
-  writeFileSync3(join4(root, "edit.md"), "# edit.md\n\nOn the branch.\n");
-  writeFileSync3(join4(root, "new.md"), "# new\n");
+  writeFileSync4(join5(root, "edit.md"), "# edit.md\n\nOn the branch.\n");
+  writeFileSync4(join5(root, "new.md"), "# new\n");
   sh("add", ".");
   sh("commit", "-qm", "branch work");
-  writeFileSync3(join4(root, "old.md"), "# old.md, uncommitted\n");
+  writeFileSync4(join5(root, "old.md"), "# old.md, uncommitted\n");
   const probe = probeGit(root);
   assert.deepEqual(
     [probe.branch, probe.branches, probe.defaultBase, probe.local.map((b) => [b.name, b.current, b.worktree])],
@@ -2946,23 +3237,23 @@ async function branchCase(temps) {
   await app.close();
   const cli = await listen({ root, scope: "branch" });
   assert.equal(cli.app.settings().scope, "branch");
-  assert.equal(JSON.parse(readFileSync3(join4(cli.app.info().stateDir, "settings.json"), "utf8")).scope, "uncommitted");
+  assert.equal(JSON.parse(readFileSync4(join5(cli.app.info().stateDir, "settings.json"), "utf8")).scope, "uncommitted");
   await cli.app.close();
 }
 async function switchCase(temps) {
   const { root, sh } = newRepo("trove-switch-");
-  const wtDir = mkdtempSync(join4(tmpdir(), "trove-wt-"));
+  const wtDir = mkdtempSync(join5(tmpdir(), "trove-wt-"));
   temps.push(root, wtDir);
-  writeFileSync3(join4(root, "a.md"), "# A\n");
-  writeFileSync3(join4(root, "b.md"), "# B\n");
+  writeFileSync4(join5(root, "a.md"), "# A\n");
+  writeFileSync4(join5(root, "b.md"), "# B\n");
   sh("add", ".");
   sh("commit", "-qm", "base");
   sh("branch", "wt");
   sh("checkout", "-qb", "free");
-  writeFileSync3(join4(root, "a.md"), "# A on free\n");
+  writeFileSync4(join5(root, "a.md"), "# A on free\n");
   sh("commit", "-qam", "free");
   sh("checkout", "-q", "main");
-  rmSync3(wtDir, { recursive: true });
+  rmSync4(wtDir, { recursive: true });
   sh("worktree", "add", "-q", wtDir, "wt");
   const wtPath = realpathSync3(wtDir);
   const { app, port } = await listen({ root });
@@ -2980,10 +3271,10 @@ async function switchCase(temps) {
   assert.equal(probeGit(wtDir)?.branch, "wt", "a worktree is a repository of its own");
   const main2 = realpathSync3(root);
   assert.deepEqual([info.repo, info.worktree], [{ root: main2, name: basename4(main2) }, { path: main2, name: basename4(main2), branch: "main", main: true }]);
-  sh("worktree", "add", "-q", "-b", "nested", join4(root, ".claude/worktrees/nested"));
-  const nested = realpathSync3(join4(root, ".claude/worktrees/nested"));
-  mkdirSync3(join4(nested, "docs"));
-  const probe = probeGit(join4(nested, "docs"));
+  sh("worktree", "add", "-q", "-b", "nested", join5(root, ".claude/worktrees/nested"));
+  const nested = realpathSync3(join5(root, ".claude/worktrees/nested"));
+  mkdirSync4(join5(nested, "docs"));
+  const probe = probeGit(join5(nested, "docs"));
   assert.deepEqual([probe.branch, probe.repo, probe.worktree], ["nested", { root: main2, name: basename4(main2) }, { path: nested, name: "nested", branch: "nested", main: false }]);
   const rows = (list) => list.map((w) => [w.path, w.name, w.branch, w.current, w.main]).sort((a, b) => Number(b[4]) - Number(a[4]) || a[0].localeCompare(b[0]));
   assert.deepEqual(rows(probe.worktrees), rows([
@@ -2992,14 +3283,14 @@ async function switchCase(temps) {
     { path: nested, name: "nested", branch: "nested", current: true, main: false }
   ]));
   assert.equal(probe.worktrees[0].path, main2, "the main checkout first");
-  const nestedApp = await listen({ root: join4(nested, "docs") });
+  const nestedApp = await listen({ root: join5(nested, "docs") });
   const nestedSource = (await call(nestedApp.port, "GET", "/api/source")).body;
   assert.deepEqual([nestedSource.root, nestedSource.repo.name, nestedSource.worktree.name, nestedSource.worktree.main], [nested, basename4(main2), "nested", false]);
   await nestedApp.app.close();
   const again = await get("/api/git");
   assert.deepEqual([again.worktrees.length, again.dirty, again.worktree.main], [3, 0, true]);
-  writeFileSync3(join4(root, "b.md"), "# B, uncommitted\n");
-  writeFileSync3(join4(root, "a.md"), "# A, uncommitted\n");
+  writeFileSync4(join5(root, "b.md"), "# B, uncommitted\n");
+  writeFileSync4(join5(root, "a.md"), "# A, uncommitted\n");
   assert.equal((await get("/api/git")).dirty, 2);
   assert.deepEqual(
     (await get("/api/git")).worktrees.map((w) => [w.path, w.changes]).filter(([p]) => p !== nested),
@@ -3010,7 +3301,7 @@ async function switchCase(temps) {
   const refused = await sw("free");
   assert.equal(refused.status, 409);
   assert.match(refused.body.error, /overwritten/, "git's own message");
-  assert.deepEqual([(await get("/api/git")).branch, readFileSync3(join4(root, "a.md"), "utf8")], ["main", "# A, uncommitted\n"], "nothing changed");
+  assert.deepEqual([(await get("/api/git")).branch, readFileSync4(join5(root, "a.md"), "utf8")], ["main", "# A, uncommitted\n"], "nothing changed");
   sh("checkout", "--", "a.md");
   const busy = await sw("wt");
   assert.deepEqual([busy.status, busy.body.worktree], [409, wtPath], "a branch checked out elsewhere: open that worktree instead");
@@ -3023,7 +3314,7 @@ async function switchCase(temps) {
   const done = await sw("free");
   assert.deepEqual([done.status, done.body.branch, done.body.dirty], [200, "free", 1]);
   assert.deepEqual(
-    [await paths(), readFileSync3(join4(root, "a.md"), "utf8"), (await get("/api/source")).branch],
+    [await paths(), readFileSync4(join5(root, "a.md"), "utf8"), (await get("/api/source")).branch],
     [["b.md"], "# A on free\n", "free"],
     "the queue re-lists on the new branch; uncommitted work comes along, as with git switch"
   );
@@ -3035,12 +3326,12 @@ async function switchCase(temps) {
 async function agentCase(temps) {
   const { root } = newRepo("trove-agent-");
   temps.push(root);
-  writeFileSync3(join4(root, "a.md"), "# A\n\nText.\n");
+  writeFileSync4(join5(root, "a.md"), "# A\n\nText.\n");
   assert.deepEqual([alive(process.pid), alive(2 ** 22 + 7), agentAbove(process.pid, "other")], [true, false, null]);
   const opts = { root, agent: null };
   let { app, port } = await listen(opts);
   const source = async () => (await call(port, "GET", "/api/source")).body;
-  const none = { id: "other", label: "the agent", connected: false, at: null };
+  const none = { id: "other", label: "the agent", connected: false, at: null, waiting: null, since: null };
   assert.deepEqual([(await source()).agentInfo, (await source()).agent], [none, "other"], "nothing attached");
   assert.equal((await call(port, "POST", "/api/agent", { id: "cursor" })).status, 400);
   const codex = await call(port, "POST", "/api/agent", { id: "codex" });
@@ -3049,7 +3340,7 @@ async function agentCase(temps) {
   const anchor = { quote: "Text", prefix: "", suffix: "", path: [], raw: "" };
   await call(port, "POST", "/api/drafts", { path: "a.md", drafts: [{ kind: "change", note: "n", anchor }] });
   const sent = (await call(port, "POST", "/api/send", {})).body;
-  const hash = sha(readFileSync3(join4(root, "a.md"), "utf8"));
+  const hash = sha(readFileSync4(join5(root, "a.md"), "utf8"));
   assert.equal((await call(port, "POST", "/api/accept", { path: "a.md", hash })).body.error, "Codex is working on this file", "BUSY names it");
   await call(port, "POST", "/api/agent", { id: "other", label: "Cursor" });
   assert.equal((await call(port, "POST", "/api/accept", { path: "a.md", hash })).body.error, "Cursor is working on this file", "a label of its own");
@@ -3064,41 +3355,279 @@ async function agentCase(temps) {
   assert.deepEqual((await call(port, "POST", "/api/agent", { id: null })).body, none, "detach");
   appendFileSync2((await source()).eventsLog, "pr 7: opened\n");
   const activity = (await call(port, "GET", "/api/activity")).body.entries.map((e) => [e.kind, e.text, e.comments]);
-  assert.deepEqual(activity, [["batch", sent.id, 1], ["detach", "Claude", void 0], ["event", "pr 7: opened", void 0]]);
+  assert.deepEqual(activity, [
+    ["attach", "Codex", void 0],
+    ["batch", sent.id, 1],
+    ["attach", "Cursor", void 0],
+    ["attach", "Claude", void 0],
+    ["detach", "Claude", void 0],
+    ["event", "pr 7: opened", void 0]
+  ]);
   assert.equal((await call(port, "GET", "/api/activity", void 0, { host: "evil.example" })).status, 403);
   assert.equal((await call(port, "POST", "/api/accept", { path: "a.md", hash })).body.error, "The agent is working on this file");
   await app.close();
   ({ app, port } = await listen(opts));
   assert.deepEqual((await source()).agentInfo, none, "detach survives a restart");
+  const signal2 = async (body) => (await call(port, "POST", "/api/signal", body)).body;
+  assert.equal((await call(port, "POST", "/api/signal", { kind: "nap" })).status, 400);
+  assert.equal((await call(port, "POST", "/api/signal", { kind: "idle", text: 7 })).status, 400);
+  const asked = await signal2({ kind: "permission", text: " Bash " });
+  assert.deepEqual([asked.waiting, asked.waitingText, typeof asked.since], ["permission", "Bash", "string"]);
+  assert.deepEqual([(await signal2({ kind: "idle" })).waitingText, (await source()).agentInfo.waiting], [void 0, "idle"], "the last signal wins");
+  await call(port, "POST", "/api/message", { text: "Go on." });
+  assert.equal((await source()).agentInfo.waiting, null, "the user's message ends an idle wait");
+  await signal2({ kind: "question", text: "Which one?" });
+  await call(port, "POST", "/api/message", { text: "Also this." });
+  assert.equal((await source()).agentInfo.waiting, "question", "but not a question");
+  assert.equal((await signal2({ kind: "working" })).waiting, null);
   await app.close();
   ({ app, port } = await listen({ root, agent: "claude" }));
   assert.deepEqual([(await source()).agentInfo.label, (await source()).agentInfo.connected], ["Claude", true], "the serving agent is attached");
   await app.close();
 }
-function notARepo(temps) {
-  const root = mkdtempSync(join4(tmpdir(), "trove-plain-"));
+async function historyCase(temps) {
+  const { root } = newRepo("trove-history-");
   temps.push(root);
-  writeFileSync3(join4(root, "a.md"), "# A\n");
+  writeFileSync4(join5(root, "a.md"), "# A\n\nText.\n");
+  writeFileSync4(join5(root, "b.md"), "# B\n\nText.\n");
+  const anchor = { quote: "Text", prefix: "", suffix: "", path: [], raw: "" };
+  mkdirSync4(join5(root, ".git", "trove"));
+  appendFileSync2(
+    join5(root, ".git", "trove", "batches.jsonl"),
+    `${JSON.stringify({ id: "old1", sentAt: "2026-01-01T00:00:00.000Z", items: [{ path: "a.md", kind: "explain", note: "Why?", anchor }] })}
+`
+  );
+  let { app, port } = await listen({ root, quietMs: 50 });
+  const post = (path, body) => call(port, "POST", path, body);
+  const entries = async () => (await call(port, "GET", "/api/activity")).body.entries;
+  const { eventsLog, stateDir } = (await call(port, "GET", "/api/source")).body;
+  const log = join5(stateDir, "activity.jsonl");
+  const events = () => existsSync3(eventsLog) ? readFileSync4(eventsLog, "utf8") : "";
+  assert.deepEqual((await entries()).map((e) => [e.id, e.kind, e.paths]), [["old1", "batch", ["a.md"]]], "an older state dir: its sends");
+  assert.equal((await call(port, "GET", "/api/batch?id=old1")).body.items[0].note, "Why?");
+  assert.equal((await call(port, "GET", "/api/batch?id=nope")).status, 404);
+  const long = 'Line one, "quoted".\n\n- a list\n- of `code`\n';
+  const said = (await post("/api/message", { text: long, from: "agent", paths: [join5(root, "a.md"), "a.md"], re: "old1" })).body;
+  assert.deepEqual([said.kind, said.from, said.body, said.paths, said.re, said.text], ["message", "agent", long.trim(), ["a.md"], "old1", ""]);
+  assert.equal((await post("/api/message", { text: "x", paths: ["nope.md"] })).status, 404);
+  assert.equal((await post("/api/message", { text: "  " })).status, 400);
+  assert.equal((await post("/api/message", { text: "x", re: "not an id!" })).status, 400);
+  assert.equal((await post("/api/message", { text: "x", from: "robot" })).status, 400);
+  assert.equal(events(), "");
+  const mine = (await post("/api/message", { text: "Thanks.\nAlso: shorten it.", re: said.id })).body;
+  assert.deepEqual([mine.from, mine.re], ["user", said.id]);
+  assert.equal(events(), `message ${mine.id}: from the reviewer, re ${said.id}. Read it with: grep -F ${mine.id} '${log}'
+`);
+  assert.deepEqual(readFileSync4(log, "utf8").split("\n").filter((l3) => l3.includes(mine.id)).map((l3) => JSON.parse(l3).body), ["Thanks.\nAlso: shorten it."]);
+  const plain = (await post("/api/message", { text: "Start on b.md", paths: ["b.md"] })).body;
+  assert.ok(events().endsWith(`message ${plain.id}: from the reviewer. Read it with: grep -F ${plain.id} '${log}'
+`));
+  for (const p of ["a.md", "b.md"]) await post("/api/drafts", { path: p, drafts: [{ kind: "change", note: "n", anchor }] });
+  const sent = (await post("/api/send", {})).body;
+  writeFileSync4(join5(root, "a.md"), "# A\n\nBetter text.\n");
+  assert.equal((await post("/api/release", { path: "a.md", note: 7 })).status, 400);
+  assert.deepEqual((await post("/api/release", { path: "a.md", note: "Rewrote the **intro**." })).body, { released: true, updated: true });
+  writeFileSync4(join5(root, "b.md"), "# B\n\nShorter.\n");
+  app.tick(Date.now());
+  app.tick(Date.now() + 100);
+  assert.deepEqual((await post("/api/release", { path: "b.md", note: "Shortened it." })).body, { released: false, updated: true });
+  await post("/api/release", { path: "b.md", note: "And again." });
+  const shape = (es) => es.map((e) => [e.kind, e.from ?? null, e.body ?? e.text, e.paths ?? null]);
+  const expected = [
+    ["batch", null, "old1", ["a.md"]],
+    ["message", "agent", long.trim(), ["a.md"]],
+    ["message", "user", "Thanks.\nAlso: shorten it.", null],
+    ["message", "user", "Start on b.md", ["b.md"]],
+    ["batch", null, sent.id, ["a.md", "b.md"]],
+    ["release", "agent", "Rewrote the **intro**.", ["a.md"]],
+    ["release", "agent", "Shortened it.", ["b.md"]],
+    ["message", "agent", "And again.", ["b.md"]]
+  ];
+  assert.deepEqual(shape(await entries()), expected, "events-log lines for batches and messages are not entries of their own");
+  assert.deepEqual((await entries()).filter((e) => e.kind === "batch").map((e) => e.counts), [{ "a.md": 1 }, { "a.md": 1, "b.md": 1 }], "comments per file");
+  await app.close();
+  ({ app, port } = await listen({ root }));
+  assert.deepEqual(shape(await entries()), expected, "all of it survives a restart, each send once");
+  await app.close();
+}
+async function folderCase(temps) {
+  const root = realpathSync3(mkdtempSync(join5(tmpdir(), "trove-folder-")));
+  temps.push(root);
+  const seed = {
+    "a.md": "# A\n\nOne.\n",
+    "docs/b.md": "# B\n",
+    "docs/c.html": "<p>C</p>\n",
+    ".hidden/x.md": "# x\n",
+    "node_modules/y/z.md": "# z\n",
+    "gen/g.md": "# g\n",
+    "notes.txt": "notes\n",
+    "pic.png": "x"
+  };
+  const plant = (dir, files) => {
+    for (const [p, text] of Object.entries(files)) {
+      mkdirSync4(dirname3(join5(dir, p)), { recursive: true });
+      writeFileSync4(join5(dir, p), text);
+    }
+  };
+  plant(root, seed);
   assert.equal(probeGit(root), null);
-  assert.throws(() => createApp({ root, log: () => {
-  } }), { message: `not a git repository: ${root}` });
+  const opts = { root, exclude: ["gen/**"] };
+  let { app, port } = await listen(opts);
+  temps.push(app.info().stateDir);
+  assert.equal(dirname3(app.info().stateDir), join5(homedir2(), ".trove", "folders"), "state outside the folder");
+  const get = async (path, p = port) => (await call(p, "GET", path)).body;
+  const post = (path, body) => call(port, "POST", path, body);
+  const rows = async (p = port) => Object.fromEntries((await get("/api/files", p)).files.map((f) => [f.path, [f.state, f.updated, f.edited, f.drafts].join(" ")]));
+  const info = await get("/api/source");
+  assert.deepEqual(
+    [info.kind, info.branch, info.base, info.scope, info.repo, info.worktree],
+    ["folder", null, null, "uncommitted", { root, name: basename4(root) }, { path: root, name: basename4(root), branch: null, main: true }]
+  );
+  assert.deepEqual(
+    await rows(),
+    { "a.md": "queue false false 0", "docs/b.md": "queue false false 0", "docs/c.html": "queue false false 0" },
+    "every doc of the enabled types, recursively: no dot-folders, node_modules, excluded paths or other types"
+  );
+  assert.equal((await call(port, "GET", "/api/git")).status, 404);
+  assert.equal((await post("/api/switch", { branch: "main" })).status, 404);
+  assert.equal((await get("/api/file?path=a.md")).base, null, "nothing to mark new against before an update");
+  const a = await get("/api/file?path=a.md");
+  const refused = [
+    ["accept", { path: "a.md", hash: a.hash }],
+    ["unaccept", { path: "a.md" }],
+    ["accept-all", { paths: ["a.md"] }],
+    ["skip", { path: "a.md", on: true }],
+    ["reject", { path: "a.md", hash: a.hash }],
+    ["pr", {}]
+  ];
+  for (const [route, body] of refused) assert.equal((await post(`/api/${route}`, body)).status, 409, route);
+  assert.deepEqual(
+    [(await post("/api/accept", { path: "a.md", hash: a.hash })).body.error, readFileSync4(join5(root, "a.md"), "utf8")],
+    [`No accept in a folder: ${basename4(root)} is edited in place`, seed["a.md"]]
+  );
+  const anchor = { quote: "B", prefix: "", suffix: "", path: [], raw: "" };
+  await post("/api/drafts", { path: "docs/b.md", drafts: [{ kind: "change", note: "n", anchor }] });
+  assert.equal((await rows())["docs/b.md"], "queue false false 1");
+  assert.deepEqual((await post("/api/send", {})).body.locked, ["docs/b.md"]);
+  assert.equal((await rows())["docs/b.md"], "working false false 0");
+  writeFileSync4(join5(root, "docs/b.md"), "# B, by the agent\n");
+  assert.deepEqual((await post("/api/release", { path: join5(root, "docs/b.md") })).body, { released: true, updated: true });
+  assert.deepEqual([(await get("/api/file?path=docs%2Fb.md")).since, (await rows())["docs/b.md"]], [seed["docs/b.md"], "queue true false 0"]);
+  await post("/api/drafts", { path: "docs/b.md", drafts: [{ kind: "change", note: "again", anchor }] });
+  await post("/api/send", {});
+  assert.deepEqual((await post("/api/release", { path: "docs/b.md" })).body, { released: true, updated: false });
+  assert.equal((await rows())["docs/b.md"], "queue false false 0");
+  const saved = await post("/api/save", { path: "docs/c.html", hash: sha(seed["docs/c.html"]), raw: "<p>C2</p>\n" });
+  assert.deepEqual([saved.status, readFileSync4(join5(root, "docs/c.html"), "utf8"), (await rows())["docs/c.html"]], [200, "<p>C2</p>\n", "queue false false 0"]);
+  assert.equal((await post("/api/revert", { path: "docs/c.html" })).status, 404);
+  writeFileSync4(join5(root, "new.md"), "# New\n");
+  assert.equal((await rows())["new.md"], "queue false false 0", "a new file lists on the next request");
+  const vs = async (p) => (await get(`/api/versions?path=${encodeURIComponent(p)}`)).map((v) => `${v.n} ${v.by}`);
+  assert.deepEqual(await vs("docs/b.md"), ["2 agent", "1 original"], "the release: the text at send, then the agent's");
+  assert.deepEqual(await vs("docs/c.html"), ["2 user", "1 original"], "a Save is the user's");
+  assert.equal(a.version, 1);
+  const two = "# A\n\nTwo.\n";
+  assert.equal((await post("/api/save", { path: "a.md", hash: a.hash, raw: two })).status, 200, "markdown saves whole without an index");
+  assert.equal(readFileSync4(join5(root, "a.md"), "utf8"), two);
+  const three = "# A\n\nThree.\n";
+  writeFileSync4(join5(root, "a.md"), three);
+  const conflict = await post("/api/save", { path: "a.md", hash: sha(two), raw: "# A\n\nMine.\n" });
+  assert.deepEqual([conflict.status, conflict.body.hash, readFileSync4(join5(root, "a.md"), "utf8")], [409, sha(three), three], "no silent overwrite");
+  assert.deepEqual(await vs("a.md"), ["3 agent", "2 user", "1 original"]);
+  assert.deepEqual([(await get("/api/version?path=a.md&n=2")).text, (await get("/api/file?path=a.md")).version], [two, 3]);
+  assert.equal((await call(port, "GET", "/api/version?path=a.md&n=9")).status, 404);
+  assert.equal((await post("/api/save", { path: "a.md", hash: conflict.body.hash, raw: "# A\n\nMine.\n" })).status, 200, "Save mine");
+  assert.deepEqual((await vs("a.md"))[0], "4 user");
+  for (let k2 = 5; k2 <= 60; k2++) await post("/api/save", { path: "a.md", hash: sha(readFileSync4(join5(root, "a.md"), "utf8")), raw: `# A
+
+${k2}
+` });
+  const kept = await vs("a.md");
+  assert.deepEqual([kept.length, kept[0], kept.at(-1)], [50, "60 user", "11 user"], "numbering goes on past the cap");
+  const onDisk = readFileSync4(join5(root, "a.md"), "utf8");
+  const edit = { text: "# A\n\nUnsaved.\n", base: sha(onDisk), was: onDisk };
+  assert.equal((await post("/api/unsaved", { path: "a.md", edit: { text: 1 } })).status, 400);
+  assert.equal((await post("/api/unsaved", { path: "a.md", edit })).status, 200);
+  await app.close();
+  ({ app, port } = await listen(opts));
+  assert.deepEqual(await get("/api/unsaved"), { "a.md": edit }, "kept across a restart");
+  assert.equal((await post("/api/save", { path: "a.md", hash: edit.base, raw: edit.text })).status, 200);
+  assert.deepEqual(await get("/api/unsaved"), {}, "Save clears it");
+  await post("/api/unsaved", { path: "a.md", edit });
+  await post("/api/unsaved", { path: "a.md", edit: null });
+  assert.deepEqual(await get("/api/unsaved"), {}, "Don't save clears it");
+  await app.close();
+  ({ app, port } = await listen({ root: join5(root, "notes.txt") }));
+  assert.deepEqual([app.info().root, (await rows())["notes.txt"], app.settings().types.txt], [root, "queue false false 0", true]);
+  await app.close();
+  const { root: repo, sh } = newRepo("trove-folder-git-");
+  temps.push(repo);
+  plant(repo, { ".gitignore": "docs/out/\n", "docs/a.md": "# A\n", "docs/out/x.md": "# x\n" });
+  sh("add", ".");
+  sh("commit", "-qm", "a");
+  plant(repo, { "docs/new.md": "# new\n" });
+  const docs = await listen({ root: join5(repo, "docs"), folder: true });
+  temps.push(docs.app.info().stateDir);
+  assert.deepEqual(Object.keys(await rows(docs.port)), ["a.md", "new.md"], ".gitignore holds");
+  const edited = await call(docs.port, "POST", "/api/save", { path: "a.md", hash: sha("# A\n"), index: 0, raw: "# A, edited" });
+  assert.equal(edited.status, 200);
+  await call(docs.port, "POST", "/api/drafts", { path: "new.md", drafts: [{ kind: "change", note: "n", anchor }] });
+  assert.equal((await call(docs.port, "POST", "/api/send", {})).status, 200);
+  assert.equal((await call(docs.port, "POST", "/api/accept", { path: "a.md", hash: edited.body.hash })).status, 409);
+  assert.deepEqual(
+    [sh("diff", "--cached", "--name-only"), sh("status", "--porcelain"), existsSync3(join5(repo, ".git", "trove"))],
+    ["", " M docs/a.md\n?? docs/new.md\n", false],
+    "nothing staged, nothing in the git dir: only the edit itself"
+  );
+  await docs.app.close();
+  const out2 = await listen({ root: join5(repo, "docs/out"), folder: true });
+  temps.push(out2.app.info().stateDir);
+  assert.deepEqual(Object.keys(await rows(out2.port)), ["x.md"], "a folder git ignores whole is walked");
+  await out2.app.close();
+  assert.equal(createApp({ root: join5(repo, "docs"), log: () => {
+  } }).info().kind, "git", "without folder, the repository");
 }
 
 // bin/trove.mjs
-var USAGE = 'usage: trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>] [--force] | attach [--root <repo> | --port N] [--agent claude|codex|other] | detach [--root <repo> | --port N] | info [--root <repo> | --port N] | done <file> [--root <repo> | --port N] | ask "<question>" | reply "<summary>" | ask --clear [--root <repo> | --port N] | --selftest';
-var here = dirname3(fileURLToPath(import.meta.url));
+var USAGE = 'usage: trove serve [--root <path>] [--folder] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>] [--force] | attach [--root <repo> | --port N] [--agent claude|codex|other] | detach [--root <repo> | --port N] | info [--root <repo> | --port N] | done <file> [--note "<markdown>" | --note -] [--root <repo> | --port N] | say "<markdown>" | say - [--file <path>]... [--re <entry id>] [--root <repo> | --port N] | ask "<question>" | reply "<summary>" | ask --clear [--root <repo> | --port N] | --selftest';
+var here = dirname4(fileURLToPath(import.meta.url));
 var invoked = () => {
   const script = process.argv[1] ?? "";
   if (basename5(script) === "trove") return "trove";
   const path = realpathSync4(script);
   return /[\s'"$`\\]/.test(path) ? `node '${path.replaceAll("'", String.raw`'\''`)}'` : `node ${path}`;
 };
-var defaultUi = () => [join5(here, "ui"), resolve2(here, "../../ui/dist")].find((d) => existsSync4(join5(d, "index.html"))) ?? null;
-async function firstLine(port) {
-  const [source, files, git] = await Promise.all(["/api/source", "/api/files", "/api/git"].map((p) => call(port, "GET", p)));
-  if ([source, files, git].some((r) => r.status !== 200) || !source.body?.eventsLog) throw new Error(`port ${port} is not a Trove server`);
+var defaultUi = () => [join6(here, "ui"), resolve2(here, "../../ui/dist")].find((d) => existsSync4(join6(d, "index.html"))) ?? null;
+async function firstLine(port, file = null) {
+  const [source, files] = await Promise.all(["/api/source", "/api/files"].map((p) => call(port, "GET", p)));
+  const folder = source.body?.kind === "folder";
+  const git = folder ? null : await call(port, "GET", "/api/git");
+  if ([source, files, git ?? source].some((r) => r.status !== 200) || !source.body?.eventsLog) throw new Error(`port ${port} is not a Trove server`);
   const queued = files.body.files.filter((f) => !f.staged).length;
-  return `reviewing ${queued} files on ${git.body.branch ?? git.body.head}${git.body.worktree && !git.body.worktree.main ? ` (${git.body.worktree.name})` : ""} at http://127.0.0.1:${port}; notices in ${source.body.eventsLog}; after each file run: ${invoked()} done <file> --port ${port}`;
+  const what = git ? `reviewing ${queued} files on ${git.body.branch ?? git.body.head}${git.body.worktree && !git.body.worktree.main ? ` (${git.body.worktree.name})` : ""}` : `editing ${files.body.files.length} files in ${source.body.name}`;
+  return `${what} at http://127.0.0.1:${port}${file ? `/?file=${encodeURIComponent(file)}` : ""}; notices in ${source.body.eventsLog}; after each file run: ${invoked()} done <file> --port ${port}`;
+}
+var NOTIFIED = { permission_prompt: "permission", elicitation_dialog: "question", idle_prompt: "idle" };
+async function signal(kind, values) {
+  let input = {};
+  if (!process.stdin.isTTY) {
+    const text2 = await Promise.race([stdin(process.stdin).catch(() => ""), new Promise((ok) => setTimeout(ok, 1e3, "").unref())]);
+    process.stdin.destroy();
+    try {
+      input = JSON.parse(String(text2)) ?? {};
+    } catch {
+    }
+  }
+  const what = kind === "notification" ? NOTIFIED[
+    /** @type {keyof typeof NOTIFIED} */
+    input.notification_type
+  ] : kind;
+  if (!["permission", "question", "idle", "working"].includes(what ?? "")) return;
+  const root = values.root !== "." ? values.root : process.env.CLAUDE_PROJECT_DIR || input.cwd || ".";
+  const port = values.port ? Number(values.port) : (await running(root))?.port;
+  if (!port) return;
+  const text = typeof input.tool_name === "string" ? input.tool_name : typeof input.message === "string" ? input.message : void 0;
+  await call(port, "POST", "/api/signal", { kind: what, ...text ? { text } : {} });
 }
 async function main() {
   const [command, ...args] = process.argv.slice(2);
@@ -3114,15 +3643,21 @@ async function main() {
       root: { type: "string", default: "." },
       port: { type: "string" },
       force: { type: "boolean" },
+      folder: { type: "boolean" },
       exclude: { type: "string", multiple: true },
       scope: { type: "string" },
       base: { type: "string" },
       ui: { type: "string" },
       clear: { type: "boolean" },
-      agent: { type: "string", default: "claude" }
+      agent: { type: "string", default: "claude" },
+      note: { type: "string" },
+      file: { type: "string", multiple: true },
+      re: { type: "string" }
     }
   });
-  const finds = ["attach", "detach", "info", "done", "ask", "reply"].includes(command);
+  if (command === "signal") return signal(positionals[0], values).catch(() => {
+  });
+  const finds = ["attach", "detach", "info", "done", "say", "ask", "reply"].includes(command);
   const port = values.port ? Number(values.port) : finds ? (await running(values.root))?.port : 4824;
   if (port === void 0) {
     console.log(`nothing is serving ${resolve2(values.root)}: start one with trove serve, or pass --port`);
@@ -3137,10 +3672,19 @@ async function main() {
     process.exitCode = r.status === 200 ? 0 : 1;
     return;
   }
+  const pathOf = (p) => existsSync4(p) ? resolve2(p) : p;
   if (command === "done" && positionals[0]) {
-    const file = existsSync4(positionals[0]) ? resolve2(positionals[0]) : positionals[0];
-    const r = await call(port, "POST", "/api/release", { path: file }).catch(failed);
-    console.log(r.status === 200 ? r.body.released ? `released ${positionals[0]}` : `${positionals[0]} was not locked` : `done failed: ${r.body?.error ?? r.status}`);
+    const note = values.note === "-" ? await stdin(process.stdin) : values.note;
+    const r = await call(port, "POST", "/api/release", { path: pathOf(positionals[0]), ...note ? { note } : {} }).catch(failed);
+    const noted = note ? ", with your note in History" : "";
+    console.log(r.status === 200 ? r.body.released ? `released ${positionals[0]}${noted}` : `${positionals[0]} was not locked${noted}` : `done failed: ${r.body?.error ?? r.status}`);
+    process.exitCode = r.status === 200 ? 0 : 1;
+    return;
+  }
+  if (command === "say" && positionals.length) {
+    const text = positionals.join(" ") === "-" ? await stdin(process.stdin) : positionals.join(" ");
+    const r = await call(port, "POST", "/api/message", { text, from: "agent", paths: (values.file ?? []).map(pathOf), ...values.re ? { re: values.re } : {} }).catch(failed);
+    console.log(r.status === 200 ? `message ${r.body.id} is in History` : `say failed: ${r.body?.error ?? r.status}`);
     process.exitCode = r.status === 200 ? 0 : 1;
     return;
   }
@@ -3168,9 +3712,11 @@ async function main() {
     return;
   }
   const cmd = invoked();
+  const root = resolve2(values.root);
   try {
-    const { port: bound } = await serve({
-      root: resolve2(values.root),
+    const { app, port: bound } = await serve({
+      root,
+      folder: values.folder,
       port,
       force: values.force,
       by: "cli",
@@ -3183,7 +3729,8 @@ async function main() {
       uiDir: values.ui ? resolve2(values.ui) : defaultUi(),
       doneCommand: (p) => `${cmd} done <file> --port ${p}`
     });
-    console.log(await firstLine(bound));
+    const file = statSync3(root).isFile() ? relative2(app.info().root, realpathSync4(root)).split(sep2).join("/") : null;
+    console.log(await firstLine(bound, file));
   } catch (error) {
     console.log(error.code === "EADDRINUSE" ? `port ${port} is busy: another session is probably serving. Stop it, or pass --port.` : /^(not a git repository|Trove is already serving)/.test(error.message) ? error.message : `server failed: ${error.message}`);
     process.exitCode = 1;
