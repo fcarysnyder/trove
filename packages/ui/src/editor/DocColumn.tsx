@@ -2,10 +2,10 @@ import { findAnchor, type AnchorHit } from '@trove/core/anchor';
 import type { DiffOp } from '@trove/core/anchor';
 import { GitBranch, MessageSquare, PanelLeft, PanelRight, Pencil, Undo2 } from 'lucide-react';
 import { recentName } from '@trove/core/types';
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { status } from '@/lib/status';
@@ -286,17 +286,20 @@ function DocView() {
 /**
  * The page shows the new text with its new words tinted; the card shows the old text, the words
  * that were cut or replaced struck through and, where new words went in, their badge's number.
- * Below the block, else above it, else at the pointer.
+ * Below the block, else above it, else (a block taller than the room either side) at the pointer; capped to the window.
  */
 function DiffCard({ card }: { card: Card }) {
   const ref = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const el = ref.current!;
-    const r = card.target.getBoundingClientRect();
-    const h = el.offsetHeight;
-    const top = r.bottom + 6 + h <= innerHeight ? r.bottom + 6 : r.top - 6 - h >= 0 ? r.top - 6 - h : Math.min(card.y + 16, innerHeight - h - 8);
-    Object.assign(el.style, { left: `${r.left}px`, top: `${top}px`, width: `${Math.min(r.width, 640)}px`, visibility: 'visible' });
-  }, [card]);
+  const anchor = useMemo(() => ({
+    current: {
+      getBoundingClientRect() {
+        const r = card.target.getBoundingClientRect();
+        const h = (ref.current?.scrollHeight ?? 0) + 14; // the card's natural height, its offset and the window's margin
+        return innerHeight - r.bottom >= h || r.top >= h ? r : new DOMRect(r.x, card.y + 10, r.width, 0);
+      },
+      contextElement: card.target,
+    },
+  }), [card]);
   let k = 0;
   const parts = card.ops.map((o, j) => {
     if (o.op === '=') {
@@ -310,12 +313,16 @@ function DiffCard({ card }: { card: Card }) {
     const cls = card.mineN?.has(num) ? 'mine' : card.kind;
     return <span key={j} className={`new-n ${cls}`} data-n={num} />;
   });
+  const keep = (e: Event) => e.preventDefault(); // a preview: it never takes focus
   return (
-    <div ref={ref} aria-hidden style={{ visibility: 'hidden' }}
-      className="pointer-events-none fixed z-20 max-w-[640px] rounded-lg border bg-popover px-3 py-2 text-[13px] whitespace-pre-wrap text-body shadow-lg [overflow-wrap:anywhere]">
-      <div className="mb-1 text-xs font-medium text-muted-foreground">{card.label}</div>
-      {parts}
-    </div>
+    <Popover open>
+      <PopoverAnchor virtualRef={anchor} />
+      <PopoverContent ref={ref} aria-hidden side="bottom" align="start" sideOffset={6} onOpenAutoFocus={keep} onCloseAutoFocus={keep}
+        className="pointer-events-none block w-(--radix-popover-trigger-width) max-w-[640px] overflow-hidden px-3 py-2 text-[13px] whitespace-pre-wrap text-body shadow-lg [overflow-wrap:anywhere]">
+        <div className="mb-1 text-xs font-medium text-muted-foreground">{card.label}</div>
+        {parts}
+      </PopoverContent>
+    </Popover>
   );
 }
 
