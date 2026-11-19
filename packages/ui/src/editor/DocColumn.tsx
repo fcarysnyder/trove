@@ -24,6 +24,7 @@ import { applyLayers, paint, placeBars, textOf, toRange, type Marks } from './do
 import { docModel } from './doc/model';
 import { onKey } from './keys';
 import { copyPath, PathMenu } from './PathMenu';
+import { useNeedsYou } from './ChangesColumn';
 
 export function DocColumn() {
   const current = useStore((s) => s.current);
@@ -31,6 +32,7 @@ export function DocColumn() {
   const showNew = useStore((s) => s.showNew);
   const editing = useStore((s) => s.editing);
   const question = useStore((s) => s.question);
+  const needs = useNeedsYou();
   const n = useNames();
   const model = current && docModel(current);
   // A folder has nothing to mark new against but the text before the agent's last update.
@@ -65,6 +67,11 @@ export function DocColumn() {
           </TooltipTrigger>
           <TooltipContent>{newTip}</TooltipContent>
         </Tooltip>
+        {hidden.changes && needs && (
+          <Button variant="outline" size="sm" className="border-dirty/50 bg-dirty/10 text-dirty hover:bg-dirty/20 hover:text-dirty" onClick={() => togglePanel('changes', false)}>
+            {n.Agent} {needs === 'question' ? 'has a question' : 'needs you'}
+          </Button>
+        )}
         {hidden.changes && (
           <IconButton side="bottom" label={[`Show agent`, question && (question.kind === 'reply' ? `${n.who} replied` : `${n.who} has a question`), own && plural(own, 'change')].filter(Boolean).join(', ')}
             tip="Show agent (])" className="relative" onClick={() => togglePanel('changes', false)}>

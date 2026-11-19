@@ -50,7 +50,6 @@ export interface State {
   showNew: boolean;
   hidden: { files: boolean; changes: boolean };
   activity: Activity[]; // the top of the Changes thread, loaded while the column shows
-  reviewer: string | null; // the user's git name, for History's avatar
   committedOpen: boolean;
   rejectedOpen: boolean;
   rejecting: boolean; // the open file's Reject confirm is showing
@@ -84,7 +83,6 @@ let state: State = {
   showNew: load<boolean | null>('show-new', null) ?? true,
   hidden: { files: load<boolean>('hide-files', false) === true, changes: load<boolean>('hide-changes', false) === true},
   activity: [],
-  reviewer: null,
   committedOpen: false,
   rejectedOpen: false,
   rejecting: false,

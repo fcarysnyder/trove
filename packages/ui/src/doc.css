@@ -82,23 +82,12 @@ textarea.quiet:focus { outline: 1px solid var(--border); outline-offset: 4px; }
   .flash { animation: none; }
 }
 
-/* History's messages: markdown in the document's look, tightened for the Agent pane. */
+/* History's messages: class="block-body msg", the document's markdown, smaller and tighter for the Agent pane. */
 .msg { font-size: 13px; overflow-wrap: anywhere; }
 .msg > :first-child { margin-top: 0; }
 .msg > :last-child { margin-bottom: 0; }
 .msg :is(p, pre, table, blockquote, hr, ul, ol) { margin: 0.5em 0; }
-.msg :is(h1, h2, h3, h4, h5, h6) { color: var(--foreground); font-size: 13px; font-weight: 600; margin: 0.75em 0 0.25em; }
-.msg strong { color: var(--foreground); }
+.msg :is(h1, h2, h3, h4, h5, h6) { font-size: 13px; font-weight: 600; margin: 0.75em 0 0.25em; }
 .msg :is(ul, ol) { padding-left: 20px; }
-.msg ul { list-style: disc; }
-.msg ol { list-style: decimal; }
-.msg :is(ul, ol) :is(ul, ol) { margin: 0; }
-.msg a { color: var(--foreground); text-decoration: underline; }
-.msg code { background: var(--card); border-radius: var(--radius-sm); padding: 1px 4px; font-size: 12px; font-family: var(--font-mono); }
-.msg pre { background: var(--card); padding: 8px; border-radius: var(--radius); overflow: auto; }
-.msg pre code { padding: 0; }
-.msg table { display: block; overflow-x: auto; border-collapse: collapse; }
-.msg :is(th, td) { border: 1px solid var(--border); padding: 2px 6px; vertical-align: top; }
-.msg blockquote { border-left: 2px solid var(--border); padding-left: 8px; }
-.msg hr { border: 0; border-top: 1px solid var(--border); }
-.msg img { max-width: 100%; }
+.msg code { font-size: 12px; }
+.msg pre { padding: 8px; }
