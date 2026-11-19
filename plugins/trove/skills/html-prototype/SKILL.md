@@ -56,6 +56,8 @@ touches a part you have not read.
 - A file that is not a prototype (a report, an article, generated output) still gets the same
   care: its own styles and markup, nothing foreign.
 
+- A control that is for whoever builds the page, not its users (a dev-tools toggle, a state switcher), gets `data-trove-toolbar="<label>"`: Trove hides it on the page and offers it on its own toolbar.
+
 ## Finding an element target
 
 An element comment's anchor has `targets`: one entry per element, in the order the user picked

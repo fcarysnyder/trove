@@ -12,7 +12,7 @@ summary paragraph and sections are what readers see there.
 Trove is no longer only for git repositories. A plain folder or a single
 file opens as an editor: every document in the folder, unsaved edits you Save
 or don't, and numbered versions of every save and every change the agent
-makes. The Agent pane becomes a chat with a thread per file. The agent's
+makes. The Agent pane becomes a chat with a thread per file, and comments and edits still to send are its Changes. The agent's
 terminal is a drawer that opens itself when the agent needs you.
 HTML files gain Pointer and Circle tools for commenting on elements.
 
@@ -29,6 +29,7 @@ HTML files gain Pointer and Circle tools for commenting on elements.
 - With the agent in Trove's terminal, a Chat message is typed straight into it, and a slash command runs there with the drawer open. Chat shows when the agent is working, prompts you to answer in the terminal when it asks something, and counts the threads waiting on you, with up and down to step through them.
 - Agents Trove starts run with bypass permissions by default. The mode menu under the message box sets bypass, auto or ask for the next start.
 - Add to chat (A) puts a selected passage into Chat's message box as a quote.
+- An HTML page's own controls marked `data-trove-toolbar` (a dev-tools toggle, say) are hidden on the page and offered on Trove's annotate toolbar.
 - An HTML file has Preview and Source tabs; Source shows the HTML with line numbers, and you can comment on it like a text file.
 - One Start menu offers Claude Code or Codex. Home filters its lists by All, Folders or Files. The folder name in the top bar lists pinned and recent sources with Open Folder and Open File, and right-clicking the Files tree's root shows the folder in Finder or opens another.
 - Click a file's path to copy it. Right-click any path to copy the absolute or relative path or the file name, Show in Finder, or, for HTML, Open in browser.

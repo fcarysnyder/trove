@@ -30,6 +30,9 @@ export interface Pick {
 }
 
 /** A passage added to chat: its file and what it says (an element's tag first). */
+/** A control of the HTML page's own, hidden there and offered on the annotate toolbar: its label and the element it clicks. */
+export interface PageTool { label: string; el: HTMLElement }
+
 export interface ChatRef { path: string; quote: string; tag?: string }
 
 export interface State {
@@ -71,6 +74,7 @@ export interface State {
   conflict: { text: string; hash: string; at: string | null } | null; // Save found the file changed on disk: the agent's text, its hash, when
   // Marking an HTML file (doc/annotate.ts)
   tool: Tool;
+  pageTools: PageTool[]; // the HTML page's own controls marked data-trove-toolbar, shown on the annotate toolbar
   mark: Mark | null; // its note card is open
   markKind: CommentKind; // what the card adds: a change or a question
   hover: Element | null; // the Pointer's outline
@@ -116,6 +120,7 @@ let state: State = {
   view: null,
   conflict: null,
   tool: 'text',
+  pageTools: [],
   mark: null,
   markKind: 'change',
   hover: null,

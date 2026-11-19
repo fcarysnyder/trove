@@ -2,7 +2,7 @@
 // frame (hover and pick outlines, circles, each comment's numbered badges) and the note card. The frame
 // logic is in doc/annotate.ts; a mark is added as an ordinary Draft.
 import type { CommentKind } from '@trove/core/types';
-import { ArrowUp, CircleDashed, GripHorizontal, GripVertical, Maximize2, MessageCircleQuestion, MessageSquare, Minimize2, MousePointer2, TextCursor, X } from 'lucide-react';
+import { ArrowUp, CircleDashed, GripHorizontal, GripVertical, Maximize2, MessageCircleQuestion, MessageSquare, Minimize2, MousePointer2, TextCursor, Wrench, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
@@ -45,6 +45,7 @@ export function AnnotateBar() {
   const can = useStore(canMark);
   const focus = useStore((s) => s.hidden.files && s.hidden.changes);
   const tool = useStore((s) => s.tool);
+  const pageTools = useStore((s) => s.pageTools);
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<Pos>(() => load<Pos>('annotate-bar', null));
   const [size, setSize] = useState({ w: 42, h: 280 });
@@ -111,6 +112,11 @@ export function AnnotateBar() {
         onClick={() => { togglePanel('files', !focus); togglePanel('changes', !focus); }}>
         {focus ? <Minimize2 /> : <Maximize2 />}
       </IconButton>
+      {pageTools.length > 0 && <Separator orientation={flat ? 'vertical' : 'horizontal'} className="m-0.5 data-horizontal:w-5 data-vertical:h-5 data-vertical:self-center" />}
+      {/* The page's own controls (data-trove-toolbar): Select text first, so the page gets the click. */}
+      {pageTools.map((t, k) => (
+        <IconButton key={k} label={t.label} side={side} onClick={() => { setTool('text'); t.el.click(); }}><Wrench /></IconButton>
+      ))}
     </div>
   );
 }

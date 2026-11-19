@@ -236,7 +236,8 @@ export function showTargets(k: number) {
 }
 
 // The frame's cursors while a tool is on; page styles lose to !important.
-const FRAME_CSS = `html[data-trove-tool=pointer], html[data-trove-tool=pointer] * { cursor: default !important; }
+const FRAME_CSS = `[data-trove-toolbar] { display: none !important; }
+html[data-trove-tool=pointer], html[data-trove-tool=pointer] * { cursor: default !important; }
 html[data-trove-tool=loop], html[data-trove-tool=loop] * { cursor: crosshair !important; user-select: none !important; }`;
 
 /**
@@ -251,6 +252,8 @@ export function wireFrame(doc: Document, commit: (text: string) => void) {
   style.textContent = FRAME_CSS;
   doc.head.append(style);
   doc.documentElement.dataset.troveTool = get().tool;
+  // The page's own controls marked data-trove-toolbar (a dev-tools toggle, say) move to the annotate toolbar.
+  set({ pageTools: [...doc.querySelectorAll<HTMLElement>('[data-trove-toolbar]')].map((el) => ({ label: el.dataset.troveToolbar || el.textContent?.trim() || 'Page tool', el })) });
   const on = () => get().tool !== 'text' && canMark();
   const pickable = (t: EventTarget | null) => (t instanceof win.Element && t !== doc.documentElement && t !== doc.body ? t : null);
   const at = (e: PointerEvent): Pt => [e.clientX + win.scrollX, e.clientY + win.scrollY];

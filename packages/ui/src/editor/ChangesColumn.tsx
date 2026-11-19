@@ -159,7 +159,7 @@ function useAgentState(session: Session | null) {
   const state = needs ? (needs === 'question' ? 'has a question' : 'needs you')
     : !connected && !running ? 'not running'
     : info?.waiting === 'idle' ? 'done, waiting for you'
-    : files.length ? `working on ${files.length === 1 ? nameOf(files[0]) : plural(files.length, 'file')}`
+    : files.length ? 'working'
     : !connected ? 'starting'
     : info?.since ? 'working' : 'connected';
   const name = !connected && session ? TOOLS.find(([t]) => t === session.tool)![1] : n.Agent;
