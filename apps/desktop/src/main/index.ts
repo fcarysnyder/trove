@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { attachCommand, DEFAULT_DOC_TYPES, inGit, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type SourceKind, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
+import { attachCommand, call, DEFAULT_DOC_TYPES, inGit, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type SourceKind, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
 import type { IPty } from 'node-pty';
 import { checkForUpdate, installUpdate, updateState, watchForUpdates } from './update';
 import { osc9, osc9Kind } from './osc';
