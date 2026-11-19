@@ -1,6 +1,6 @@
 // One small store for the editor. Actions (actions.ts) read and write it directly, so the 2s poll
 // always sees the latest state; components subscribe to slices with useStore.
-import type { Activity, Anchor, BlockEdit, CommentKind, Draft, FileResponse, FileRow, GitInfo, Question, Recent, Settings, SourceInfo } from '@trove/core/types';
+import type { Activity, Anchor, BlockEdit, CommentKind, Draft, FileResponse, FileRow, GitInfo, Question, Recent, Settings, SourceInfo, UnsavedEdit, VersionBy } from '@trove/core/types';
 import { AGENT_LABELS, DEFAULT_SETTINGS } from '@trove/core/types';
 import type { AnchorHit } from '@trove/core/anchor';
 import { useSyncExternalStore } from 'react';
@@ -16,6 +16,10 @@ export interface Editing {
   title?: string; // modal title
   style?: Record<string, string>; // inline: the rendered block's type, so the source is set the way it reads
 }
+
+
+/** The open file shown read-only with Show new marks: a version (`n`) against the text open now, or the agent's text against yours (Compare, n null). */
+export interface View { path: string; n: number | null; text: string; base: string; by?: VersionBy; at?: string }
 
 export interface Pick {
   anchor: Anchor;
@@ -56,6 +60,9 @@ export interface State {
   rejecting: boolean; // the open file's Reject confirm is showing
   closedDirs: string[];
   settingsOpen: boolean;
+  unsaved: Record<string, UnsavedEdit>; // a folder's unsaved edits by path, kept by the server (unsaved.json)
+  view: View | null;
+  conflict: { text: string; hash: string; at: string | null } | null; // Save found the file changed on disk: the agent's text, its hash, when
 }
 
 let state: State = {
@@ -90,6 +97,9 @@ let state: State = {
   rejecting: false,
   closedDirs: [],
   settingsOpen: false,
+  unsaved: {},
+  view: null,
+  conflict: null,
 };
 
 const listeners = new Set<() => void>();
@@ -103,4 +113,7 @@ export const useStore = <T,>(pick: (s: State) => T): T => useSyncExternalStore(s
 
 /** The attached agent's label; a server without agentInfo says only claude or other, and one without /api/source was Claude's. */
 const labelOf = (s: SourceInfo | null) => s?.agentInfo?.label ?? AGENT_LABELS[s?.agent ?? 'claude'];
-export const useNames = (): Names => names(useStore((s) => labelOf(s.source)), useStore((s) => s.source?.kind === 'folder'));
+export const useNames = (): Names => names(useStore((s) => labelOf(s.source)));
+/** The source is a folder: edited in place, with no review state. */
+export const isFolder = (s: State) => s.source?.kind === 'folder';
+export const useFolder = () => useStore(isFolder);

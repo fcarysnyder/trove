@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 import { dismissQuestion, reveal, step, togglePanel, visible } from './actions';
 import { Count, IconButton } from './bits';
 import { Icon } from './StateIcon';
-import { get, set, useNames, useStore } from './store';
+import { get, set, useFolder, useNames, useStore } from './store';
 import { Switcher } from './Switcher';
 
 const SEG: Record<string, string> = {
@@ -24,6 +24,7 @@ const SEG: Record<string, string> = {
 export function TopBar() {
   useStore((s) => s.files);
   const source = useStore((s) => s.source);
+  const folder = useFolder();
   const offline = useStore((s) => s.offline);
   const hasSettings = useStore((s) => s.hasSettings);
   const current = useStore((s) => s.current?.path);
@@ -50,7 +51,7 @@ export function TopBar() {
       </div>
       <div className="flex items-center gap-2">
         {/* A folder has no review to make progress on. */}
-        {source?.kind !== 'folder' && <Progress />}
+        {!folder && <Progress />}
         <span className="text-xs text-muted-foreground tabular-nums">{pos || '–'} / {list.length}</span>
         <IconButton label="Previous file" tip="Previous file (←, k)" onClick={() => step(-1)}><ChevronLeft /></IconButton>
         <IconButton label="Next file" tip="Next file (→, j)" onClick={() => step(1)}><ChevronRight /></IconButton>

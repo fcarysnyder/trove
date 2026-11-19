@@ -14,6 +14,7 @@
 //   trove --selftest
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { text as stdin } from 'node:stream/consumers';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { call, running, selftest, serve } from '@trove/core';
@@ -48,13 +49,6 @@ async function firstLine(/** @type {number} */ port, /** @type {string | null} *
   const what = git ? `reviewing ${queued} files on ${git.body.branch ?? git.body.head}${git.body.worktree && !git.body.worktree.main ? ` (${git.body.worktree.name})` : ''}`
     : `editing ${files.body.files.length} files in ${source.body.name}`;
   return `${what} at http://127.0.0.1:${port}${file ? `/?file=${encodeURIComponent(file)}` : ''}; notices in ${source.body.eventsLog}; after each file run: ${invoked()} done <file> --port ${port}`;
-}
-
-/** Everything on stdin: long text (many lines, quotes) without shell quoting. */
-async function stdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) chunks.push(chunk);
-  return Buffer.concat(chunks).toString('utf8');
 }
 
 async function main() {
@@ -92,7 +86,7 @@ async function main() {
   // A path as the server takes it: absolute when it exists from here, so any working directory works.
   const pathOf = (/** @type {string} */ p) => (existsSync(p) ? resolve(p) : p);
   if (command === 'done' && positionals[0]) {
-    const note = values.note === '-' ? await stdin() : values.note;
+    const note = values.note === '-' ? await stdin(process.stdin) : values.note;
     const r = await call(port, 'POST', '/api/release', { path: pathOf(positionals[0]), ...(note ? { note } : {}) }).catch(failed);
     const noted = note ? ', with your note in History' : '';
     console.log(r.status === 200 ? (r.body.released ? `released ${positionals[0]}${noted}` : `${positionals[0]} was not locked${noted}`) : `done failed: ${r.body?.error ?? r.status}`);
@@ -100,7 +94,7 @@ async function main() {
     return;
   }
   if (command === 'say' && positionals.length) {
-    const text = positionals.join(' ') === '-' ? await stdin() : positionals.join(' ');
+    const text = positionals.join(' ') === '-' ? await stdin(process.stdin) : positionals.join(' ');
     const r = await call(port, 'POST', '/api/message', { text, from: 'agent', paths: (values.file ?? []).map(pathOf), ...(values.re ? { re: values.re } : {}) }).catch(failed);
     console.log(r.status === 200 ? `message ${r.body.id} is in History` : `say failed: ${r.body?.error ?? r.status}`);
     process.exitCode = r.status === 200 ? 0 : 1;

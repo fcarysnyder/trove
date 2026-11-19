@@ -16,7 +16,7 @@ import { plural } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { saveSettings } from './actions';
 import { IconButton } from './bits';
-import { get, set, useStore } from './store';
+import { get, set, useFolder, useStore } from './store';
 
 const CATEGORIES = ['General', 'Documents', 'Source'] as const;
 type Category = (typeof CATEGORIES)[number];
@@ -56,6 +56,7 @@ function Fact({ label, value }: { label: string; value: string | null }) {
 function Body() {
   const saved = useStore((s) => s.settings);
   const source = useStore((s) => s.source);
+  const folder = useFolder();
   const [category, setCategory] = useState<Category>('General');
   const [draft, setDraft] = useState<Settings>(() => get().settings);
   const [exclude, setExclude] = useState(() => get().settings.exclude.join('\n'));
@@ -107,7 +108,7 @@ function Body() {
       </>
     ),
     // A folder has no git scope or base: where it is and where Trove keeps its drafts and edits.
-    Source: source?.kind === 'folder' ? (
+    Source: folder && source ? (
       <>
         <Fact label="Folder" value={source.root} />
         <Fact label="Trove state" value={source.stateDir} />

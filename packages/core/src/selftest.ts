@@ -228,6 +228,7 @@ async function gitCase(temps: string[]) {
 
   // Accept stages; a later change puts the file back in the queue.
   const shown = (await get('/api/file?path=a.md')).body.hash;
+  assert.deepEqual([(await get('/api/file?path=a.md')).body.version, (await get('/api/versions?path=a.md')).body], [undefined, []], 'a repository keeps no versions: git has them');
   const stale = await post('/api/accept', { path: 'a.md', hash: 'stale' });
   assert.deepEqual([stale.status, stale.body.hash], [409, shown], 'accepting a version the user did not see is refused');
   assert.equal(staged(), '', 'a refused accept leaves the index alone');
@@ -746,13 +747,49 @@ async function folderCase(temps: string[]) {
   assert.deepEqual((await post('/api/release', { path: 'docs/b.md' })).body, { released: true, updated: false });
   assert.equal((await rows())['docs/b.md'], 'queue false false 0');
 
-  // Edits save in place, and revert.
+  // Edits save in place, as versions rather than edit records: nothing to revert, the version list is the undo.
   const saved = await post('/api/save', { path: 'docs/c.html', hash: sha(seed['docs/c.html']), raw: '<p>C2</p>\n' });
-  assert.deepEqual([saved.status, readFileSync(join(root, 'docs/c.html'), 'utf8'), (await rows())['docs/c.html']], [200, '<p>C2</p>\n', 'queue false true 0']);
-  assert.equal((await post('/api/revert', { path: 'docs/c.html' })).status, 200);
-  assert.deepEqual([readFileSync(join(root, 'docs/c.html'), 'utf8'), (await rows())['docs/c.html']], [seed['docs/c.html'], 'queue false false 0']);
+  assert.deepEqual([saved.status, readFileSync(join(root, 'docs/c.html'), 'utf8'), (await rows())['docs/c.html']], [200, '<p>C2</p>\n', 'queue false false 0']);
+  assert.equal((await post('/api/revert', { path: 'docs/c.html' })).status, 404);
   writeFileSync(join(root, 'new.md'), '# New\n');
   assert.equal((await rows())['new.md'], 'queue false false 0', 'a new file lists on the next request');
+
+  // Versions: the first open is the original, a Save the user's, a change Trove notices (or the agent's release) the agent's.
+  const vs = async (p: string) => (await get(`/api/versions?path=${encodeURIComponent(p)}`)).map((v: any) => `${v.n} ${v.by}`);
+  assert.deepEqual(await vs('docs/b.md'), ['2 agent', '1 original'], 'the release: the text at send, then the agent\'s');
+  assert.deepEqual(await vs('docs/c.html'), ['2 user', '1 original'], 'a Save is the user\'s');
+  assert.equal(a.version, 1);
+  const two = '# A\n\nTwo.\n';
+  assert.equal((await post('/api/save', { path: 'a.md', hash: a.hash, raw: two })).status, 200, 'markdown saves whole without an index');
+  assert.equal(readFileSync(join(root, 'a.md'), 'utf8'), two);
+  // The agent writes it under an unsaved edit: Save is refused with the hash on disk, and Trove keeps the agent's text.
+  const three = '# A\n\nThree.\n';
+  writeFileSync(join(root, 'a.md'), three);
+  const conflict = await post('/api/save', { path: 'a.md', hash: sha(two), raw: '# A\n\nMine.\n' });
+  assert.deepEqual([conflict.status, conflict.body.hash, readFileSync(join(root, 'a.md'), 'utf8')], [409, sha(three), three], 'no silent overwrite');
+  assert.deepEqual(await vs('a.md'), ['3 agent', '2 user', '1 original']);
+  assert.deepEqual([(await get('/api/version?path=a.md&n=2')).text, (await get('/api/file?path=a.md')).version], [two, 3]);
+  assert.equal((await call(port, 'GET', '/api/version?path=a.md&n=9')).status, 404);
+  assert.equal((await post('/api/save', { path: 'a.md', hash: conflict.body.hash, raw: '# A\n\nMine.\n' })).status, 200, 'Save mine');
+  assert.deepEqual((await vs('a.md'))[0], '4 user');
+  // The last 50 are kept.
+  for (let k = 5; k <= 60; k++) await post('/api/save', { path: 'a.md', hash: sha(readFileSync(join(root, 'a.md'), 'utf8')), raw: `# A\n\n${k}\n` });
+  const kept = await vs('a.md');
+  assert.deepEqual([kept.length, kept[0], kept.at(-1)], [50, '60 user', '11 user'], 'numbering goes on past the cap');
+
+  // Unsaved edits live on the server: they survive a restart, and a Save clears them.
+  const onDisk = readFileSync(join(root, 'a.md'), 'utf8');
+  const edit = { text: '# A\n\nUnsaved.\n', base: sha(onDisk), was: onDisk };
+  assert.equal((await post('/api/unsaved', { path: 'a.md', edit: { text: 1 } })).status, 400);
+  assert.equal((await post('/api/unsaved', { path: 'a.md', edit })).status, 200);
+  await app.close();
+  ({ app, port } = await listen(opts));
+  assert.deepEqual(await get('/api/unsaved'), { 'a.md': edit }, 'kept across a restart');
+  assert.equal((await post('/api/save', { path: 'a.md', hash: edit.base, raw: edit.text })).status, 200);
+  assert.deepEqual(await get('/api/unsaved'), {}, 'Save clears it');
+  await post('/api/unsaved', { path: 'a.md', edit });
+  await post('/api/unsaved', { path: 'a.md', edit: null });
+  assert.deepEqual(await get('/api/unsaved'), {}, "Don't save clears it");
   await app.close();
 
   // A file as the root: its folder, with the file's type turned on there.

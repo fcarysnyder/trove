@@ -72,7 +72,7 @@ export interface FileEntry {
 export interface FileRow extends FileEntry {
   state: FileState;
   updated: boolean; // the agent changed it after a send; cleared by Accept
-  edited: boolean; // the user saved an edit in this review
+  edited: boolean; // the user saved an edit in this review (never in a folder, which keeps versions instead)
   drafts: number; // unsent comments
 }
 
@@ -221,7 +221,23 @@ export interface FileResponse { // GET /api/file?path=
   revertable: boolean; // the file is still exactly what the user's last Save wrote
   edits: BlockEdit[];
   rejected?: boolean; // the backed-up text of a rejected file, read-only (locked); base is the file on disk now
+  version?: number; // a folder: the number of the version the text on disk is (see Version); absent in a repository
 }
+/**
+ * Who made one of a folder file's versions: the first copy Trove saw (on first open), a Save from the page, or anyone
+ * else (the agent's release, or a change on disk Trove notices). A repository keeps none: git has the history.
+ */
+export type VersionBy = 'original' | 'user' | 'agent';
+/** GET /api/versions?path= -> Version[], newest first, the last 50; [] in a repository. */
+export interface Version { n: number; at: string; by: VersionBy }
+/**
+ * A folder file's edits not yet written, kept server side in `<stateDir>/unsaved.json` so they survive a restart.
+ * GET /api/unsaved -> Record<path, UnsavedEdit>; POST /api/unsaved {path, edit: UnsavedEdit | null} -> {ok} sets or clears one.
+ * A successful POST /api/save clears the file's; a Save against a stale `base` is refused with 409 as any save.
+ */
+export interface UnsavedEdit { text: string; base: string /* the hash on disk it was edited from */; was: string /* that text */ }
+/** GET /api/version?path=&n= -> one version with its text; 404 when it is gone. */
+export interface VersionText extends Version { text: string }
 export interface SaveDraftsBody { path: string; drafts: Draft[] } // POST /api/drafts -> {ok}
 export interface AcceptBody { path: string; hash: string } // POST /api/accept -> {ok}
 export interface UnacceptBody { path: string } // POST /api/unaccept -> {ok}
@@ -229,7 +245,7 @@ export interface AcceptAllBody { paths: string[] } // POST /api/accept-all -> {a
 export interface SkipBody { path: string; on: boolean } // POST /api/skip -> {ok}; no git write
 export interface RejectBody { path: string; hash: string } // POST /api/reject -> {ok}; tracked: back to HEAD, new: deleted; backed up first. 409 for a folder
 export interface RestoreBody { path: string } // POST /api/restore -> {ok}; the index copy, the working text and the drafts come back
-export interface SaveBody { path: string; hash: string; index?: number; raw: string } // POST /api/save -> {hash}
+export interface SaveBody { path: string; hash: string; index?: number; raw: string } // POST /api/save -> {hash}; no index: raw is the whole file (any kind). 409 {error, hash} when the file is not `hash` any more
 export interface RevertBody { path: string; edit?: string; hash?: string } // POST /api/revert -> {hash}
 export interface SendBody { paths?: string[]; kind?: CommentKind } // POST /api/send
 export interface SendResponse { id: string; comments: number; files: number; locked: string[] }

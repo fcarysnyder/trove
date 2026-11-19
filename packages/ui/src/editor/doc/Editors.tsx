@@ -10,14 +10,14 @@ import { mod } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { cancelEdit, revertEdit, saveEdit } from '../actions';
 import { IconButton } from '../bits';
-import { get, set, useStore, type Editing } from '../store';
+import { get, set, useFolder, useStore, type Editing } from '../store';
 import { expandEdit } from './commands';
 import { tintRuns, type Baseline } from './layers';
 import { docModel } from './model';
 
 const SAVE_KEY = mod === 'Cmd' ? '⌘↵' : 'Ctrl ↵';
 /** Cancel; a folder is edited in place, so there it says what it does. */
-const useDiscard = () => (useStore((s) => s.source?.kind === 'folder') ? "Don't save" : 'Cancel');
+const useDiscard = () => (useFolder() ? "Don't save" : 'Cancel');
 const MIRRORED = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'wordSpacing', 'tabSize', 'textIndent',
   'whiteSpace', 'overflowWrap', 'wordBreak', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
   'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'] as const;

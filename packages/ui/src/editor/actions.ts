@@ -1,19 +1,20 @@
 // The editor's behaviour, ported from the old page's script: polling, opening, stepping, accepting,
 // drafts, edits and sending. Components call these; they read and write the store.
-import type { ActivityResponse, BlockEdit, CommentKind, Draft, DraftsResponse, FileResponse, FileRow, FilesResponse, GitInfo, MessageBody, Recent, SendBody, Settings, SourceInfo } from '@trove/core/types';
+import type { ActivityResponse, BlockEdit, CommentKind, DocKind, Draft, DraftsResponse, FileResponse, FileRow, FilesResponse, GitInfo, MessageBody, Recent, SendBody, Settings, SourceInfo, UnsavedEdit, Version, VersionText } from '@trove/core/types';
+import { blocks, splice } from '@trove/core/anchor';
 import { toast } from 'sonner';
 import { api, ApiError, optional } from '@/lib/api';
 import { passes, normalizeOff, type FilterKey } from '@/lib/filter';
 import { inFolders, stepFrom } from '@/lib/status';
 import { save } from '@/lib/storage';
 import { kindOf } from '@/lib/text';
-import { get, set, type State } from './store';
+import { get, isFolder, set, type State } from './store';
 import { getAnn } from './doc/annotate';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Whether the search and filters leave a file in the tree. A folder has no review states to filter: the search only. */
-export const shown = (s: State = get()) => (f: FileRow) => passes(f, s.source?.kind === 'folder' ? [] : s.filterOff, s.query);
+export const shown = (s: State = get()) => (f: FileRow) => passes(f, isFolder(s) ? [] : s.filterOff, s.query);
 /** The tree's folders, the n / N position and stepping follow this list: committed and rejected files have their own sections; the search and filters narrow it. */
 export const visible = (s: State = get()) => s.files.filter((f) => inFolders(f) && shown(s)(f));
 export const entry = (s: State = get()) => s.files.find((f) => f.path === s.current?.path);
@@ -50,8 +51,8 @@ export async function refresh() {
   const now = get();
   if (now.current && !busy(now)) {
     const fresh = await api<FileResponse>(`file?path=${encodeURIComponent(now.current.path)}`).catch(() => null);
-    const cur = get().current;
-    if (fresh && fresh.path === cur?.path && !busy(get()) && (fresh.hash !== cur.hash || fresh.locked !== cur.locked)) show(fresh);
+    // Against what the server last said: the page may show unsaved text, or a version read-only.
+    if (fresh && fresh.path === get().current?.path && fresh.path === disk?.path && !busy(get()) && (fresh.hash !== disk.hash || fresh.locked !== disk.locked)) show(fresh);
   }
 }
 
@@ -71,11 +72,25 @@ export async function open(path: string) {
   await refresh();
 }
 
+/** The open file as the server last sent it; `current` is what the page shows of it. */
+let disk: FileResponse | null = null;
+
+/** What the page shows of `file`: a version or Compare, read-only with Show new marks against its base; else a folder's unsaved text; else the disk's. */
+function compose(file: FileResponse, s: State): NonNullable<State['current']> {
+  const view = s.view?.path === file.path ? s.view : null;
+  const text = view?.text ?? (isFolder(s) ? s.unsaved[file.path]?.text : undefined) ?? file.text;
+  return { ...file, kind: kindOf(file.path, file.kind), text, ...(view ? { base: view.base, since: null, locked: true } : {}) };
+}
+
 export function show(file: FileResponse) {
+  disk = file;
   const s = get();
   const same = file.path === s.current?.path;
+  const view = same ? s.view : null;
   set({
-    current: { ...file, kind: kindOf(file.path, file.kind) },
+    current: compose(file, { ...s, view }),
+    view,
+    conflict: same ? s.conflict : null,
     editing: null,
     pick: null,
     // A composer belongs to the file it was opened on.
@@ -235,10 +250,18 @@ export function addComment(note: string, draft?: Pick<Draft, 'kind' | 'anchor'>)
   void saveDrafts(current.path, [...current.drafts, { kind: d.kind, note, anchor: d.anchor }]);
 }
 
-/** Save an edit (hash-checked). Returns an error to show in the editor, or null once saved and reloaded. */
+/** Save an edit (hash-checked). Returns an error to show in the editor, or null once saved and reloaded. A folder's edit is only kept, as unsaved. */
 export async function saveEdit(index: number | null, raw: string): Promise<string | null> {
   const { current, editing } = get();
   if (!current || !editing) return null;
+  if (isFolder(get())) {
+    let text = raw;
+    if (index != null) try { text = splice(current.text, index, raw); } catch { return `No block ${index}`; }
+    keep(current.path, text);
+    set({ editing: null });
+    if (disk) show(disk);
+    return null;
+  }
   try {
     await api('save', { path: current.path, hash: editing.hash, ...(index == null ? {} : { index }), raw });
   } catch (e) {
@@ -246,6 +269,92 @@ export async function saveEdit(index: number | null, raw: string): Promise<strin
   }
   await open(current.path);
   return null;
+}
+
+// ---- a folder's unsaved edits, Save and versions -----------------------------------------------
+
+/** The page's copy at once; the server's (unsaved.json) after, so the edits outlive a restart. */
+function setUnsaved(path: string, edit: UnsavedEdit | null) {
+  const unsaved = { ...get().unsaved };
+  if (edit) unsaved[path] = edit;
+  else delete unsaved[path];
+  set({ unsaved });
+  void api('unsaved', { path, edit }).catch((e) => toast(errText(e)));
+}
+/** `text` as the open file's unsaved text, based on what is on disk when the first edit was kept; back to that text is no edit. */
+function keep(path: string, text: string) {
+  if (disk?.path !== path) return;
+  const from = get().unsaved[path] ?? { was: disk.text, base: disk.hash };
+  setUnsaved(path, text === from.was ? null : { text, base: from.base, was: from.was });
+}
+const reshow = () => { if (disk) show(disk); };
+
+/** The blocks of `text` that `base` lacks (markdown), else the whole file as one. */
+export function unsavedBlocks(text: string, base: string, kind: DocKind): number[] {
+  if (kind !== 'markdown') return text === base ? [] : [0];
+  const old = new Set(blocks(base).map((b) => b.raw.trimEnd()));
+  return blocks(text).flatMap((b, i) => (old.has(b.raw.trimEnd()) ? [] : [i]));
+}
+
+/** Write the open file's unsaved text, hash-checked against the disk it was based on (`hash`: Save mine, over the agent's). Changed since: the conflict dialog. */
+export async function saveFile(hash?: string) {
+  const { current, unsaved } = get();
+  const buf = current && unsaved[current.path];
+  if (!current || !buf) return;
+  const q = `path=${encodeURIComponent(current.path)}`;
+  try {
+    await api('save', { path: current.path, hash: hash ?? buf.base, raw: buf.text });
+  } catch (e) {
+    if (!(e instanceof ApiError && e.status === 409 && e.hash)) return void toast(errText(e));
+    const [theirs, versions] = await Promise.all([api<FileResponse>(`file?${q}`), api<Version[]>(`versions?${q}`).catch(() => [])]);
+    set({ conflict: { text: theirs.text, hash: theirs.hash, at: versions.find((v) => v.by === 'agent')?.at ?? null }, view: null });
+    return;
+  }
+  set({ unsaved: Object.fromEntries(Object.entries(get().unsaved).filter(([p]) => p !== current.path)), view: null, conflict: null }); // the server cleared its copy
+  await open(current.path);
+}
+
+/** Don't save, or Keep the agent's: drop the open file's unsaved edits. */
+export function discard() {
+  const { current } = get();
+  if (current) setUnsaved(current.path, null);
+  set({ view: null, conflict: null });
+  reshow();
+}
+
+/** The agent's text, marked against yours, read-only; the rail keeps Keep theirs and Save mine. */
+export function compare() {
+  const { current, conflict, unsaved } = get();
+  const buf = current && unsaved[current.path];
+  if (!current || !conflict || !buf) return;
+  set({ view: { path: current.path, n: null, text: conflict.text, base: buf.text } });
+  reshow();
+}
+
+export const versionsOf = (path: string) => api<Version[]>(`versions?path=${encodeURIComponent(path)}`);
+
+/** The open file marked against version `n`, read-only, until Restore or Esc. */
+export async function pickVersion(n: number) {
+  const { current } = get();
+  if (!current || !disk) return;
+  let v: VersionText;
+  try { v = await api<VersionText>(`version?path=${encodeURIComponent(current.path)}&n=${n}`); } catch (e) { return void toast(errText(e)); }
+  set({ view: { path: current.path, n, text: get().unsaved[current.path]?.text ?? disk.text, base: v.text, by: v.by, at: v.at } });
+  reshow();
+}
+
+/** The picked version's text becomes the open file's unsaved edits: Save or Don't save from there. */
+export function restoreVersion() {
+  const { view } = get();
+  if (!view || view.n == null) return;
+  set({ view: null });
+  keep(view.path, view.base);
+  reshow();
+}
+
+export function closeView() {
+  set({ view: null });
+  reshow();
 }
 
 export const cancelEdit = () => {
@@ -383,6 +492,9 @@ export async function init() {
     optional<Settings>('settings').catch(() => null),
   ]);
   set({ source, ...(settings ? { settings, hasSettings: true } : {}) });
+  if (source?.kind === 'folder') set({ unsaved: await api<Record<string, UnsavedEdit>>('unsaved').catch(() => ({})) });
+  // The desktop asks before closing a window with unsaved edits (main's will-prevent-unload); the server keeps them either way.
+  addEventListener('beforeunload', (e) => { if (window.trove && Object.keys(get().unsaved).length) e.preventDefault(); });
   // Show new: what this browser last chose, else the source's default.
   const remembered = localStorageHas('show-new');
   if (settings && !remembered) set({ showNew: settings.showNew });

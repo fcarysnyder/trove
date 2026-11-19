@@ -19,7 +19,7 @@ import { acceptAll, createPr, open, prReady, reveal, setFilters, shown, togglePa
 import { Count, IconButton, nothingText } from './bits';
 import { PathMenu } from './PathMenu';
 import { StateIcons } from './StateIcon';
-import { get, set, useNames, useStore } from './store';
+import { get, set, useFolder, useNames, useStore } from './store';
 
 /** The tree row to land on after the search: the open file's, else the first. */
 const focusTree = () => {
@@ -43,6 +43,7 @@ export function FilesColumn() {
   const none = files.length > 0 && !folders.length && !committed.length && !rejected.length;
   const pending = folders.filter((f) => f.state === 'queue').length;
   const n = useNames();
+  const folder = useFolder();
   const onSearchKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -59,11 +60,11 @@ export function FilesColumn() {
       <div className="flex min-h-11 shrink-0 items-center gap-1 border-b pr-2 pl-4">
         <span className="flex-1 font-semibold text-foreground">Files</span>
         {/* A folder is edited in place: no review to accept, open a PR for or filter by. */}
-        {!n.folder && pending > 0 && <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void acceptAll()}>Accept all</Button>}
-        {!n.folder && prReady(files) && (
+        {!folder && pending > 0 && <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void acceptAll()}>Accept all</Button>}
+        {!folder && prReady(files) && (
           <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={!source?.agentInfo?.connected} onClick={() => void createPr(n.agent)}>Create PR</Button>
         )}
-        {!n.folder && <Filters off={off} />}
+        {!folder && <Filters off={off} />}
         <IconButton side="bottom" label="Hide files" tip="Hide files ([)" onClick={() => togglePanel('files', true)}><PanelLeftClose /></IconButton>
       </div>
       <div className="shrink-0 px-2 pt-2">
@@ -80,7 +81,7 @@ export function FilesColumn() {
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <nav aria-label="Files" className="p-2">
-          {loaded && !files.length && <p className="px-1 py-1.5 text-[13px] text-muted-foreground">{n.folder ? 'No documents' : nothingText(source)}</p>}
+          {loaded && !files.length && <p className="px-1 py-1.5 text-[13px] text-muted-foreground">{folder ? 'No documents' : nothingText(source)}</p>}
           {none ? (
             <p className="flex items-center gap-1 px-1 py-1.5 text-[13px] text-muted-foreground">
               No files match
@@ -95,7 +96,7 @@ export function FilesColumn() {
           )}
         </nav>
       </ScrollArea>
-      {!n.folder && (
+      {!folder && (
         <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
           <Switch id="pending-only" size="default" checked={isPendingOnly(off)} onCheckedChange={(v) => setFilters(v ? PENDING_OFF : [])} />
           <Label htmlFor="pending-only" className="text-xs font-normal text-muted-foreground">Pending only</Label>
@@ -185,6 +186,8 @@ function Folders({ list, query }: { list: FileRow[]; query: string }) {
   const closed = useStore((s) => s.closedDirs);
   const current = useStore((s) => s.current?.path);
   const n = useNames();
+  const folder = useFolder();
+  const unsaved = useStore((s) => s.unsaved);
   const groups = Map.groupBy(list, (f) => dirOf(f.path));
   return [...groups].map(([dir, rows]) => (
     <Collapsible key={dir} open={!!query || !closed.includes(dir)}
@@ -199,9 +202,10 @@ function Folders({ list, query }: { list: FileRow[]; query: string }) {
             <button data-tree-row title={f.path} aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
               className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
                 f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
-              {n.folder ? <FileIcon file={f} /> : <StateIcons file={f} names={n} />}
+              {folder ? <FileIcon file={f} /> : <StateIcons file={f} names={n} />}
               <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
-              {n.folder && <Marks file={f} names={n} />}
+              {folder && <Marks file={f} names={n} />}
+              {folder && unsaved[f.path] && <span role="img" aria-label="Unsaved edits" title="Unsaved edits" className="size-1.5 shrink-0 rounded-full bg-dirty" />}
               {f.drafts > 0 && <Count n={f.drafts} />}
             </button>
           </PathMenu>
