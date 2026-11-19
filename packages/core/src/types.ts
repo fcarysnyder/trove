@@ -162,18 +162,27 @@ export interface SourceInfo {
 // with 400, 404, 409 (hash or lock conflict; may carry `hash`), 413, 415 or 500.
 
 /**
- * One line of what the agent drawer lists. batch: a send (text: its id); release: a locked file let go
- * (`done`, Unlock or the quiet release); question / reply: `ask` / `reply`; attach / detach: text is the
- * agent's label; event: any other events-log line, as written.
+ * One line of what the agent drawer lists. batch: a send (text and id: its id); release: a locked file let go
+ * (`done`, Unlock or the quiet release; text: the path; body: the agent's `done --note`); question / reply:
+ * `ask` / `reply`; attach / detach: text is the agent's label; message: `trove say` (from 'agent') or the
+ * page's History composer (from 'user'), text empty and body the message; event: any other events-log line, as written.
+ * Kept in `<stateDir>/activity.jsonl`, one entry per line; a later line with the same id replaces it.
  */
 export interface Activity {
+  id: string;
   at: string;
-  kind: 'batch' | 'release' | 'question' | 'reply' | 'attach' | 'detach' | 'event';
+  kind: 'batch' | 'release' | 'question' | 'reply' | 'attach' | 'detach' | 'event' | 'message';
   text: string;
   paths?: string[];
   comments?: number;
+  from?: 'agent' | 'user'; // who wrote `body` (and question / reply's text)
+  body?: string; // markdown
+  re?: string; // the id of the entry this one answers
 }
-export interface ActivityResponse { entries: Activity[] } // GET /api/activity: newest last, at most 100
+export interface ActivityResponse { entries: Activity[] } // GET /api/activity: newest last, at most 200
+/** POST /api/message -> Activity. from defaults to 'user'; a user's message adds one line to events.log
+ * (`message <id>: from the reviewer[, re <id>]. Read it with: grep -F <id> '<activity.jsonl>'`). Each path must be in the review set. */
+export interface MessageBody { text: string; re?: string; paths?: string[]; from?: 'agent' | 'user' }
 
 export interface FilesResponse { files: FileRow[]; question: Question | null } // GET /api/files
 export interface DraftsResponse { drafts: Record<string, Draft[]>; edits: Record<string, BlockEdit[]> } // GET /api/drafts
@@ -204,7 +213,7 @@ export interface SendBody { paths?: string[]; kind?: CommentKind } // POST /api/
 export interface SendResponse { id: string; comments: number; files: number; locked: string[] }
 export interface PrResponse { id: string; files: number } // POST /api/pr {} -> 409 while a file waits for review (queue or working)
 export interface AskBody { text: string; kind?: 'question' | 'reply' } // POST /api/ask -> {question}
-export interface ReleaseBody { path: string } // POST /api/release -> {released, updated}
+export interface ReleaseBody { path: string; note?: string } // POST /api/release -> {released, updated}; note: markdown for History, on this release (or the file's last one, or a message about it)
 export interface AgentBody { id: AgentId | null; label?: string } // POST /api/agent -> AgentInfo; id null detaches
 export type SourceResponse = SourceInfo; // GET /api/source
 export type SettingsResponse = Settings; // GET /api/settings; POST /api/settings takes Partial<Settings>, returns Settings
@@ -233,7 +242,7 @@ export interface GitInfo {
 export interface SwitchBody { branch: string }
 
 export interface BatchItem { path: string; kind: CommentKind; note: string; anchor: Anchor }
-export interface Batch { id: string; sentAt: string; items: BatchItem[] } // one line of batches.jsonl
+export interface Batch { id: string; sentAt: string; items: BatchItem[] } // one line of batches.jsonl; GET /api/batch?id= answers one
 
 // ---- Desktop bridge --------------------------------------------------------------------------
 // Exposed by the Electron preload as `window.trove` on the zero-state page (start.html) and in
