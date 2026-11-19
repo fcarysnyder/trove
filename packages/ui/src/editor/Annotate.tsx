@@ -13,19 +13,18 @@ import { plural } from '@/lib/text';
 import { addComment, focusComment, togglePanel } from './actions';
 import { Count, IconButton } from './bits';
 import { NoteField } from './ChangesColumn';
-import { useNames, useStore } from './store';
-import { bounds, canMark, cardField, elementAnchor, getAnn, resolve, setAnn, setTool, smoothPath, summary, describe, useAnn, type Pt, type Tool } from './doc/annotate';
+import { get, set, useNames, useStore } from './store';
+import { bounds, canMark, cardField, dropMark, elementAnchor, resolve, setTool, smoothPath, summary, describe, type Pt, type Tool } from './doc/annotate';
 import { frameEl } from './doc/dom';
 
 /** Add the pending mark as a comment with this note; the card closes. */
 export function commitMark(note: string) {
-  const { mark, kind } = getAnn();
+  const { mark, markKind } = get();
   const els = mark?.els.filter((el) => el.isConnected) ?? [];
   if (!note || !els.length) return;
-  addComment(note, { kind, anchor: elementAnchor(els, mark!.shape) });
-  setAnn({ mark: null, kind: 'change' });
+  addComment(note, { kind: markKind, anchor: elementAnchor(els, mark!.shape) });
+  dropMark();
 }
-const dropMark = () => setAnn({ mark: null, kind: 'change' });
 
 const TOOLS = [
   ['text', 'Select text', 'T', TextCursor],
@@ -44,7 +43,7 @@ export function AnnotateBar() {
   const count = useStore((s) => s.current?.drafts.length ?? 0);
   const can = useStore(canMark);
   const focus = useStore((s) => s.hidden.files && s.hidden.changes);
-  const tool = useAnn((s) => s.tool);
+  const tool = useStore((s) => s.tool);
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<Pos>(() => load<Pos>('annotate-bar', null));
   const [size, setSize] = useState({ w: 42, h: 280 });
@@ -116,14 +115,18 @@ export function AnnotateBar() {
 export function AnnotateLayer({ loads }: { loads: number }) {
   const drafts = useStore((s) => s.current?.drafts);
   const editing = useStore((s) => !!s.editing);
-  const { tool, mark, hover, drawing, flash } = useAnn((s) => s);
+  const tool = useStore((s) => s.tool);
+  const mark = useStore((s) => s.mark);
+  const hover = useStore((s) => s.hover);
+  const drawing = useStore((s) => s.drawing);
+  const flash = useStore((s) => s.flash);
   const [shown, setShown] = useState<number | null>(null); // a badge under the pointer: its comment's elements outlined
   const [, redraw] = useReducer((k: number) => k + 1, 0);
 
   // The page can move under the marks: scrolled panes, a resized column, a prototype changing itself.
   useEffect(() => {
     const f = frameEl(), d = f?.contentDocument, w = d?.defaultView;
-    setAnn({ mark: null, hover: null, drawing: null });
+    set({ mark: null, hover: null, drawing: null });
     if (!f || !d?.body || !w) return;
     let raf = 0;
     const tick = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(redraw); };
@@ -137,7 +140,7 @@ export function AnnotateLayer({ loads }: { loads: number }) {
       cancelAnimationFrame(raf);
       outer.disconnect(); inner.disconnect(); mo.disconnect();
       d.removeEventListener('scroll', tick, true);
-      setAnn({ mark: null, hover: null, drawing: null });
+      set({ mark: null, hover: null, drawing: null });
     };
   }, [loads]);
 
@@ -190,7 +193,7 @@ export function AnnotateLayer({ loads }: { loads: number }) {
 
 /** Where the card points: the circle's box or the picked elements', in the app's viewport, cut to the visible part of the doc view. */
 function markRect(): DOMRect {
-  const m = getAnn().mark, f = frameEl(), win = f?.contentWindow;
+  const m = get().mark, f = frameEl(), win = f?.contentWindow;
   const view = f?.closest('#doc')?.getBoundingClientRect(); // the scroller; the column's panel has id doc too
   if (!m || !f || !win || !view) return new DOMRect();
   const off = f.getBoundingClientRect();
@@ -206,8 +209,8 @@ function markRect(): DOMRect {
 
 /** The note for a pending mark, beside it, kept inside the window. Comment or Explain; Add (Cmd/Ctrl+Enter), Esc cancels, a click elsewhere adds what is written. */
 function MarkCard() {
-  const mark = useAnn((s) => s.mark)!;
-  const kind = useAnn((s) => s.kind);
+  const mark = useStore((s) => s.mark)!;
+  const kind = useStore((s) => s.markKind);
   const n = useNames();
   const anchor = useRef({ getBoundingClientRect: markRect });
   return (
@@ -220,7 +223,7 @@ function MarkCard() {
         // Clicks in the frame are the Pointer's (shift-click adds); focus moving there is not a dismissal.
         onFocusOutside={(e) => e.preventDefault()}
         onPointerDownOutside={() => { const text = cardField()?.value.trim(); if (text) commitMark(text); }}>
-        <ToggleGroup type="single" size="sm" value={kind} onValueChange={(v) => v && setAnn({ kind: v as CommentKind })} aria-label="Kind" className="-ml-1.5">
+        <ToggleGroup type="single" size="sm" value={kind} onValueChange={(v) => v && set({ markKind: v as CommentKind })} aria-label="Kind" className="-ml-1.5">
           <ToggleGroupItem value="change" className="h-6 gap-1.5 px-1.5 text-xs text-muted-foreground data-[state=on]:text-foreground"><MessageSquare className="size-3.5" />Comment</ToggleGroupItem>
           <ToggleGroupItem value="explain" className="h-6 gap-1.5 px-1.5 text-xs text-muted-foreground data-[state=on]:text-foreground"><MessageCircleQuestion className="size-3.5" />Explain</ToggleGroupItem>
         </ToggleGroup>

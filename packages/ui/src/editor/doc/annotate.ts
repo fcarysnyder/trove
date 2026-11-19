@@ -3,8 +3,8 @@
 // steps are pure (lib.test.ts); the rest reads the frame's DOM. A mark becomes an ordinary Draft.
 import type { AnchorHit } from '@trove/core/anchor';
 import type { Anchor, CommentKind, ElementTarget } from '@trove/core/types';
-import { useSyncExternalStore } from 'react';
-import { get } from '../store';
+import { reducedMotion } from '@/lib/text';
+import { get, set } from '../store';
 import { frameEl, headingPath } from './dom';
 
 export type Pt = [number, number];
@@ -204,37 +204,22 @@ function looped(doc: Document, poly: Pt[]): Element[] {
 export type Tool = 'text' | 'pointer' | 'loop';
 /** A pending mark: the elements picked (shift-click adds or removes), and the loop when it was drawn. */
 export interface Mark { els: Element[]; shape?: Pt[] }
-export interface AnnState {
-  tool: Tool;
-  mark: Mark | null; // its note card is open
-  kind: CommentKind; // what the card adds: a change or a question
-  hover: Element | null; // the Pointer's outline
-  drawing: Pt[] | null; // a loop being drawn, document coordinates
-  flash: { k: number; at: number } | null; // a comment's elements, outlined for a moment
-}
-let state: AnnState = { tool: 'text', mark: null, kind: 'change', hover: null, drawing: null, flash: null };
-const listeners = new Set<() => void>();
-export const getAnn = () => state;
-export function setAnn(patch: Partial<AnnState>) {
-  state = { ...state, ...patch };
-  listeners.forEach((l) => l());
-}
-export const useAnn = <T,>(pick: (s: AnnState) => T): T =>
-  useSyncExternalStore((l) => (listeners.add(l), () => void listeners.delete(l)), () => pick(state));
+/** Let go of the pending mark; its card closes. */
+export const dropMark = () => set({ mark: null, markKind: 'change' });
 
 /** Pointer and Circle mark the open HTML file; neither works on a locked file or under an open edit. */
 export const canMark = () => { const s = get(); return s.current?.kind === 'html' && !s.current.locked && !s.editing; };
 
 export function setTool(tool: Tool) {
   if (tool !== 'text' && !canMark()) return;
-  setAnn({ tool, mark: null, kind: 'change', hover: null, drawing: null });
+  set({ tool, mark: null, markKind: 'change', hover: null, drawing: null });
   const root = frameEl()?.contentDocument?.documentElement;
   if (root) root.dataset.troveTool = tool;
 }
 
 /** Esc: let go of the pending mark, else back to selecting text. */
 export function escapeTool() {
-  if (state.mark) setAnn({ mark: null, kind: 'change' });
+  if (get().mark) dropMark();
   else setTool('text');
 }
 
@@ -246,8 +231,8 @@ export function showTargets(k: number) {
   const doc = frameEl()?.contentDocument;
   const el = get().current?.drafts[k]?.anchor.targets?.map((t) => resolve(doc, t)).find(Boolean);
   if (!el) return;
-  el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-  setAnn({ flash: { k, at: Date.now() } });
+  el.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
+  set({ flash: { k, at: Date.now() } });
 }
 
 // The frame's cursors while a tool is on; page styles lose to !important.
@@ -265,8 +250,8 @@ export function wireFrame(doc: Document, commit: (text: string) => void) {
   const style = doc.createElement('style');
   style.textContent = FRAME_CSS;
   doc.head.append(style);
-  doc.documentElement.dataset.troveTool = state.tool;
-  const on = () => state.tool !== 'text' && canMark();
+  doc.documentElement.dataset.troveTool = get().tool;
+  const on = () => get().tool !== 'text' && canMark();
   const pickable = (t: EventTarget | null) => (t instanceof win.Element && t !== doc.documentElement && t !== doc.body ? t : null);
   const at = (e: PointerEvent): Pt => [e.clientX + win.scrollX, e.clientY + win.scrollY];
   const swallow = (e: Event) => { if (on()) { e.preventDefault(); e.stopPropagation(); } };
@@ -275,50 +260,51 @@ export function wireFrame(doc: Document, commit: (text: string) => void) {
   win.addEventListener('pointerdown', (e) => {
     if (!on() || e.button !== 0) return;
     swallow(e);
-    const el = state.tool === 'pointer' ? pickable(e.target) : null;
-    const els = state.mark?.els ?? [];
+    const el = get().tool === 'pointer' ? pickable(e.target) : null;
+    const els = get().mark?.els ?? [];
     if (el && e.shiftKey) {
       // Shift adds an element to what the note is about, or takes it back out.
       const next = els.includes(el) ? els.filter((x) => x !== el) : [...els, el];
-      setAnn({ mark: next.length ? { els: next } : null });
+      set({ mark: next.length ? { els: next } : null });
       return focusCard();
     }
     if (el && els.length === 1 && els[0] === el) return focusCard();
     // Clicking away from a written note adds it; an empty one is let go.
     const text = cardField()?.value.trim();
-    if (text && state.mark) commit(text);
-    if (state.tool === 'loop') {
-      setAnn({ drawing: [at(e)], mark: null });
+    if (text && get().mark) commit(text);
+    if (get().tool === 'loop') {
+      set({ drawing: [at(e)], mark: null });
       return doc.documentElement.setPointerCapture(e.pointerId); // the loop can leave the frame and come back
     }
-    setAnn({ mark: el ? { els: [el] } : null });
+    set({ mark: el ? { els: [el] } : null });
     if (el) focusCard();
   }, true);
 
   win.addEventListener('pointermove', (e) => {
     if (!on()) return;
-    if (state.drawing) {
-      const p = at(e), last = state.drawing.at(-1)!;
-      if (Math.hypot(p[0] - last[0], p[1] - last[1]) >= 3) setAnn({ drawing: [...state.drawing, p] });
+    const { drawing } = get();
+    if (drawing) {
+      const p = at(e), last = drawing.at(-1)!;
+      if (Math.hypot(p[0] - last[0], p[1] - last[1]) >= 3) set({ drawing: [...drawing, p] });
       return;
     }
-    const el = state.tool === 'pointer' ? pickable(e.target) : null;
-    if (el !== state.hover) setAnn({ hover: el });
+    const el = get().tool === 'pointer' ? pickable(e.target) : null;
+    if (el !== get().hover) set({ hover: el });
   }, true);
-  doc.documentElement.addEventListener('pointerleave', () => { if (state.hover) setAnn({ hover: null }); });
+  doc.documentElement.addEventListener('pointerleave', () => { if (get().hover) set({ hover: null }); });
 
   const finish = (e: PointerEvent) => {
-    const pts = state.drawing;
+    const pts = get().drawing;
     if (!pts) return;
     swallow(e);
-    setAnn({ drawing: null });
+    set({ drawing: null });
     const b = bounds(pts);
     if (b.right - b.left < 8 || b.bottom - b.top < 8) return; // a click or a stroke, not a loop
     const poly = simplify([...pts, at(e)]);
     const els = looped(doc, poly);
-    setAnn({ mark: { els: els.length ? els : [doc.body], shape: poly } });
+    set({ mark: { els: els.length ? els : [doc.body], shape: poly } });
     focusCard();
   };
   win.addEventListener('pointerup', finish, true);
-  win.addEventListener('pointercancel', () => setAnn({ drawing: null }), true);
+  win.addEventListener('pointercancel', () => set({ drawing: null }), true);
 }

@@ -8,7 +8,6 @@ import { inFolders, stepFrom } from '@/lib/status';
 import { save } from '@/lib/storage';
 import { kindOf } from '@/lib/text';
 import { get, set, type State } from './store';
-import { getAnn } from './doc/annotate';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -23,7 +22,7 @@ export function sendable(s: State = get()): [comments: number, files: number] {
   return [live.reduce((n, f) => n + f.drafts, 0), live.length];
 }
 /** An open editor, composer, note edit or element mark is never replaced under the user. */
-const busy = (s: State) => !!(s.editing || s.composer || s.noteEdit || getAnn().mark);
+const busy = (s: State) => !!(s.editing || s.composer || s.noteEdit || s.mark);
 
 export async function loadAll() {
   const { drafts, edits } = await api<DraftsResponse>('drafts');

@@ -7,6 +7,7 @@ import { useSyncExternalStore } from 'react';
 import { load } from '@/lib/storage';
 import { normalizeOff, type FilterKey } from '@/lib/filter';
 import { names, type Names } from '@/lib/status';
+import type { Mark, Pt, Tool } from './doc/annotate';
 
 export interface Editing {
   index: number | null; // null: the whole file (HTML, plain text)
@@ -56,6 +57,13 @@ export interface State {
   rejecting: boolean; // the open file's Reject confirm is showing
   closedDirs: string[];
   settingsOpen: boolean;
+  // Marking an HTML file (doc/annotate.ts)
+  tool: Tool;
+  mark: Mark | null; // its note card is open
+  markKind: CommentKind; // what the card adds: a change or a question
+  hover: Element | null; // the Pointer's outline
+  drawing: Pt[] | null; // a loop being drawn, document coordinates
+  flash: { k: number; at: number } | null; // a comment's elements, outlined for a moment
 }
 
 let state: State = {
@@ -90,6 +98,12 @@ let state: State = {
   rejecting: false,
   closedDirs: [],
   settingsOpen: false,
+  tool: 'text',
+  mark: null,
+  markKind: 'change',
+  hover: null,
+  drawing: null,
+  flash: null,
 };
 
 const listeners = new Set<() => void>();

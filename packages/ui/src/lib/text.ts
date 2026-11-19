@@ -1,7 +1,8 @@
 import type { DocKind } from '@trove/core/types';
 
 export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
-export const dirOf = (path: string) => path.split('/').slice(0, -1).join('/');
+/** The folder a path is in: '' for a relative top-level name, '/' for one at the root. */
+export const dirOf = (path: string) => path.split('/').slice(0, -1).join('/') || (path.startsWith('/') ? '/' : '');
 export const nameOf = (path: string) => path.split('/').at(-1) ?? path;
 /** LRM marks keep a folder's slashes in order inside the rtl box that truncates its start. */
 export const folderText = (dir: string) => `\u200E${dir}/\u200E`;
