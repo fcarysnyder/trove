@@ -17,7 +17,7 @@ import { loadAll, open, revertEdit, saveDrafts, send, sendable, setScope, toggle
 import { Count, IconButton, PathLabel } from './bits';
 import { get, set, useNames, useStore } from './store';
 import { showBlock, showPassage } from './doc/commands';
-import { ActivityList } from './Activity';
+import { History, useUnread } from './Activity';
 import { Notice } from './TopBar';
 
 // Desktop only, and its own chunk: the plugin's page never loads xterm.
@@ -63,6 +63,7 @@ export function ChangesColumn() {
   };
 
   const [tab, setTab] = useState(() => load('agent-tab', 'changes'));
+  const unread = useUnread(tab === 'history');
   let body: ReactNode;
   if (!current) body = <p className="px-4 py-3 text-muted-foreground">No file open</p>;
   else if (scope === 'file') {
@@ -109,14 +110,12 @@ export function ChangesColumn() {
           <div className="flex h-9 shrink-0 items-center gap-1 border-b pr-2 pl-4">
             <Tabs.List aria-label="Agent" className="flex h-full gap-4">
               <Tabs.Trigger value="changes" className={TAB}>Changes{!!shown && <Count n={shown} />}</Tabs.Trigger>
-              <Tabs.Trigger value="history" className={TAB}>History</Tabs.Trigger>
+              <Tabs.Trigger value="history" className={TAB}>History{!!unread && <Count n={unread} className="bg-agent text-black" />}</Tabs.Trigger>
             </Tabs.List>
             <span className="ml-auto">{fold}</span>
           </div>
           <Tabs.Content value="changes" className="min-h-0 flex-1"><ScrollArea className="h-full">{body}</ScrollArea></Tabs.Content>
-          <Tabs.Content value="history" className="min-h-0 flex-1">
-            <ScrollArea className="h-full"><ActivityList path={scope === 'file' ? current?.path : undefined} /></ScrollArea>
-          </Tabs.Content>
+          <Tabs.Content value="history" className="min-h-0 flex-1"><History path={scope === 'file' ? current?.path : undefined} /></Tabs.Content>
         </Tabs.Root>
       )} />
       <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
