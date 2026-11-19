@@ -8,6 +8,7 @@ import { inFolders, stepFrom } from '@/lib/status';
 import { save } from '@/lib/storage';
 import { kindOf } from '@/lib/text';
 import { get, set, type State } from './store';
+import { getAnn } from './doc/annotate';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -21,8 +22,8 @@ export function sendable(s: State = get()): [comments: number, files: number] {
   const live = s.files.filter((f) => f.drafts && f.state !== 'working' && f.state !== 'rejected');
   return [live.reduce((n, f) => n + f.drafts, 0), live.length];
 }
-/** An open editor, composer or note edit is never replaced under the user. */
-const busy = (s: State) => !!(s.editing || s.composer || s.noteEdit);
+/** An open editor, composer, note edit or element mark is never replaced under the user. */
+const busy = (s: State) => !!(s.editing || s.composer || s.noteEdit || getAnn().mark);
 
 export async function loadAll() {
   const { drafts, edits } = await api<DraftsResponse>('drafts');
@@ -225,11 +226,13 @@ export async function saveDrafts(path: string, drafts: Draft[]) {
   await refresh();
 }
 
-export function addComment(note: string) {
+/** Add the composer's comment, or `draft` (an element mark, which has no composer). */
+export function addComment(note: string, draft?: Pick<Draft, 'kind' | 'anchor'>) {
   const { composer, current } = get();
-  if (!note || !composer || !current) return;
-  set({ composer: null });
-  void saveDrafts(current.path, [...current.drafts, { kind: composer.kind, note, anchor: composer.anchor }]);
+  const d = draft ?? composer;
+  if (!note || !d || !current) return;
+  if (!draft) set({ composer: null });
+  void saveDrafts(current.path, [...current.drafts, { kind: d.kind, note, anchor: d.anchor }]);
 }
 
 /** Save an edit (hash-checked). Returns an error to show in the editor, or null once saved and reloaded. */
