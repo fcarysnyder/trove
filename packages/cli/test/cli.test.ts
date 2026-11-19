@@ -33,6 +33,18 @@ test('the bundle builds, serves a repository and prints the done command', async
     run('detach');
     expect((await (await fetch(`http://127.0.0.1:${port}/api/source`)).json()).agentInfo.connected).toBe(false);
     expect(spawnSync(process.execPath, [bundle, 'info', '--root', root], { encoding: 'utf8' }).stdout.trim()).toBe(line);
+    // say and done --note: text of any shape from an argument or stdin, into History.
+    const say = spawnSync(process.execPath, [bundle, 'say', '-', '--file', join(root, 'a.md'), '--port', String(port)], { encoding: 'utf8', input: '- two lines,\n"quoted" `code`\n' });
+    const id = say.stdout.match(/^message (\w+) is in History\n$/)?.[1];
+    expect(id).toBeTruthy();
+    expect(run('say', 'Short', 'answer', '--re', id!).status).toBe(0);
+    expect(run('done', 'b.md', '--note', '-').stdout.trim()).toBe('b.md was not locked');
+    expect(spawnSync(process.execPath, [bundle, 'done', 'b.md', '--note', '-', '--port', String(port)], { encoding: 'utf8', input: 'Tightened it.\n' }).stdout.trim())
+      .toBe('b.md was not locked, with your note in History');
+    expect(run('say', 'x', '--file', 'nope.md').stdout.trim()).toBe('say failed: not in the review set: nope.md');
+    const said = (await (await fetch(`http://127.0.0.1:${port}/api/activity`)).json()).entries.filter((e: any) => e.kind === 'message');
+    expect(said.map((e: any) => [e.from, e.body, e.paths, e.re])).toEqual([
+      ['agent', '- two lines,\n"quoted" `code`', ['a.md'], undefined], ['agent', 'Short answer', undefined, id], ['agent', 'Tightened it.', ['b.md'], undefined]]);
     const again = spawnSync(process.execPath, [bundle, 'serve', '--root', root, '--port', '0'], { encoding: 'utf8' });
     expect(again.stdout.trim()).toBe(`Trove is already serving this repository at http://127.0.0.1:${port} (trove serve).\n`
       + `Attach with: trove attach --port ${port} --agent claude. Pass --force to start another.`);

@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // @ts-check
 // trove: the CLI. `serve` runs the review server over a git repository; `attach` joins one that
-// is already running (the desktop's); `done`, `ask` and `reply` are the agent's side of it;
+// is already running (the desktop's); `done`, `say`, `ask` and `reply` are the agent's side of it;
 // `--selftest` checks the engine end to end.
 //
 //   trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>] [--force]
 //   trove attach [--root <repo> | --port N] [--agent claude|codex|other] | detach [--root <repo> | --port N] | info [--root <repo> | --port N]
-//   trove done <file> [--root <repo> | --port N]
+//   trove done <file> [--note "<markdown>" | --note -] [--root <repo> | --port N]
+//   trove say "<markdown>" | say - [--file <path>]... [--re <entry id>] [--root <repo> | --port N]   (-: the text from stdin)
 //   trove ask "<question>" | reply "<summary>" | ask --clear [--root <repo> | --port N]
 // Without --port these find the server running on --root's repository (default: the current directory's).
 //   trove --selftest
@@ -18,7 +19,7 @@ import { call, running, selftest, serve } from '@trove/core';
 
 const USAGE = 'usage: trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--ui <dir>] [--force]'
   + ' | attach [--root <repo> | --port N] [--agent claude|codex|other] | detach [--root <repo> | --port N] | info [--root <repo> | --port N]'
-  + ' | done <file> [--root <repo> | --port N] | ask "<question>" | reply "<summary>" | ask --clear [--root <repo> | --port N] | --selftest';
+  + ' | done <file> [--note "<markdown>" | --note -] [--root <repo> | --port N] | say "<markdown>" | say - [--file <path>]... [--re <entry id>] [--root <repo> | --port N] | ask "<question>" | reply "<summary>" | ask --clear [--root <repo> | --port N] | --selftest';
 const here = dirname(fileURLToPath(import.meta.url));
 
 // How the agent should call this binary back: `trove` when it runs from PATH (an npm bin link),
@@ -43,6 +44,13 @@ async function firstLine(/** @type {number} */ port) {
   return `reviewing ${queued} files on ${git.body.branch ?? git.body.head}${git.body.worktree && !git.body.worktree.main ? ` (${git.body.worktree.name})` : ''} at http://127.0.0.1:${port}; notices in ${source.body.eventsLog}; after each file run: ${invoked()} done <file> --port ${port}`;
 }
 
+/** Everything on stdin: long text (many lines, quotes) without shell quoting. */
+async function stdin() {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === '--selftest') {
@@ -56,10 +64,11 @@ async function main() {
     options: {
       root: { type: 'string', default: '.' }, port: { type: 'string' }, force: { type: 'boolean' }, exclude: { type: 'string', multiple: true },
       scope: { type: 'string' }, base: { type: 'string' }, ui: { type: 'string' }, clear: { type: 'boolean' }, agent: { type: 'string', default: 'claude' },
+      note: { type: 'string' }, file: { type: 'string', multiple: true }, re: { type: 'string' },
     },
   });
   // serve binds 4824 by default; the other commands go to --port, else the server on --root's repository.
-  const finds = ['attach', 'detach', 'info', 'done', 'ask', 'reply'].includes(command);
+  const finds = ['attach', 'detach', 'info', 'done', 'say', 'ask', 'reply'].includes(command);
   const port = values.port ? Number(values.port) : finds ? (await running(values.root))?.port : 4824;
   if (port === undefined) {
     console.log(`nothing is serving ${resolve(values.root)}: start one with trove serve, or pass --port`);
@@ -74,10 +83,20 @@ async function main() {
     process.exitCode = r.status === 200 ? 0 : 1;
     return;
   }
+  // A path as the server takes it: absolute when it exists from here, so any working directory works.
+  const pathOf = (/** @type {string} */ p) => (existsSync(p) ? resolve(p) : p);
   if (command === 'done' && positionals[0]) {
-    const file = existsSync(positionals[0]) ? resolve(positionals[0]) : positionals[0];
-    const r = await call(port, 'POST', '/api/release', { path: file }).catch(failed);
-    console.log(r.status === 200 ? (r.body.released ? `released ${positionals[0]}` : `${positionals[0]} was not locked`) : `done failed: ${r.body?.error ?? r.status}`);
+    const note = values.note === '-' ? await stdin() : values.note;
+    const r = await call(port, 'POST', '/api/release', { path: pathOf(positionals[0]), ...(note ? { note } : {}) }).catch(failed);
+    const noted = note ? ', with your note in History' : '';
+    console.log(r.status === 200 ? (r.body.released ? `released ${positionals[0]}${noted}` : `${positionals[0]} was not locked${noted}`) : `done failed: ${r.body?.error ?? r.status}`);
+    process.exitCode = r.status === 200 ? 0 : 1;
+    return;
+  }
+  if (command === 'say' && positionals.length) {
+    const text = positionals.join(' ') === '-' ? await stdin() : positionals.join(' ');
+    const r = await call(port, 'POST', '/api/message', { text, from: 'agent', paths: (values.file ?? []).map(pathOf), ...(values.re ? { re: values.re } : {}) }).catch(failed);
+    console.log(r.status === 200 ? `message ${r.body.id} is in History` : `say failed: ${r.body?.error ?? r.status}`);
     process.exitCode = r.status === 200 ? 0 : 1;
     return;
   }
