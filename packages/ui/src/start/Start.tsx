@@ -89,13 +89,13 @@ function Path({ path, className }: { path: string; className?: string }) {
   );
 }
 
-function Tile({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
+/** One column of the Open card: what it opens from (Git or Folder), then its buttons. */
+function OpenColumn({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <button onClick={onClick}
-      className="flex h-28 flex-col justify-between rounded-xl border bg-card p-4 text-left text-foreground outline-none transition-colors hover:bg-secondary focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-5">
-      {icon}
-      <span className="font-medium">{label}</span>
-    </button>
+    <div role="group" aria-label={label} className="flex flex-col gap-2 p-4 [&>button]:justify-start">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      {children}
+    </div>
   );
 }
 
@@ -146,12 +146,19 @@ function Picker() {
       onDrop={() => setDragging(false)}
     >
       <div className="flex flex-col gap-2">
-        <div className="grid grid-cols-4 gap-3">
-          <Tile icon={<BookMarked />} label="Open repository" onClick={() => void pick('repo')} />
-          <Tile icon={<Globe />} label="Clone GitHub repo" onClick={() => setCloning(true)} />
-          <Tile icon={<FolderOpen />} label="Open folder" onClick={() => void pick('folder')} />
-          <Tile icon={<FileText />} label="Open file" onClick={() => void pick('file')} />
-        </div>
+        <Card className="gap-0 overflow-hidden py-0">
+          <CardHeader className="px-4 py-3"><CardTitle className="text-sm text-foreground">Open</CardTitle></CardHeader>
+          <div className="grid grid-cols-2 divide-x border-t">
+            <OpenColumn label="Git">
+              <Button variant="outline" onClick={() => void pick('repo')}><BookMarked />Repository</Button>
+              <Button variant="outline" onClick={() => setCloning(true)}><Globe />Clone</Button>
+            </OpenColumn>
+            <OpenColumn label="Folder">
+              <Button variant="outline" onClick={() => void pick('folder')}><FolderOpen />Folder</Button>
+              <Button variant="outline" onClick={() => void pick('file')}><FileText />File</Button>
+            </OpenColumn>
+          </div>
+        </Card>
         {notRepo && (
           <div className="flex min-w-0 flex-col gap-1">
             <Path path={notRepo} className="font-mono text-xs text-muted-foreground" />
