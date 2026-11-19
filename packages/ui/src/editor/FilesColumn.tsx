@@ -4,8 +4,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from '@/components/ui/context-menu';
-import { Input } from '@/components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -16,8 +15,9 @@ import { countKeys, FILTERS, isPendingOnly, markRange, matches, PENDING_OFF, tog
 import { stateInfo, type Names } from '@/lib/status';
 import { dirOf, nameOf } from '@/lib/text';
 import { cn } from '@/lib/utils';
-import { acceptAll, createPr, open, prReady, reveal, setFilters, showInFolder, shown, togglePanel, visible } from './actions';
+import { acceptAll, createPr, open, prReady, reveal, setFilters, shown, togglePanel, visible } from './actions';
 import { Count, IconButton, nothingText } from './bits';
+import { PathMenu } from './PathMenu';
 import { StateIcons } from './StateIcon';
 import { get, set, useNames, useStore } from './store';
 
@@ -66,15 +66,17 @@ export function FilesColumn() {
         {!n.folder && <Filters off={off} />}
         <IconButton side="bottom" label="Hide files" tip="Hide files ([)" onClick={() => togglePanel('files', true)}><PanelLeftClose /></IconButton>
       </div>
-      <div className="relative shrink-0 px-2 pt-2">
-        <Search className="pointer-events-none absolute top-1/2 left-4.5 mt-1 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-        <Input id="file-search" value={query} placeholder="Search files" aria-label="Search files" autoComplete="off" spellCheck={false}
-          onChange={(e) => set({ query: e.target.value })} onKeyDown={onSearchKey} className="h-8 pr-8 pl-8" />
-        {query && (
-          <IconButton label="Clear search" className="absolute top-1/2 right-3 mt-1 -translate-y-1/2" onClick={() => { set({ query: '' }); document.getElementById('file-search')?.focus(); }}>
-            <X />
-          </IconButton>
-        )}
+      <div className="shrink-0 px-2 pt-2">
+        <InputGroup className="h-8">
+          <InputGroupAddon><Search aria-hidden /></InputGroupAddon>
+          <InputGroupInput id="file-search" value={query} placeholder="Search files" aria-label="Search files" autoComplete="off" spellCheck={false}
+            onChange={(e) => set({ query: e.target.value })} onKeyDown={onSearchKey} />
+          {query && (
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton size="icon-xs" aria-label="Clear search" title="Clear search" onClick={() => { set({ query: '' }); document.getElementById('file-search')?.focus(); }}><X /></InputGroupButton>
+            </InputGroupAddon>
+          )}
+        </InputGroup>
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <nav aria-label="Files" className="p-2">
@@ -182,10 +184,8 @@ function Marks({ file, names }: { file: FileRow; names: Names }) {
 function Folders({ list, query }: { list: FileRow[]; query: string }) {
   const closed = useStore((s) => s.closedDirs);
   const current = useStore((s) => s.current?.path);
-  const root = useStore((s) => s.source?.root);
   const n = useNames();
   const groups = Map.groupBy(list, (f) => dirOf(f.path));
-  const copy = (text: string) => void navigator.clipboard.writeText(text);
   return [...groups].map(([dir, rows]) => (
     <Collapsible key={dir} open={!!query || !closed.includes(dir)}
       onOpenChange={(o) => set((s) => ({ closedDirs: o ? s.closedDirs.filter((d) => d !== dir) : [...s.closedDirs, dir] }))}>
@@ -195,30 +195,16 @@ function Folders({ list, query }: { list: FileRow[]; query: string }) {
       </CollapsibleTrigger>
       <CollapsibleContent>
         {rows.map((f) => (
-          <ContextMenu key={f.path}>
-            <ContextMenuTrigger asChild>
-              <button data-tree-row title={f.path} aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
-                className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-card hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
-                  f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
-                {n.folder ? <FileIcon file={f} /> : <StateIcons file={f} names={n} />}
-                <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
-                {n.folder && <Marks file={f} names={n} />}
-                {f.drafts > 0 && <Count n={f.drafts} />}
-              </button>
-            </ContextMenuTrigger>
-            <ContextMenuContent>
-              <ContextMenuSub>
-                <ContextMenuSubTrigger>Copy</ContextMenuSubTrigger>
-                <ContextMenuSubContent>
-                  <ContextMenuItem disabled={!root} onSelect={() => copy(`${root}/${f.path}`)}>Absolute path</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => copy(f.path)}>Relative path</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => copy(nameOf(f.path))}>Filename</ContextMenuItem>
-                </ContextMenuSubContent>
-              </ContextMenuSub>
-              <ContextMenuSeparator />
-              <ContextMenuItem onSelect={() => void showInFolder(f.path)}>{navigator.platform.startsWith('Mac') ? 'Show in Finder' : 'Show in folder'}</ContextMenuItem>
-            </ContextMenuContent>
-          </ContextMenu>
+          <PathMenu key={f.path} path={f.path}>
+            <button data-tree-row title={f.path} aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
+              className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
+                f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
+              {n.folder ? <FileIcon file={f} /> : <StateIcons file={f} names={n} />}
+              <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
+              {n.folder && <Marks file={f} names={n} />}
+              {f.drafts > 0 && <Count n={f.drafts} />}
+            </button>
+          </PathMenu>
         ))}
       </CollapsibleContent>
     </Collapsible>
