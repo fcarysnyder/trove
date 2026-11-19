@@ -16,7 +16,7 @@ import { tilde } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { loadGit, loadRecents, openRecent, openWorktree, switchBranch } from './actions';
 import { Count, IconButton } from './bits';
-import { get, set, useNames, useStore, type State } from './store';
+import { get, set, useFolder, useNames, useStore, type State } from './store';
 
 type Tab = NonNullable<State['switcher']>;
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -26,6 +26,7 @@ let lastTab: Tab = 'repo';
 export function Switcher() {
   const git = useStore((s) => s.git);
   const source = useStore((s) => s.source);
+  const folder = useFolder();
   const tab = useStore((s) => s.switcher);
   const open = !!tab;
   useEffect(() => {
@@ -34,7 +35,7 @@ export function Switcher() {
     void loadRecents();
   }, [open]);
   // A folder has no repository, worktree or branch to switch: the segment names it and where it is.
-  if (source?.kind === 'folder') {
+  if (folder && source) {
     return (
       <div title={source.root} className="flex h-full w-72 min-w-0 shrink items-center gap-3 border-r px-4 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground">
         <FolderOpen />

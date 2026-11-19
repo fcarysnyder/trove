@@ -7,13 +7,13 @@ import { passes, normalizeOff, type FilterKey } from '@/lib/filter';
 import { inFolders, stepFrom } from '@/lib/status';
 import { save } from '@/lib/storage';
 import { kindOf } from '@/lib/text';
-import { get, set, type State } from './store';
+import { get, isFolder, set, type State } from './store';
 import { getAnn } from './doc/annotate';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Whether the search and filters leave a file in the tree. A folder has no review states to filter: the search only. */
-export const shown = (s: State = get()) => (f: FileRow) => passes(f, s.source?.kind === 'folder' ? [] : s.filterOff, s.query);
+export const shown = (s: State = get()) => (f: FileRow) => passes(f, isFolder(s) ? [] : s.filterOff, s.query);
 /** The tree's folders, the n / N position and stepping follow this list: committed and rejected files have their own sections; the search and filters narrow it. */
 export const visible = (s: State = get()) => s.files.filter((f) => inFolders(f) && shown(s)(f));
 export const entry = (s: State = get()) => s.files.find((f) => f.path === s.current?.path);

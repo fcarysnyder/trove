@@ -2,7 +2,7 @@
 // while typing, in menus and dialogs, and on controls that own their arrows; j/k/arrows/Enter/S/X are
 // ignored while an edit is open.
 import { accept, entry, focusSearch, skip, step, togglePanel } from './actions';
-import { get, set } from './store';
+import { get, isFolder, set } from './store';
 import { pickAction, toggleNew } from './doc/commands';
 import { canMark, escapeTool, focusCard, getAnn, setTool } from './doc/annotate';
 
@@ -16,7 +16,7 @@ export function onKey(e: KeyboardEvent) {
   const doc = t.ownerDocument ?? document;
   // Enter accepts and moves on only from the page itself or a tree row, never from another control.
   const onPage = t === doc.body || t === doc.documentElement || !!t.closest?.('[data-tree-row]');
-  const review = s.source?.kind !== 'folder'; // a folder is edited in place: no accept, skip or reject
+  const review = !isFolder(s); // a folder is edited in place: no accept, skip or reject
   // With an element mark pending, Enter goes to its note instead.
   if (e.key === 'Enter' && getAnn().mark) { e.preventDefault(); focusCard(); return; }
   if (e.key === 'Enter' && review && entry()?.state === 'queue' && !s.editing && onPage) {

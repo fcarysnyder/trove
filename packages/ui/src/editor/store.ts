@@ -103,4 +103,7 @@ export const useStore = <T,>(pick: (s: State) => T): T => useSyncExternalStore(s
 
 /** The attached agent's label; a server without agentInfo says only claude or other, and one without /api/source was Claude's. */
 const labelOf = (s: SourceInfo | null) => s?.agentInfo?.label ?? AGENT_LABELS[s?.agent ?? 'claude'];
-export const useNames = (): Names => names(useStore((s) => labelOf(s.source)), useStore((s) => s.source?.kind === 'folder'));
+export const useNames = (): Names => names(useStore((s) => labelOf(s.source)));
+/** The source is a folder: edited in place, with no review state. */
+export const isFolder = (s: State) => s.source?.kind === 'folder';
+export const useFolder = () => useStore(isFolder);

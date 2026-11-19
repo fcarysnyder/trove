@@ -15,7 +15,7 @@ import { AnnotateBar, AnnotateLayer, commitMark } from './Annotate';
 import { accept, entry, focusComment, loadRecents, nextPending, openRecent, openWorktree, post, reject, restore, revertAll, setShowNew, skip, togglePanel } from './actions';
 import { Count, IconButton, nothingText, PathLabel } from './bits';
 import { Icon, StateIcons } from './StateIcon';
-import { get, set, useNames, useStore } from './store';
+import { get, set, useFolder, useNames, useStore } from './store';
 import { editBlock, onSelect } from './doc/commands';
 import { elementHit, wireFrame } from './doc/annotate';
 import { blockEl, bodyOf } from './doc/dom';
@@ -32,9 +32,10 @@ export function DocColumn() {
   const editing = useStore((s) => s.editing);
   const question = useStore((s) => s.question);
   const n = useNames();
+  const folder = useFolder();
   const model = current && docModel(current);
   // A folder has nothing to mark new against but the text before the agent's last update.
-  const canNew = !!model?.canShowNew && (!n.folder || !!current?.since);
+  const canNew = !!model?.canShowNew && (!folder || !!current?.since);
   const own = current ? current.drafts.length + current.edits.length : 0;
   const newTip = canNew ? 'Show new (N)' : current?.kind === 'markdown' ? 'No earlier version to compare with' : 'Markdown files only';
   return (
@@ -98,12 +99,13 @@ function Nothing() {
   const loaded = useStore((s) => s.loaded);
   const any = useStore((s) => s.files.length > 0);
   const source = useStore((s) => s.source);
+  const folder = useFolder();
   const git = useStore((s) => s.git);
   const recents = useStore((s) => s.recents);
   useEffect(() => { void loadRecents(); }, []);
   if (!loaded) return null;
   if (any) return <p className="grid min-h-full place-items-center text-muted-foreground">Select a file</p>;
-  if (source?.kind === 'folder') return <p className="grid min-h-full place-items-center font-medium text-foreground">No documents</p>;
+  if (folder) return <p className="grid min-h-full place-items-center font-medium text-foreground">No documents</p>;
   const ours = new Set(git?.worktrees.map((w) => w.path));
   const elsewhere = [
     ...(git?.worktrees ?? []).filter((w) => !w.current && w.changes).map((w) => ({
@@ -146,12 +148,13 @@ function DocView() {
   const editing = useStore((s) => s.editing);
   const hits = useStore((s) => s.hits);
   const n = useNames();
+  const folder = useFolder();
   const model = docModel(current);
   const md = useRef<HTMLDivElement>(null);
   const marks = useRef<Marks | null>(null);
   const [frameLoads, setFrameLoads] = useState(0); // the HTML frame's text is measurable once it has loaded
   const [card, setCard] = useState<Card | null>(null);
-  const layered = showNew && !editing && current.kind === 'markdown' && (!n.folder || !!current.since);
+  const layered = showNew && !editing && current.kind === 'markdown' && (!folder || !!current.since);
 
   // Show new: tints, badges and bars, measured on the rendered blocks.
   useLayoutEffect(() => {
@@ -354,9 +357,10 @@ function DocFooter() {
   const current = useStore((s) => s.current);
   const editing = useStore((s) => s.editing);
   const n = useNames();
+  const folder = useFolder();
   useStore((s) => s.files);
   const f = entry();
-  if (!current || !f) return n.folder ? null : <div className="min-h-12 shrink-0 border-t" />;
+  if (!current || !f) return folder ? null : <div className="min-h-12 shrink-0 border-t" />;
   const s = status(f, n);
   // The second click of a double-click lands on the next file's buttons; ignore it.
   const act = (fn: () => unknown) => (e: ReactMouseEvent) => { if (e.detail <= 1) void fn(); };
@@ -376,7 +380,7 @@ function DocFooter() {
     </Tooltip>
   );
   // A folder is edited in place, with no review: only Unlock or Revert all edits, and no footer without either.
-  if (n.folder) {
+  if (folder) {
     if (f.state !== 'working' && !f.edited) return null;
     const info = stateInfo(f.state === 'working' ? 'working' : 'edited', n);
     return (
