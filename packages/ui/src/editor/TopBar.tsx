@@ -49,7 +49,8 @@ export function TopBar() {
         <Switcher />
       </div>
       <div className="flex items-center gap-2">
-        <Progress />
+        {/* A folder has no review to make progress on. */}
+        {source?.kind !== 'folder' && <Progress />}
         <span className="text-xs text-muted-foreground tabular-nums">{pos || '–'} / {list.length}</span>
         <IconButton label="Previous file" tip="Previous file (←, k)" onClick={() => step(-1)}><ChevronLeft /></IconButton>
         <IconButton label="Next file" tip="Next file (→, j)" onClick={() => step(1)}><ChevronRight /></IconButton>
@@ -171,7 +172,7 @@ function Connect() {
   const start = (tool: AgentTool) => {
     setOpen(false);
     setStarting(tool);
-    bridge!.open({ path: source.root, agent: tool }).catch((e: unknown) => { setStarting(null); toast(e instanceof Error ? e.message : String(e)); });
+    bridge!.open({ path: source.root, agent: tool, kind: source.kind }).catch((e: unknown) => { setStarting(null); toast(e instanceof Error ? e.message : String(e)); });
   };
   const copy = (text: string) => navigator.clipboard.writeText(text).then(() => toast('Copied'), () => toast('Copy failed'));
   const rows = [

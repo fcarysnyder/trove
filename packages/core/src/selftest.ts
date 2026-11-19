@@ -1,14 +1,14 @@
 // The end-to-end check, ported from doc-review.mjs --selftest: anchoring, the block splice, hash
-// checks, Host/Origin checks and every state transition against a throwaway git repo, plus the
-// refusal of a plain folder, a branch scope, settings and the UI static files. Node built-ins only, so the bundled CLI
+// checks, Host/Origin checks and every state transition against a throwaway git repo, plus a plain
+// folder (and one inside a repository), a branch scope, settings and the UI static files. Node built-ins only, so the bundled CLI
 // runs it (`trove --selftest`) with no devDependencies; vitest calls it too.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { addedSpans, blocks, countStates, findAnchor, makeAnchor, matchBlocks, splice, subtractSpans, wordDiff } from './anchor.js';
 import { call, createApp, type AppOptions } from './app.js';
 import { agentAbove, alive } from './presence.js';
@@ -43,7 +43,7 @@ export async function selftest(): Promise<void> {
     await branchCase(temps);
     await switchCase(temps);
     await agentCase(temps);
-    notARepo(temps);
+    await folderCase(temps);
   } finally {
     for (const t of temps) rmSync(t, { recursive: true, force: true });
   }
@@ -615,11 +615,96 @@ async function agentCase(temps: string[]) {
   await app.close();
 }
 
-// A folder outside any git repository is refused, and the probe says so.
-function notARepo(temps: string[]) {
-  const root = mkdtempSync(join(tmpdir(), 'trove-plain-'));
+// A plain folder: every doc in it, edited in place with no review state. Comments, Send, the agent's update, edits and
+// reverts work as in a repository; accept, skip, reject and pr are refused. Inside a repository, opened as a folder:
+// .gitignore holds and git is only read.
+async function folderCase(temps: string[]) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'trove-folder-')));
   temps.push(root);
-  writeFileSync(join(root, 'a.md'), '# A\n');
+  const seed: Record<string, string> = { 'a.md': '# A\n\nOne.\n', 'docs/b.md': '# B\n', 'docs/c.html': '<p>C</p>\n', '.hidden/x.md': '# x\n',
+    'node_modules/y/z.md': '# z\n', 'gen/g.md': '# g\n', 'notes.txt': 'notes\n', 'pic.png': 'x' };
+  const plant = (dir: string, files: Record<string, string>) => {
+    for (const [p, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(dir, p)), { recursive: true });
+      writeFileSync(join(dir, p), text);
+    }
+  };
+  plant(root, seed);
   assert.equal(probeGit(root), null);
-  assert.throws(() => createApp({ root, log: () => {} }), { message: `not a git repository: ${root}` });
+  const opts = { root, exclude: ['gen/**'] };
+  let { app, port } = await listen(opts);
+  temps.push(app.info().stateDir);
+  assert.equal(dirname(app.info().stateDir), join(homedir(), '.trove', 'folders'), 'state outside the folder');
+  const get = async (path: string, p = port) => (await call(p, 'GET', path)).body;
+  const post = (path: string, body: unknown) => call(port, 'POST', path, body);
+  const rows = async (p = port) => Object.fromEntries((await get('/api/files', p)).files.map((f: any) => [f.path, [f.state, f.updated, f.edited, f.drafts].join(' ')]));
+  const info = await get('/api/source');
+  assert.deepEqual([info.kind, info.branch, info.base, info.scope, info.repo, info.worktree],
+    ['folder', null, null, 'uncommitted', { root, name: basename(root) }, { path: root, name: basename(root), branch: null, main: true }]);
+  assert.deepEqual(await rows(), { 'a.md': 'queue false false 0', 'docs/b.md': 'queue false false 0', 'docs/c.html': 'queue false false 0' },
+    'every doc of the enabled types, recursively: no dot-folders, node_modules, excluded paths or other types');
+  assert.equal((await call(port, 'GET', '/api/git')).status, 404);
+  assert.equal((await post('/api/switch', { branch: 'main' })).status, 404);
+  assert.equal((await get('/api/file?path=a.md')).base, null, 'nothing to mark new against before an update');
+
+  // No review state: every review action is refused and changes nothing.
+  const a = await get('/api/file?path=a.md');
+  const refused = [['accept', { path: 'a.md', hash: a.hash }], ['unaccept', { path: 'a.md' }], ['accept-all', { paths: ['a.md'] }],
+    ['skip', { path: 'a.md', on: true }], ['reject', { path: 'a.md', hash: a.hash }], ['pr', {}]] as const;
+  for (const [route, body] of refused) assert.equal((await post(`/api/${route}`, body)).status, 409, route);
+  assert.deepEqual([(await post('/api/accept', { path: 'a.md', hash: a.hash })).body.error, readFileSync(join(root, 'a.md'), 'utf8')],
+    [`No accept in a folder: ${basename(root)} is edited in place`, seed['a.md']]);
+
+  // The loop: a comment, Send locks the file, the agent's done brings it back updated; Show new marks against the text at send.
+  const anchor = { quote: 'B', prefix: '', suffix: '', path: [], raw: '' };
+  await post('/api/drafts', { path: 'docs/b.md', drafts: [{ kind: 'change', note: 'n', anchor }] });
+  assert.equal((await rows())['docs/b.md'], 'queue false false 1');
+  assert.deepEqual((await post('/api/send', {})).body.locked, ['docs/b.md']);
+  assert.equal((await rows())['docs/b.md'], 'working false false 0');
+  writeFileSync(join(root, 'docs/b.md'), '# B, by the agent\n');
+  assert.deepEqual((await post('/api/release', { path: join(root, 'docs/b.md') })).body, { released: true, updated: true });
+  assert.deepEqual([(await get('/api/file?path=docs%2Fb.md')).since, (await rows())['docs/b.md']], [seed['docs/b.md'], 'queue true false 0']);
+  // Updated means since your last send of it: the next send clears it, and an unchanged release leaves it clear.
+  await post('/api/drafts', { path: 'docs/b.md', drafts: [{ kind: 'change', note: 'again', anchor }] });
+  await post('/api/send', {});
+  assert.deepEqual((await post('/api/release', { path: 'docs/b.md' })).body, { released: true, updated: false });
+  assert.equal((await rows())['docs/b.md'], 'queue false false 0');
+
+  // Edits save in place, and revert.
+  const saved = await post('/api/save', { path: 'docs/c.html', hash: sha(seed['docs/c.html']), raw: '<p>C2</p>\n' });
+  assert.deepEqual([saved.status, readFileSync(join(root, 'docs/c.html'), 'utf8'), (await rows())['docs/c.html']], [200, '<p>C2</p>\n', 'queue false true 0']);
+  assert.equal((await post('/api/revert', { path: 'docs/c.html' })).status, 200);
+  assert.deepEqual([readFileSync(join(root, 'docs/c.html'), 'utf8'), (await rows())['docs/c.html']], [seed['docs/c.html'], 'queue false false 0']);
+  writeFileSync(join(root, 'new.md'), '# New\n');
+  assert.equal((await rows())['new.md'], 'queue false false 0', 'a new file lists on the next request');
+  await app.close();
+
+  // A file as the root: its folder, with the file's type turned on there.
+  ({ app, port } = await listen({ root: join(root, 'notes.txt') }));
+  assert.deepEqual([app.info().root, (await rows())['notes.txt'], app.settings().types.txt], [root, 'queue false false 0', true]);
+  await app.close();
+
+  // Inside a repository, as a folder: tracked and untracked docs, not ignored ones; git is read, never written.
+  const { root: repo, sh } = newRepo('trove-folder-git-');
+  temps.push(repo);
+  plant(repo, { '.gitignore': 'docs/out/\n', 'docs/a.md': '# A\n', 'docs/out/x.md': '# x\n' });
+  sh('add', '.');
+  sh('commit', '-qm', 'a');
+  plant(repo, { 'docs/new.md': '# new\n' });
+  const docs = await listen({ root: join(repo, 'docs'), folder: true });
+  temps.push(docs.app.info().stateDir);
+  assert.deepEqual(Object.keys(await rows(docs.port)), ['a.md', 'new.md'], '.gitignore holds');
+  const edited = await call(docs.port, 'POST', '/api/save', { path: 'a.md', hash: sha('# A\n'), index: 0, raw: '# A, edited' });
+  assert.equal(edited.status, 200);
+  await call(docs.port, 'POST', '/api/drafts', { path: 'new.md', drafts: [{ kind: 'change', note: 'n', anchor }] });
+  assert.equal((await call(docs.port, 'POST', '/api/send', {})).status, 200);
+  assert.equal((await call(docs.port, 'POST', '/api/accept', { path: 'a.md', hash: edited.body.hash })).status, 409);
+  assert.deepEqual([sh('diff', '--cached', '--name-only'), sh('status', '--porcelain'), existsSync(join(repo, '.git', 'trove'))],
+    ['', ' M docs/a.md\n?? docs/new.md\n', false], 'nothing staged, nothing in the git dir: only the edit itself');
+  await docs.app.close();
+  const out = await listen({ root: join(repo, 'docs/out'), folder: true });
+  temps.push(out.app.info().stateDir);
+  assert.deepEqual(Object.keys(await rows(out.port)), ['x.md'], 'a folder git ignores whole is walked');
+  await out.app.close();
+  assert.equal(createApp({ root: join(repo, 'docs'), log: () => {} }).info().kind, 'git', 'without folder, the repository');
 }

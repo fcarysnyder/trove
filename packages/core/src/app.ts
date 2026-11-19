@@ -1,4 +1,4 @@
-// The review server: a queue over a git working tree, comment drafts, the user's block edits, batches for the
+// The review server: a queue over a git working tree or a plain folder, comment drafts, the user's block edits, batches for the
 // agent, locks while it works, and the HTTP API the page talks to. Ported from the markdown-editor
 // skill's doc-review.mjs; every route behaves as it did there. Node built-ins only.
 import { execFile } from 'node:child_process';
@@ -10,11 +10,14 @@ import { basename, dirname, extname, join, relative, resolve, sep } from 'node:p
 import { blocks, splice } from './anchor.js';
 import { included, kindOf, loadSettings, mergeSettings, saveSettings } from './settings.js';
 import { agentAbove, alive, peerOf } from './presence.js';
-import { openSource, sha, withChanges } from './source.js';
-import { AGENT_LABELS, type Activity, type AgentId, type AgentInfo, type BlockEdit, type Draft, type FileEntry, type GitInfo, type GitScope, type Question, type Settings, type SourceInfo } from './types.js';
+import { folderStateDir, inGit, openFolder, openSource, sha, withChanges } from './source.js';
+import { AGENT_LABELS, DEFAULT_DOC_TYPES, type Activity, type AgentId, type AgentInfo, type BlockEdit, type Draft, type FileEntry, type GitInfo, type GitScope, type Question, type Settings, type SourceInfo, type SourceKind } from './types.js';
 
 export interface AppOptions {
-  root: string; // any path inside a git working tree; anything else throws `not a git repository: <root>`
+  // A folder or a file. Inside a git working tree, that working tree; anywhere else, the folder (a file's folder) as a
+  // folder source. A file whose doc type is off in its folder turns that type on.
+  root: string;
+  folder?: boolean; // serve the folder as a folder source even inside a git working tree
   scope?: GitScope; // default from settings
   base?: string | null; // branch scope's base; default from settings
   exclude?: string[]; // replaces Settings.exclude for this run
@@ -28,7 +31,7 @@ export interface AppOptions {
   by?: ServerRecord['by']; // who runs this server, written to server.json; default 'cli'
 }
 
-/** `<git-dir>/trove/server.json`: the running server, so another process finds it from the repository alone. */
+/** `<state dir>/server.json`: the running server, so another process finds it from the repository or folder alone. */
 export interface ServerRecord { port: number; pid: number; startedAt: string; by: 'desktop' | 'cli' }
 
 export interface App {
@@ -37,8 +40,8 @@ export interface App {
   info(): SourceInfo;
   settings(): Settings;
   list(): FileEntry[];
-  /** Branch, worktrees and changed-path count, as GET /api/git answers. */
-  git(): GitInfo;
+  /** Branch, worktrees and changed-path count, as GET /api/git answers; null for a folder. */
+  git(): GitInfo | null;
   /** Run once a second: releases locked files that changed and then stayed quiet. */
   tick(now?: number): void;
   close(): Promise<void>;
@@ -69,8 +72,12 @@ interface EditRecord { before: string; saved?: string; blocks: BlockEdit[] }
 interface Rejected { text: string; staged: string | null; drafts: Draft[]; at: string }
 type Result = [number, unknown];
 
+/** The source `root` names: a folder when asked for or outside any repository, else its git working tree. */
+const sourceFor = (root: string, folder?: boolean) => (folder || !inGit(root) ? openFolder(root) : openSource(root));
+
 export function createApp(o: AppOptions): App {
-  const source = openSource(resolve(o.root));
+  const asked = resolve(o.root);
+  const source = sourceFor(asked, o.folder);
   const { root: top, stateDir: dir } = source;
   const log = o.log ?? console.log;
   const quietMs = o.quietMs ?? 5000;
@@ -84,6 +91,14 @@ export function createApp(o: AppOptions): App {
   if (o.base !== undefined) overrides.base = o.base;
   if (o.exclude !== undefined) overrides.exclude = o.exclude;
   let current = mergeSettings(stored, overrides);
+  // A file opened in a folder lists even when its type is off there: opening it turns the type on.
+  const type = source.kind === 'folder' && statSync(asked).isFile() && !kindOf(asked, current)
+    ? DEFAULT_DOC_TYPES.find((t) => t.extensions.some((e) => asked.toLowerCase().endsWith(e))) : undefined;
+  if (type) {
+    stored = mergeSettings(stored, { types: { [type.id]: true } });
+    saveSettings(dir, stored);
+    current = mergeSettings(stored, overrides);
+  }
 
   // Locks, the agent's snapshots and its waiting question live on disk too, so a restart keeps them:
   // {working: {path: {hash, text}}, updated: {path: text}, question, seen, skipped, rejected}.
@@ -134,7 +149,7 @@ export function createApp(o: AppOptions): App {
 
   function list(): FileEntry[] {
     const before = seen.size;
-    const out = source.list(current, seen, new Set(rejected.keys()));
+    const out = source.kind === 'git' ? source.list(current, seen, new Set(rejected.keys())) : source.list(current);
     // A rejected path the source reports again has new content (say, regenerated): it is live again.
     let dropped = false;
     for (const f of out) {
@@ -205,19 +220,24 @@ export function createApp(o: AppOptions): App {
   const port = () => { const a = server.address(); return a && typeof a === 'object' ? a.port : 0; };
   const pick = ({ repo, worktree }: ReturnType<typeof source.place>) => ({ repo, worktree });
   const info = (): SourceInfo => ({
-    kind: 'git', root: top, name: basename(top), ...pick(source.place()), branch: source.branch(),
-    base: current.scope === 'branch' ? source.resolveBase(current) : null,
-    scope: current.scope, agent: agent?.id === 'claude' ? 'claude' : 'other', agentInfo: agentInfo(), port: port(), stateDir: dir, eventsLog: files.events, batchesLog: files.batches,
+    kind: source.kind, root: top, name: basename(top), ...pick(source.place()), branch: source.branch(),
+    base: source.kind === 'git' && current.scope === 'branch' ? source.resolveBase(current) : null,
+    scope: source.kind === 'git' ? current.scope : 'uncommitted', agent: agent?.id === 'claude' ? 'claude' : 'other', agentInfo: agentInfo(), port: port(), stateDir: dir, eventsLog: files.events, batchesLog: files.batches,
     doneCommand: (o.doneCommand ?? ((p) => `trove done <file> --port ${p}`))(port()),
   });
 
-  const git = (): GitInfo => {
+  const git = (): GitInfo | null => {
+    if (source.kind !== 'git') return null;
     const place = source.place();
     return {
     root: top, ...place, worktrees: withChanges(place.worktrees), branch: source.branch(), head: source.head(), branches: source.branches(),
     dirty: source.dirty(current), base: current.scope === 'branch' ? source.resolveBase(current) : null,
     };
   };
+
+  // A folder is edited in place: no review state, no git that writes, no HEAD to go back to.
+  const NOT_GIT = (what?: string): Result => (what ? [409, { error: `No ${what} in a folder: ${basename(top)} is edited in place` }]
+    : [404, { error: `${basename(top)} is open as a folder, without git` }]);
 
   const routes: Record<string, (q: URLSearchParams, body: any, req?: IncomingMessage) => Result> = {
     'GET /api/files': () => {
@@ -268,6 +288,7 @@ export function createApp(o: AppOptions): App {
     },
     // Accepts only the text the user last saw: a file that changed since is refused.
     'POST /api/accept': (_, { path, hash }) => {
+      if (source.kind !== 'git') return NOT_GIT('accept');
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       if (working.has(rel)) return BUSY();
@@ -283,6 +304,7 @@ export function createApp(o: AppOptions): App {
     },
     // Skip: come back to it later. Only the editor's mark; git is untouched.
     'POST /api/skip': (_, { path, on }) => {
+      if (source.kind !== 'git') return NOT_GIT('skip');
       const rel = listed(path);
       if (!rel || typeof on !== 'boolean') return [400, { error: 'path and on required' }];
       if (working.has(rel)) return BUSY();
@@ -296,6 +318,7 @@ export function createApp(o: AppOptions): App {
     // copy and the file's drafts are saved first, so Restore can put them back. Refused on a version
     // the user did not see. Its edits are dropped.
     'POST /api/reject': (_, { path, hash }) => {
+      if (source.kind !== 'git') return NOT_GIT('reject');
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       if (working.has(rel)) return BUSY();
@@ -318,7 +341,7 @@ export function createApp(o: AppOptions): App {
       const gone = rel && rejected.get(rel);
       if (!rel || !gone) return [404, { error: 'not rejected' }];
       mkdirSync(dirname(join(top, rel)), { recursive: true });
-      if (gone.staged !== null) {
+      if (gone.staged !== null && source.kind === 'git') {
         write(rel, gone.staged);
         source.accept(rel);
       }
@@ -331,6 +354,7 @@ export function createApp(o: AppOptions): App {
     // Accept all: the listed, free (not working, not rejected) paths given, in one git add. No hash check:
     // the user chose to accept files as they are now, seen or not.
     'POST /api/accept-all': (_, { paths }) => {
+      if (source.kind !== 'git') return NOT_GIT('accept');
       if (!Array.isArray(paths)) return [400, { error: 'paths required' }];
       const rels = [...new Set(paths.map(listed).filter((r): r is string => !!r && !working.has(r) && !rejected.has(r)))];
       source.accept(...rels);
@@ -339,6 +363,7 @@ export function createApp(o: AppOptions): App {
       return [200, { accepted: rels.length }];
     },
     'POST /api/unaccept': (_, { path }) => {
+      if (source.kind !== 'git') return NOT_GIT('accept');
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       if (working.has(rel)) return BUSY();
@@ -432,6 +457,7 @@ export function createApp(o: AppOptions): App {
       const changed = [...new Set(items.filter((c) => c.kind === 'change').map((c) => c.path as string))];
       for (const rel of changed) {
         source.unstage(rel);
+        if (source.kind === 'folder') updated.delete(rel); // a folder's Updated means since your last send of it
         const h = hashOf(rel);
         working.set(rel, { hash: h, last: h, at: 0, text: read(rel) });
       }
@@ -450,6 +476,7 @@ export function createApp(o: AppOptions): App {
     // Create PR: once nothing waits for review, ask the agent to commit what is staged and open a pull
     // request. Trove itself never commits; this is one line in the events log, like a batch's notice.
     'POST /api/pr': () => {
+      if (source.kind !== 'git') return NOT_GIT('pull request');
       const rows = list();
       if (rows.some((f) => working.has(f.path) || (!f.staged && !f.rejected && !f.skipped))) return [409, { error: 'Files are still waiting for review' }];
       const staged = rows.filter((f) => f.staged && !f.committed).length;
@@ -497,13 +524,14 @@ export function createApp(o: AppOptions): App {
       if (agent) note('attach', agent.label);
       return [200, agentInfo()];
     },
-    'GET /api/git': () => [200, git()],
+    'GET /api/git': () => { const g = git(); return g ? [200, g] : NOT_GIT(); },
     // The same as running `git switch <branch>` by hand, no more: no stash, no discard. Git itself
     // refuses when uncommitted changes would be overwritten; its message is the answer.
     'POST /api/switch': (_, { branch }) => {
+      if (source.kind !== 'git') return NOT_GIT();
       const target = typeof branch === 'string' ? source.branches().find((b) => b.name === branch) : undefined;
       if (!target) return [404, { error: `no such branch: ${branch}` }];
-      if (target.current) return [200, git()];
+      if (target.current) return [200, git()!];
       if (target.worktree) return [409, { error: `${branch} is checked out in ${target.worktree}`, worktree: target.worktree }];
       if (working.size) return [409, { error: `${Who()} is working on a file` }];
       const failed = source.switchTo(branch);
@@ -513,7 +541,7 @@ export function createApp(o: AppOptions): App {
       seen.clear();
       list();
       saveState();
-      return [200, git()];
+      return [200, git()!];
     },
     'GET /api/settings': () => [200, current],
     // A partial merge. Keys this run got from options (--scope, --exclude) give way to the user's
@@ -609,26 +637,39 @@ export function createApp(o: AppOptions): App {
   };
 }
 
-/** The server running on the repository at `root`, from its server.json: its pid lives and its port answers
- * for this root (pids get reused). null when none, or `root` is not in a git repository. */
-export async function running(root: string): Promise<ServerRecord | null> {
-  let top: string, r: ServerRecord;
-  try {
-    const source = openSource(resolve(root));
-    top = source.root;
-    r = JSON.parse(readFileSync(join(source.stateDir, 'server.json'), 'utf8'));
-  } catch { return null; }
+/** The server whose server.json is in `stateDir`, while its pid lives and its port answers for this root and kind (pids get reused). */
+async function recordIn(stateDir: string, top: string, kind: SourceKind): Promise<ServerRecord | null> {
+  let r: ServerRecord;
+  try { r = JSON.parse(readFileSync(join(stateDir, 'server.json'), 'utf8')); } catch { return null; }
   if (!alive(r.pid)) return null;
   const answer = await call(r.port, 'GET', '/api/source').catch(() => null);
-  return answer?.status === 200 && answer.body?.root === top ? r : null;
+  return answer?.status === 200 && answer.body?.root === top && (answer.body.kind ?? 'git') === kind ? r : null;
+}
+
+/** The server running on the repository `root` is in, else on the folder `root` names or the nearest folder above it. null when none. */
+export async function running(root: string): Promise<ServerRecord | null> {
+  const abs = resolve(root);
+  try {
+    const source = openSource(abs);
+    const r = await recordIn(source.stateDir, source.root, 'git');
+    if (r) return r;
+  } catch {}
+  let dir: string;
+  try { dir = realpathSync(statSync(abs).isDirectory() ? abs : dirname(abs)); } catch { return null; }
+  for (;;) {
+    const r = await recordIn(folderStateDir(dir), dir, 'folder');
+    if (r || dirname(dir) === dir) return r;
+    dir = dirname(dir);
+  }
 }
 
 /** Bind on 127.0.0.1. `port` 0 picks a free one. Resolves once listening; runs the quiet-release tick.
- * Throws when a server already runs on this repository, unless `force`. */
+ * Throws when a server already runs on this repository or folder, unless `force`. */
 export async function serve(options: AppOptions & { port?: number; force?: boolean }) {
-  const other = options.force ? null : await running(options.root);
+  const at = options.force ? null : sourceFor(resolve(options.root), options.folder);
+  const other = at && await recordIn(at.stateDir, at.root, at.kind);
   if (other) {
-    throw new Error(`Trove is already serving this repository at http://127.0.0.1:${other.port} (${other.by === 'desktop' ? 'desktop app' : 'trove serve'}).\n`
+    throw new Error(`Trove is already serving this ${at.kind === 'git' ? 'repository' : 'folder'} at http://127.0.0.1:${other.port} (${other.by === 'desktop' ? 'desktop app' : 'trove serve'}).\n`
       + `Attach with: trove attach --port ${other.port} --agent claude. Pass --force to start another.`);
   }
   const app = createApp(options);

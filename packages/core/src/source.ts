@@ -1,8 +1,9 @@
-// Where the queue comes from: a git working tree. The index is the approval state, Accept is
-// `git add`, nothing ever commits.
+// Where the queue comes from: a git working tree, where the index is the approval state and Accept is
+// `git add`, or a plain folder, edited in place with no review state. Nothing ever commits.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { enabledTypes, included, kindOf, loadSettings } from './settings.js';
 import type { BranchInfo, DocKind, FileEntry, GitProbe, RepoRef, Settings, WorktreeInfo, WorktreeRef } from './types.js';
@@ -83,6 +84,10 @@ export function withChanges(worktrees: WorktreeInfo[]): WorktreeInfo[] {
 }
 
 const gitTop = (dir: string) => { try { return realpathSync(gitAt(dir).git('rev-parse', '--show-toplevel').trim()); } catch { return null; } };
+/** The folder a path names: itself, or a file's folder. Throws when it does not exist. */
+const folderOf = (path: string) => (statSync(path).isDirectory() ? path : dirname(path));
+/** Is `path` (a folder or a file) inside a git working tree? */
+export const inGit = (path: string) => { try { return gitTop(folderOf(path)) !== null; } catch { return false; } };
 
 /** Is `path` inside a git working tree? Branches and the default base, or null when it is not. */
 export function probeGit(path: string): GitProbe | null {
@@ -100,7 +105,7 @@ export function probeGit(path: string): GitProbe | null {
 
 /** The git working tree `root` is in. Throws if `root` does not exist or is not inside one. */
 export function openSource(root: string) {
-  const top = gitTop(statSync(root).isDirectory() ? root : dirname(root));
+  const top = gitTop(folderOf(root));
   if (!top) throw new Error(`not a git repository: ${root}`);
   const g = gitAt(top);
   const { git, tryGit, branch, defaultBase } = g;
@@ -116,6 +121,7 @@ export function openSource(root: string) {
   const entry = (path: string, kind: DocKind, untracked: boolean, staged: boolean): FileEntry => ({ path, kind, untracked, staged });
 
   return {
+    kind: 'git' as const,
     root: top, // realpath of the toplevel
     stateDir,
     /** The branch scope's base ref: Settings.base, or auto. */
@@ -189,5 +195,66 @@ export function openSource(root: string) {
       const mb = s.scope === 'branch' && head === text ? mergeBase(s) : null;
       return mb ? show(`${mb}:${rel}`) : head;
     },
+  };
+}
+
+/** A folder source's state: ~/.trove/folders/<short hash of the folder's realpath>/, made by openFolder. */
+export const folderStateDir = (top: string) => join(homedir(), '.trove', 'folders', sha(top).slice(0, 12));
+
+// ponytail: a walk stops after 10,000 entries, files and folders (breadth first, so a huge folder such as a home
+// folder still lists its top), and git's listing after 10,000 paths; cache the walk if a big folder makes the 2s poll slow.
+const MAX_PATHS = 10_000;
+
+/** Paths under `top` of the enabled types, not excluded, outside dot-folders and node_modules. */
+function walk(top: string, s: Settings, git: boolean): string[] {
+  const keep = (p: string) => included(p, s) && !p.split('/').slice(0, -1).some((d) => d.startsWith('.') || d === 'node_modules');
+  // Inside a repository, read-only git honours .gitignore. A folder git ignores whole lists nothing that way: walk it.
+  const spec = pathspec(s);
+  if (spec && git) {
+    try {
+      const listed = execFileSync('git', ['ls-files', '-co', '--exclude-standard', '-z', '--', ...spec], { cwd: top, encoding: 'utf8', maxBuffer: 64 << 20, stdio: 'pipe' })
+        .split('\0').filter((p) => p && keep(p) && existsSync(join(top, p))); // tracked files deleted from disk are still listed
+      if (listed.length) return [...new Set(listed)].slice(0, MAX_PATHS);
+    } catch {}
+  }
+  const out: string[] = [];
+  const dirs = [''];
+  let seen = 0;
+  for (let k = 0; k < dirs.length && seen < MAX_PATHS; k++) {
+    let entries;
+    try { entries = readdirSync(join(top, dirs[k]), { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (++seen > MAX_PATHS) break;
+      const rel = dirs[k] ? `${dirs[k]}/${e.name}` : e.name;
+      if (e.isDirectory()) { if (!e.name.startsWith('.') && e.name !== 'node_modules') dirs.push(rel); }
+      else if (e.isFile() && keep(rel)) out.push(rel);
+    }
+  }
+  return out;
+}
+
+/**
+ * A plain folder as a source: every file of the enabled types in it, recursively, edited in place. No review state
+ * and no git command that writes, even inside a repository; commits happen elsewhere. Show new has only what the
+ * server keeps from a send (the text before the agent's last update) to mark against.
+ */
+export function openFolder(root: string) {
+  const top = realpathSync(folderOf(root));
+  const stateDir = folderStateDir(top);
+  mkdirSync(stateDir, { recursive: true });
+  const self: RepoRef = { root: top, name: basename(top) };
+  const git = inGit(top);
+
+  return {
+    kind: 'folder' as const,
+    root: top,
+    stateDir,
+    place: () => ({ repo: self, worktree: { path: top, name: self.name, branch: null, main: true } as WorktreeRef }),
+    branch: () => null,
+    resolveBase: (_s: Settings): string | null => null,
+    list: (s: Settings): FileEntry[] => walk(top, s, git).map((path) => ({ path, kind: kindOf(path, s)!, untracked: false, staged: false })),
+    /** Save and Send: nothing is staged here. */
+    unstage: (_rel: string) => {},
+    baseOf: (_rel: string, _text: string, _s: Settings): string | null => null,
   };
 }

@@ -15,6 +15,7 @@ const on = <T>(channel: string, cb: (arg: T) => void) => {
 
 const trove: TroveBridge = {
   pickFolder: () => invoke('trove:pickFolder'),
+  pickFile: () => invoke('trove:pickFile'),
   probe: (path: string) => invoke('trove:probe', path),
   open: (req: OpenRequest) => invoke('trove:open', req),
   recents: () => invoke('trove:recents'),
@@ -48,8 +49,11 @@ const trove: TroveBridge = {
 
 contextBridge.exposeInMainWorld('trove', trove);
 
-// A folder dropped on any window opens it if it is a repository; any other folder stays
-// on the zero state with the reason. The page cannot learn a dropped file's
+// A file opened in a window that already shows its folder: the page follows its #file= hash.
+ipcRenderer.on('trove:open-file', (_e, rel: string) => { location.hash = new URLSearchParams({ file: rel }).toString(); });
+
+// A folder dropped on any window opens as its repository or as a folder; a document opens in its
+// folder, with the file selected. The page cannot learn a dropped file's
 // path itself (File.path is gone since Electron 32), so the preload takes the drop.
 window.addEventListener('dragover', (e) => e.preventDefault(), true);
 window.addEventListener(

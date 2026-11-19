@@ -4,10 +4,13 @@ import { AGENT_LABELS, type FileRow } from '@trove/core/types';
 
 export type IconName = 'circle-check' | 'sparkles' | 'file-pen' | 'message-square' | 'loader-circle' | 'circle' | 'file-plus' | 'circle-dashed' | 'circle-x';
 
-/** The attached agent's label (AgentInfo.label), as said mid-sentence (agent), to start one (Agent), and as a sender (who). */
-export const names = (label: string) => {
+/**
+ * The attached agent's label (AgentInfo.label), as said mid-sentence (agent), to start one (Agent), and as a sender (who);
+ * `folder`: the source is a folder, edited in place with no review state.
+ */
+export const names = (label: string, folder = false) => {
   const Agent = label.charAt(0).toUpperCase() + label.slice(1);
-  return { agent: label, Agent, who: label === AGENT_LABELS.other ? 'Your agent' : Agent };
+  return { agent: label, Agent, who: label === AGENT_LABELS.other ? 'Your agent' : Agent, folder };
 };
 export type Names = ReturnType<typeof names>;
 

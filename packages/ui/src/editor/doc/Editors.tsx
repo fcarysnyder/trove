@@ -16,6 +16,8 @@ import { tintRuns, type Baseline } from './layers';
 import { docModel } from './model';
 
 const SAVE_KEY = mod === 'Cmd' ? '⌘↵' : 'Ctrl ↵';
+/** Cancel; a folder is edited in place, so there it says what it does. */
+const useDiscard = () => (useStore((s) => s.source?.kind === 'folder') ? "Don't save" : 'Cancel');
 const MIRRORED = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'wordSpacing', 'tabSize', 'textIndent',
   'whiteSpace', 'overflowWrap', 'wordBreak', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
   'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'] as const;
@@ -90,6 +92,7 @@ export function InlineEditor({ editing }: { editing: Editing }) {
   const current = useStore((s) => s.current)!;
   const [value, setValue] = useState(editing.value);
   const [msg, setMsg] = useState('');
+  const discard = useDiscard();
   const prior = docModel(current).savedEdit(editing.index);
   const save = async () => setMsg((await saveEdit(editing.index, value)) ?? '');
   const { marginTop, marginBottom, ...font } = editing.style ?? {};
@@ -111,7 +114,7 @@ export function InlineEditor({ editing }: { editing: Editing }) {
       />
       <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground" style={{ marginBottom: marginBottom ?? 12 }}>
         <Button variant="ghost" size="sm" onClick={() => void save()}>Save<Kbd>{SAVE_KEY}</Kbd></Button>
-        <Button variant="ghost" size="sm" onClick={cancelEdit}>Cancel<Kbd>Esc</Kbd></Button>
+        <Button variant="ghost" size="sm" onClick={cancelEdit}>{discard}<Kbd>Esc</Kbd></Button>
         <IconButton label="Expand" onClick={() => expandEdit(value)}><Maximize2 /></IconButton>
         {prior && <Button variant="ghost" size="sm" onClick={() => { set({ editing: null }); void revertEdit(current.path, prior); }}><Undo2 />Revert</Button>}
         {msg && <span role="alert" className="text-destructive">{msg}</span>}
@@ -138,6 +141,7 @@ function ModalBody({ editing }: { editing: Editing }) {
   const [value, setValue] = useState(editing.value);
   const [shown, setShown] = useState(editing.value);
   const [msg, setMsg] = useState('');
+  const discard = useDiscard();
   useEffect(() => {
     const t = setTimeout(() => setShown(value), 150);
     return () => clearTimeout(t);
@@ -173,7 +177,7 @@ function ModalBody({ editing }: { editing: Editing }) {
         {msg && <span role="alert" className="text-destructive">{msg}</span>}
         <span className="flex-1" />
         {prior && <Button variant="ghost" size="default" onClick={() => { set({ editing: null }); void revertEdit(current.path, prior); }}><Undo2 />Revert</Button>}
-        <Button variant="ghost" size="default" onClick={cancelEdit}>Cancel</Button>
+        <Button variant="ghost" size="default" onClick={cancelEdit}>{discard}</Button>
         <Button size="default" onClick={() => void save()}>Save<Kbd className="bg-primary-foreground/15 text-primary-foreground">{SAVE_KEY}</Kbd></Button>
       </div>
     </>

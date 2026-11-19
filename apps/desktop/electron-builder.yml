@@ -30,6 +30,21 @@ mac:
   # APPLE_* variables are set; without them electron-builder skips both and the ad-hoc signature
   # from scripts/adhoc-sign.cjs stands (see docs/DISTRIBUTION.md).
   hardenedRuntime: true
+# Trove shows up in Finder's Open With for documents (main's open-file opens one in its folder) without
+# taking them over: Alternate leaves the user's default editor the default.
+fileAssociations:
+  - ext: [md, markdown, mdx]
+    name: Markdown document
+    role: Editor
+    rank: Alternate
+  - ext: [html, htm]
+    name: HTML document
+    role: Editor
+    rank: Alternate
+  - ext: txt
+    name: Plain text document
+    role: Editor
+    rank: Alternate
 dmg:
   # Release asset names follow Installer-<App>-<version>-<arch>.dmg.
   artifactName: "Installer-${productName}-${version}-${arch}.${ext}"

@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -50,15 +50,25 @@ test('attach says so when nothing is serving', () => {
   expect([run.stdout.trim(), run.status]).toEqual(['nothing is serving on port 1: start one with trove serve, or pass the right --port', 1]);
 });
 
-test('serve refuses a folder that is not a git repository', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trove-plain-'));
+test('serve opens a file outside any repository in its folder, and the agent commands find that folder', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'trove-plain-')));
+  mkdirSync(join(root, 'docs'));
+  writeFileSync(join(root, 'docs/a.md'), '# A\n');
+  const { line, kill } = await firstLine(['serve', '--root', join(root, 'docs/a.md'), '--port', '0']);
+  let stateDir = '';
   try {
-    const run = spawnSync(process.execPath, [bundle, 'serve', '--root', root, '--port', '0'], { encoding: 'utf8' });
-    expect([run.stdout.trim(), run.status]).toEqual([`not a git repository: ${root}`, 1]);
+    const port = Number(line.match(/127\.0\.0\.1:(\d+)\//)?.[1]);
+    expect(line).toMatch(new RegExp(`^editing 1 files in docs at http://127\\.0\\.0\\.1:${port}/\\?file=a\\.md; notices in `));
+    const source = await (await fetch(`http://127.0.0.1:${port}/api/source`)).json();
+    stateDir = source.stateDir;
+    expect([source.kind, source.root]).toEqual(['folder', join(root, 'docs')]);
+    expect(spawnSync(process.execPath, [bundle, 'info', '--root', join(root, 'docs')], { encoding: 'utf8' }).stdout.trim()).toBe(line.replace('/?file=a.md', ''));
   } finally {
+    kill();
+    if (stateDir) rmSync(stateDir, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 30_000);
 
 test('serving a linked worktree names it after the branch', async () => {
   const root = mkdtempSync(join(tmpdir(), 'trove-wt-'));
