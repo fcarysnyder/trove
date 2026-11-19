@@ -150,6 +150,9 @@ export function createApp(o: AppOptions): App {
   for (const e of jsonl(files.activity)) if (e?.id) byId.set(e.id, e);
   for (const b of jsonl(files.batches)) if (b?.id && !byId.has(b.id)) byId.set(b.id, sentEntry(b));
   activity.push(...[...byId.values()].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).slice(-KEEP));
+  // The reviewer's name, for History's avatar: git's user.name (this repository's, else the global one).
+  let reviewer: string | null = null;
+  execFile('git', ['config', 'user.name'], { cwd: top }, (error, out) => { if (!error) reviewer = out.trim() || null; });
 
   function list(): FileEntry[] {
     const before = seen.size;
@@ -531,7 +534,7 @@ export function createApp(o: AppOptions): App {
       return b ? [200, b] : [404, { error: 'no such batch' }];
     },
     'GET /api/source': () => [200, info()],
-    'GET /api/activity': () => (follow(), [200, { entries: activity }]),
+    'GET /api/activity': () => (follow(), [200, { entries: activity, user: reviewer }]),
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
     // The file in the system's file manager. Never a shell: the path is one argument.
     'POST /api/reveal': (_, { path }) => {

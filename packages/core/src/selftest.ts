@@ -680,6 +680,7 @@ async function historyCase(temps: string[]) {
     ['message', 'agent', 'And again.', ['b.md']],
   ];
   assert.deepEqual(shape(await entries()), expected, 'events-log lines for batches and messages are not entries of their own');
+  assert.equal((await call(port, 'GET', '/api/activity')).body.user, 't', "the reviewer's git name, for the avatar");
   await app.close();
   ({ app, port } = await listen({ root }));
   assert.deepEqual(shape(await entries()), expected, 'all of it survives a restart, each send once');

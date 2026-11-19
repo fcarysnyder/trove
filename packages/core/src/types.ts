@@ -179,7 +179,7 @@ export interface Activity {
   body?: string; // markdown
   re?: string; // the id of the entry this one answers
 }
-export interface ActivityResponse { entries: Activity[] } // GET /api/activity: newest last, at most 200
+export interface ActivityResponse { entries: Activity[]; user?: string | null } // GET /api/activity: newest last, at most 200; user: the reviewer's git user.name
 /** POST /api/message -> Activity. from defaults to 'user'; a user's message adds one line to events.log
  * (`message <id>: from the reviewer[, re <id>]. Read it with: grep -F <id> '<activity.jsonl>'`). Each path must be in the review set. */
 export interface MessageBody { text: string; re?: string; paths?: string[]; from?: 'agent' | 'user' }
