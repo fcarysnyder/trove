@@ -487,6 +487,14 @@ export function createApp(o: AppOptions): App {
       execFile(...(process.platform === 'darwin' ? ['open', ['-R', abs]] : process.platform === 'win32' ? ['explorer', [`/select,${abs}`]] : ['xdg-open', [dirname(abs)]]) as [string, string[]], () => {});
       return [200, {}];
     },
+    // The file in its default app, the same way: one argument, no shell (on Windows explorer opens it, not cmd's start).
+    'POST /api/open': (_, { path }) => {
+      const rel = listed(path);
+      if (!rel) return [404, { error: 'not in the review set' }];
+      const abs = join(top, rel);
+      execFile(process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open', [abs], () => {});
+      return [200, {}];
+    },
     'POST /api/agent': (_, { id, label }, req) => {
       if (id !== null && !Object.hasOwn(AGENT_LABELS, id)) return [400, { error: 'id is claude, codex, other or null' }];
       if (label !== undefined && (typeof label !== 'string' || label.length > 40)) return [400, { error: 'label is a short string' }];

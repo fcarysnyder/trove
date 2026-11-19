@@ -21,6 +21,7 @@ import { InlineEditor } from './doc/Editors';
 import { applyLayers, paint, placeBars, textOf, toRange, type Marks } from './doc/layers';
 import { docModel } from './doc/model';
 import { onKey } from './keys';
+import { copyPath, PathMenu } from './PathMenu';
 
 export function DocColumn() {
   const current = useStore((s) => s.current);
@@ -36,8 +37,20 @@ export function DocColumn() {
     <section aria-label="File" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">
         {hidden.files && <IconButton side="bottom" label="Show files" tip="Show files ([)" className="-ml-2" onClick={() => togglePanel('files', false)}><PanelLeft /></IconButton>}
-        <span className="flex min-w-0 flex-1 items-center font-semibold">
-          {current && <PathLabel path={current.path} nameClass="text-foreground" />}
+        <span className="flex min-w-0 flex-1 items-center">
+          {current && (
+            // Click copies the relative path; right-click has the rest.
+            <Tooltip>
+              <PathMenu path={current.path}>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="sm" onClick={() => void copyPath(current.path)} className="-ml-2 max-w-full min-w-0 cursor-pointer justify-start px-2 font-semibold">
+                    <PathLabel path={current.path} nameClass="text-foreground" />
+                  </Button>
+                </TooltipTrigger>
+              </PathMenu>
+              <TooltipContent side="bottom" align="start" className="[overflow-wrap:anywhere]">Copy {current.path}</TooltipContent>
+            </Tooltip>
+          )}
         </span>
         <Tooltip>
           <TooltipTrigger asChild>

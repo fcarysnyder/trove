@@ -20,6 +20,7 @@ import { get, set, useNames, useStore } from './store';
 import { showBlock, showPassage } from './doc/commands';
 import { ActivityList } from './Activity';
 import { Notice } from './TopBar';
+import { PathMenu } from './PathMenu';
 
 // Desktop only, and its own chunk: the plugin's page never loads xterm.
 const Terminal = lazy(() => import('./Terminal'));
@@ -289,14 +290,16 @@ function EditRow({ path, x, locked }: { path: string; x: BlockEdit; locked: bool
   );
 }
 
-/** A file's group heading: opens the file. */
+/** A file's group heading: opens the file; right-click for its path menu. */
 function FileHead({ f, count }: { f: FileRow; count: number }) {
   return (
-    <Button variant="ghost" size="sm" onClick={() => void open(f.path)} title={f.path}
-      className="mx-2 mt-1 flex w-[calc(100%-1rem)] justify-start gap-1.5 px-2 text-[13px] text-body">
-      <PathLabel path={f.path} className="min-w-0 flex-1" />
-      <Count n={count} />
-    </Button>
+    <PathMenu path={f.path}>
+      <Button variant="ghost" size="sm" onClick={() => void open(f.path)} title={f.path}
+        className="mx-2 mt-1 flex w-[calc(100%-1rem)] justify-start gap-1.5 px-2 text-[13px] text-body">
+        <PathLabel path={f.path} className="min-w-0 flex-1" />
+        <Count n={count} />
+      </Button>
+    </PathMenu>
   );
 }
 

@@ -25,11 +25,11 @@ export function IconButton({ label, tip, children, className, side, ...props }: 
   );
 }
 
-/** Folder (truncated from its start) then the file name. */
+/** Folder (truncated from its start) then the file name. Its holder gives the full path (a title or a tooltip). */
 export function PathLabel({ path, className, nameClass }: { path: string; className?: string; nameClass?: string }) {
   const dir = dirOf(path);
   return (
-    <span className={cn('flex min-w-0 items-center', className)} title={path}>
+    <span className={cn('flex min-w-0 items-center', className)}>
       {dir && <span className="folder min-w-0 font-normal text-muted-foreground">{folderText(dir)}</span>}
       <span className={cn('shrink-0 truncate', nameClass)}>{nameOf(path)}</span>
     </span>

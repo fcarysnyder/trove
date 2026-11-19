@@ -211,6 +211,9 @@ async function gitCase(temps: string[]) {
 
   // Security: foreign Host, foreign or missing Origin, non-JSON, paths outside the set.
   assert.equal((await post('/api/reveal', { path: '../etc/passwd' })).status, 404, 'reveal: only a file in the set');
+  assert.equal((await post('/api/open', { path: '../etc/passwd' })).status, 404, 'open: only a file in the set');
+  assert.equal((await post('/api/open', { path: 'nope.md' })).status, 404, 'open: an unlisted file');
+  assert.equal((await post('/api/open', { path: 'a.md' }, { origin: 'https://evil.example' })).status, 403, 'open: same origin only');
   assert.equal((await post('/api/accept', { path: 'a.md' }, { host: 'evil.example' })).status, 403);
   assert.equal((await post('/api/accept', { path: 'a.md' }, { origin: 'https://evil.example' })).status, 403);
   assert.equal((await post('/api/accept', { path: 'a.md' }, { origin: '' })).status, 403);
