@@ -1,8 +1,8 @@
 // Marking HTML files by their elements: the floating toolbar over the document, the layer over the
-// frame (hover and pick outlines, loops, each comment's numbered badges) and the note card. The frame
+// frame (hover and pick outlines, circles, each comment's numbered badges) and the note card. The frame
 // logic is in doc/annotate.ts; a mark is added as an ordinary Draft.
 import type { CommentKind } from '@trove/core/types';
-import { GripHorizontal, Lasso, Maximize2, MessageCircleQuestion, MessageSquare, Minimize2, MousePointer2, TextCursor } from 'lucide-react';
+import { CircleDashed, GripHorizontal, Maximize2, MessageCircleQuestion, MessageSquare, Minimize2, MousePointer2, TextCursor } from 'lucide-react';
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
@@ -14,7 +14,7 @@ import { addComment, focusComment, togglePanel } from './actions';
 import { Count, IconButton } from './bits';
 import { NoteField } from './ChangesColumn';
 import { useNames, useStore } from './store';
-import { bounds, canMark, cardField, elementAnchor, getAnn, resolve, setAnn, setTool, summary, describe, useAnn, type Pt, type Tool } from './doc/annotate';
+import { bounds, canMark, cardField, elementAnchor, getAnn, resolve, setAnn, setTool, smoothPath, summary, describe, useAnn, type Pt, type Tool } from './doc/annotate';
 import { frameEl } from './doc/dom';
 
 /** Add the pending mark as a comment with this note; the card closes. */
@@ -30,7 +30,7 @@ const dropMark = () => setAnn({ mark: null, kind: 'change' });
 const TOOLS = [
   ['text', 'Select text', 'T', TextCursor],
   ['pointer', 'Pointer', 'V', MousePointer2],
-  ['loop', 'Loop', 'L', Lasso],
+  ['loop', 'Circle', 'O', CircleDashed],
 ] as const;
 
 type Pos = { x: number; y: number } | null;
@@ -110,7 +110,7 @@ export function AnnotateBar() {
 
 /**
  * Over the frame, the same size: the Pointer's hover outline, the pending mark's outlines (and its
- * loop), the loop being drawn, and every element comment's number badge and faint loop. Drawn from
+ * circle), the circle being drawn, and every element comment's number badge and faint circle. Drawn from
  * the frame's layout on each change to it; only the badges take the pointer.
  */
 export function AnnotateLayer({ loads }: { loads: number }) {
@@ -149,7 +149,8 @@ export function AnnotateLayer({ loads }: { loads: number }) {
     const r = el.getBoundingClientRect();
     return { left: r.left, top: r.top, width: r.width, height: r.height };
   };
-  const path = (pts: Pt[], close = true) => pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x - win.scrollX} ${y - win.scrollY}`).join(' ') + (close ? ' Z' : '');
+  // Smoothed, so a hand-drawn circle reads as a circle rather than a jagged lasso.
+  const path = (pts: Pt[], closed = true) => smoothPath(pts.map(([x, y]) => [x - win.scrollX, y - win.scrollY]), closed);
   const comments = (drafts ?? []).map((c, k) => ({ k, c, els: (c.anchor.targets ?? []).map((t) => resolve(doc, t)).filter((el): el is Element => !!el) }));
   const stacked = new Map<Element, number>(); // a second comment on the same element puts its badge beside the first
   const badges = comments.flatMap(({ k, els }) => els.map((el) => {
@@ -165,7 +166,7 @@ export function AnnotateLayer({ loads }: { loads: number }) {
     // Clipped a little outside the frame: a badge sits over its element's corner, but nothing shows for an element scrolled out of the frame.
     <div aria-hidden={!badges.length} className="pointer-events-none absolute overflow-clip [overflow-clip-margin:12px]"
       style={{ left: frame.offsetLeft, top: frame.offsetTop, width: frame.offsetWidth, height: frame.offsetHeight }}>
-      {/* Clipped to the frame: a loop is stored where it was drawn, and the page may have reflowed since. */}
+      {/* Clipped to the frame: a circle is stored where it was drawn, and the page may have reflowed since. */}
       <svg className="absolute inset-0 size-full overflow-hidden">
         {comments.map(({ k, c }) => c.anchor.shape && <path key={k} d={path(c.anchor.shape.points)} className="fill-none stroke-dirty opacity-40" strokeWidth={1.5} strokeDasharray="4 3" />)}
         {mark?.shape && <path d={path(mark.shape)} className="fill-cool/10 stroke-cool" strokeWidth={1.5} />}
@@ -187,7 +188,7 @@ export function AnnotateLayer({ loads }: { loads: number }) {
   );
 }
 
-/** Where the card points: the loop's box or the picked elements', in the app's viewport, cut to the visible part of the doc view. */
+/** Where the card points: the circle's box or the picked elements', in the app's viewport, cut to the visible part of the doc view. */
 function markRect(): DOMRect {
   const m = getAnn().mark, f = frameEl(), win = f?.contentWindow;
   const view = f?.closest('#doc')?.getBoundingClientRect(); // the scroller; the column's panel has id doc too

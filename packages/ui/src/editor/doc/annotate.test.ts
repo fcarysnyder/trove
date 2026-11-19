@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bounds, clip, coverage, enclosed, inPolygon, selectorOf, simplify, summary, type Box, type Pt } from './annotate';
+import { bounds, clip, coverage, enclosed, inPolygon, selectorOf, simplify, smoothPath, summary, type Box, type Pt } from './annotate';
 
 const square = (x: number, y: number, s: number): Pt[] => [[x, y], [x + s, y], [x + s, y + s], [x, y + s]];
 interface Node { name: string; box: Box | null; kids: Node[] }
@@ -29,6 +29,15 @@ describe('loop geometry', () => {
     expect(out.every(([x, y]) => Number.isInteger(x) && Number.isInteger(y))).toBe(true);
     expect(bounds(out)).toMatchObject({ left: 20, top: 20, right: 180, bottom: 180 });
     expect(simplify([[0, 0], [5, 0.2], [10, 0]])).toEqual([[0, 0], [10, 0]]);
+  });
+  it('draws a circle as a smooth closed curve through its points', () => {
+    const d = smoothPath([[0, 0], [10, 0], [10, 10], [0, 10], [1, 1]], true); // the last point came back to the first
+    expect(d.startsWith('M0 0 C')).toBe(true);
+    expect(d.endsWith(' Z')).toBe(true);
+    expect(d.match(/C/g)).toHaveLength(4); // one curve per point, wrapping round
+    expect(d).toContain('C1.7 -1.7 8.3 -1.7 10 0'); // tangents from the neighbours
+    expect(smoothPath([[0, 0], [10, 0], [20, 5]], false).match(/C/g)).toHaveLength(2);
+    expect(smoothPath([[0, 0], [5, 5]], false)).toBe('M0 0 L5 5');
   });
 });
 

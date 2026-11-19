@@ -28,8 +28,8 @@ export function onKey(e: KeyboardEvent) {
     if (act) { e.preventDefault(); return pickAction(act); }
     if (e.key === 'Escape') { s.pick.range.startContainer.ownerDocument?.getSelection()?.removeAllRanges(); return set({ pick: null }); }
   }
-  // HTML: V points at elements, L draws a loop, T (or Esc) is back to selecting text.
-  const tool = ({ v: 'pointer', l: 'loop', t: 'text' } as const)[e.key.toLowerCase() as 'v' | 'l' | 't'];
+  // HTML: V points at elements, O circles them, T (or Esc) is back to selecting text.
+  const tool = ({ v: 'pointer', o: 'loop', t: 'text' } as const)[e.key.toLowerCase() as 'v' | 'o' | 't'];
   if (tool && canMark()) { e.preventDefault(); return setTool(tool); }
   if (e.key === 'Escape' && (getAnn().mark || getAnn().tool !== 'text')) return escapeTool();
   if (e.key === '[') togglePanel('files');

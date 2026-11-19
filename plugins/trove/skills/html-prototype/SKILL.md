@@ -3,17 +3,17 @@ name: html-prototype
 description: |
   Read an HTML file's own design system before changing it, then change it in that vocabulary.
   Use whenever you edit an .html or .htm file, above all one a Trove batch asks you to change: a
-  comment on an HTML file, an element comment (its anchor has `targets`) or a loop (`shape`).
+  comment on an HTML file, an element comment (its anchor has `targets`) or a circle (`shape`).
   Most of these files are app prototypes (an app shell, buttons, cards, forms, nav, state in a
   script); the change has to look and behave as if the file's author made it. Also tells you how
   to find each element target in source. Trigger on: editing HTML from a Trove batch, "change the
-  prototype", "fix this mock", "apply my HTML comments", any element or loop comment.
+  prototype", "fix this mock", "apply my HTML comments", any element or circle comment.
 ---
 
 # HTML prototype
 
 The user reviews HTML files rendered in Trove and points at what should change: a selected
-passage, one element or several (shift-click), or a loop drawn around part of the page. You
+passage, one element or several (shift-click), or a circle drawn around part of the page. You
 change the file. The result has to read as the same design, not as a patch on top of it.
 
 ## Before the first change to a file
@@ -79,11 +79,11 @@ trust and stop at the first that pins one place in the source:
 One of several identical rows, a canvas, or an element that only exists after interaction may
 not be pinned by its target alone: read the note, and ask in chat rather than guess.
 
-## Several targets, and loops
+## Several targets, and circles
 
 - **Several targets** are one request about all of them together (make these match, align
   these, swap these), not the same request repeated per element.
-- **A loop** (`shape: {kind: 'loop', points}`) is a freehand outline the user drew around part of
+- **A circle** (`shape: {kind: 'loop', points}`) is a freehand outline the user drew around part of
   the page, in the page's document coordinates. Its `targets` are the fewest elements it
   encloses. Read it as one request about that region: the note may concern the targets'
   layout, spacing or relationship to each other, or something missing in the area. The points

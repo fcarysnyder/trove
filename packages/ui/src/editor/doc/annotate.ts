@@ -1,4 +1,4 @@
-// Marking an HTML file by its elements: the Pointer and Loop tools, what they pick in the frame, and
+// Marking an HTML file by its elements: the Pointer and Circle tools, what they pick in the frame, and
 // what each picked element carries so the agent can find it in source. The geometry and the selector
 // steps are pure (lib.test.ts); the rest reads the frame's DOM. A mark becomes an ordinary Draft.
 import type { AnchorHit } from '@trove/core/anchor';
@@ -92,6 +92,23 @@ export function simplify(pts: Pt[], max = 64): Pt[] {
   let out = pts;
   for (let eps = 1; (out = rdp(pts, eps)).length > max; eps *= 1.5);
   return out.map(([x, y]) => [Math.round(x), Math.round(y)]);
+}
+
+/**
+ * An SVG path through the points as a Catmull-Rom curve (cubic Béziers), so a circle drawn by hand
+ * reads as one. Closed: wraps round and drops a last point that has come back onto the first.
+ */
+export function smoothPath(pts: Pt[], closed: boolean): string {
+  const p = closed && pts.length > 3 && Math.hypot(pts[0]![0] - pts.at(-1)![0], pts[0]![1] - pts.at(-1)![1]) < 4 ? pts.slice(0, -1) : pts;
+  if (p.length < 3) return p.map(([x, y], i) => `${i ? 'L' : 'M'}${x} ${y}`).join(' ');
+  const at = (i: number) => (closed ? p[(i + p.length) % p.length]! : p[Math.max(0, Math.min(p.length - 1, i))]!);
+  const r = (n: number) => Math.round(n * 10) / 10;
+  let d = `M${r(p[0]![0])} ${r(p[0]![1])}`;
+  for (let i = 0; i < (closed ? p.length : p.length - 1); i++) {
+    const [a, b, c, e] = [at(i - 1), at(i), at(i + 1), at(i + 2)];
+    d += ` C${r(b[0] + (c[0] - a[0]) / 6)} ${r(b[1] + (c[1] - a[1]) / 6)} ${r(c[0] - (e[0] - b[0]) / 6)} ${r(c[1] - (e[1] - b[1]) / 6)} ${r(c[0])} ${r(c[1])}`;
+  }
+  return closed ? `${d} Z` : d;
 }
 
 /** One step from an element toward the page root: its tag, its id when that is unique and CSS-escaped, its place among same-tag siblings (0: it has none). */
@@ -205,7 +222,7 @@ export function setAnn(patch: Partial<AnnState>) {
 export const useAnn = <T,>(pick: (s: AnnState) => T): T =>
   useSyncExternalStore((l) => (listeners.add(l), () => void listeners.delete(l)), () => pick(state));
 
-/** Pointer and Loop mark the open HTML file; neither works on a locked file or under an open edit. */
+/** Pointer and Circle mark the open HTML file; neither works on a locked file or under an open edit. */
 export const canMark = () => { const s = get(); return s.current?.kind === 'html' && !s.current.locked && !s.editing; };
 
 export function setTool(tool: Tool) {
@@ -238,7 +255,7 @@ const FRAME_CSS = `html[data-trove-tool=pointer], html[data-trove-tool=pointer] 
 html[data-trove-tool=loop], html[data-trove-tool=loop] * { cursor: crosshair !important; user-select: none !important; }`;
 
 /**
- * Called on each frame load. While Pointer or Loop is on, the page never sees a click: its buttons,
+ * Called on each frame load. While Pointer or Circle is on, the page never sees a click: its buttons,
  * links and forms stay put, and the text-selection toolbar stays away. Capture on the frame's window
  * runs before the page's own listeners and DocColumn's.
  */
