@@ -17,6 +17,11 @@ export function onKey(e: KeyboardEvent) {
     if (!s.editing && !s.view && s.current && s.unsaved[s.current.path]) void saveFile();
     return;
   }
+  // Cmd+J (Ctrl+J off the Mac): the agent's terminal drawer, from anywhere, the terminal included.
+  if ((navigator.platform.startsWith('Mac') ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === 'j' && window.trove?.pty) {
+    e.preventDefault();
+    return set({ drawer: !s.drawer });
+  }
   const t = e.target as Element;
   if (t.closest?.(OWNS_KEYS) || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === 'Escape' && s.view) return closeView();
@@ -32,7 +37,7 @@ export function onKey(e: KeyboardEvent) {
     return;
   }
   if (s.pick) {
-    const act = ({ c: 'change', e: 'explain' } as const)[e.key.toLowerCase() as 'c' | 'e'];
+    const act = ({ c: 'change', e: 'explain', a: 'chat' } as const)[e.key.toLowerCase() as 'c' | 'e' | 'a'];
     if (act) { e.preventDefault(); return pickAction(act); }
     if (e.key === 'Escape') { s.pick.range.startContainer.ownerDocument?.getSelection()?.removeAllRanges(); return set({ pick: null }); }
   }

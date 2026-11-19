@@ -2,19 +2,18 @@
 // frame (hover and pick outlines, circles, each comment's numbered badges) and the note card. The frame
 // logic is in doc/annotate.ts; a mark is added as an ordinary Draft.
 import type { CommentKind } from '@trove/core/types';
-import { CircleDashed, GripHorizontal, Maximize2, MessageCircleQuestion, MessageSquare, Minimize2, MousePointer2, TextCursor } from 'lucide-react';
+import { ArrowUp, CircleDashed, GripHorizontal, GripVertical, Maximize2, MessageCircleQuestion, MessageSquare, Minimize2, MousePointer2, TextCursor, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { load, save } from '@/lib/storage';
-import { plural } from '@/lib/text';
+import { plural, sendKey } from '@/lib/text';
 import { addComment, focusComment, togglePanel } from './actions';
 import { Count, IconButton } from './bits';
-import { NoteField } from './ChangesColumn';
 import { get, set, useNames, useStore } from './store';
-import { bounds, canMark, cardField, dropMark, elementAnchor, resolve, setTool, smoothPath, summary, describe, type Pt, type Tool } from './doc/annotate';
+import { bounds, canMark, cardField, dropMark, elementAnchor, resolve, setTool, smoothPath, describe, clip, focusCard, type Pt, type Tool } from './doc/annotate';
 import { frameEl } from './doc/dom';
 
 /** Add the pending mark as a comment with this note; the card closes. */
@@ -32,11 +31,13 @@ const TOOLS = [
   ['loop', 'Circle', 'O', CircleDashed],
 ] as const;
 
-type Pos = { x: number; y: number } | null;
+/** `edge`: dropped at the view's top or bottom, it lies flat along that edge. */
+type Pos = { x: number; y: number; edge?: 'top' | 'bottom' } | null;
+const EDGE = 48; // px from the view's top or bottom where the pointer lays it flat
 
 /**
  * Docked at the doc view's left edge, centred; dragged by its grip it stays where it was left (kept
- * inside the view), and a double-click on the grip docks it again.
+ * inside the view), lying flat when dropped at the top or bottom, and a double-click on the grip docks it again.
  */
 export function AnnotateBar() {
   const html = useStore((s) => s.current?.kind === 'html');
@@ -65,7 +66,9 @@ export function AnnotateBar() {
     onPointerMove: (e: ReactPointerEvent) => {
       const d = drag.current, box = ref.current?.offsetParent?.getBoundingClientRect();
       if (!d || !box) return;
-      d.at = { x: Math.round(e.clientX - box.left - d.dx), y: Math.round(e.clientY - box.top - d.dy) };
+      const y = e.clientY - box.top;
+      const edge = y < EDGE ? 'top' : y > box.height - EDGE ? 'bottom' : undefined;
+      d.at = { x: Math.round(e.clientX - box.left - d.dx), y: Math.round(y - d.dy), edge };
       setPos(d.at);
     },
     onPointerUp: () => {
@@ -74,32 +77,37 @@ export function AnnotateBar() {
     },
     onDoubleClick: () => { setPos(null); save('annotate-bar', null); },
   };
-  const place = pos
+  const flat = pos?.edge;
+  const side = flat === 'top' ? 'bottom' : flat === 'bottom' ? 'top' : 'right';
+  const place = flat
+    ? { left: `clamp(8px, ${pos!.x}px, calc(100% - ${size.w + 8}px))`, [flat]: 4 }
+    : pos
     ? { left: `clamp(8px, ${pos.x}px, calc(100% - ${size.w + 8}px))`, top: `clamp(8px, ${pos.y}px, calc(100% - ${size.h + 8}px))` }
     : { left: 4, top: `max(4px, calc(50% - ${size.h / 2}px))` };
   return (
     // Focus stays where it was (the page or the frame), so V, L and T keep working after a click here.
-    <div ref={ref} role="toolbar" aria-label="Annotate" aria-orientation="vertical" style={place} onMouseDown={(e) => e.preventDefault()}
-      className="absolute z-20 flex max-h-[calc(100%-8px)] flex-col items-center gap-0.5 overflow-y-auto rounded-xl border bg-popover/95 p-1 shadow-lg backdrop-blur-sm [scrollbar-width:none]">
+    <div ref={ref} role="toolbar" aria-label="Annotate" aria-orientation={flat ? 'horizontal' : 'vertical'} style={place} onMouseDown={(e) => e.preventDefault()}
+      data-flat={flat ? '' : undefined}
+      className="absolute z-20 flex max-h-[calc(100%-8px)] max-w-[calc(100%-8px)] flex-col items-center gap-0.5 overflow-auto rounded-xl data-flat:flex-row border bg-popover/95 p-1 shadow-lg backdrop-blur-sm [scrollbar-width:none]">
       <Tooltip>
         <TooltipTrigger asChild>
           <button type="button" aria-label="Move toolbar" {...grip} onPointerCancel={grip.onPointerUp}
-            className="grid h-5 w-8 cursor-grab touch-none place-items-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing">
-            <GripHorizontal className="size-4" />
+            className={`grid ${flat ? 'h-8 w-5' : 'h-5 w-8'} cursor-grab touch-none place-items-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing`}>
+            {flat ? <GripVertical className="size-4" /> : <GripHorizontal className="size-4" />}
           </button>
         </TooltipTrigger>
-        <TooltipContent side="right">Drag to move, double-click to dock</TooltipContent>
+        <TooltipContent side={side}>Drag to move, double-click to dock</TooltipContent>
       </Tooltip>
       {TOOLS.map(([t, label, key, Icon]) => (
-        <IconButton key={t} label={label} tip={`${label} (${key})`} side="right" aria-pressed={active === t} disabled={t !== 'text' && !can}
+        <IconButton key={t} label={label} tip={`${label} (${key})`} side={side} aria-pressed={active === t} disabled={t !== 'text' && !can}
           className="aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:hover:bg-primary/85"
           onClick={() => setTool(active === t ? 'text' : t)}><Icon /></IconButton>
       ))}
-      <Separator className="my-0.5 data-horizontal:w-5" />
-      <IconButton label={plural(count, 'comment')} side="right" className="relative" onClick={() => togglePanel('changes', false)}>
+      <Separator orientation={flat ? 'vertical' : 'horizontal'} className="m-0.5 data-horizontal:w-5 data-vertical:h-5 data-vertical:self-center" />
+      <IconButton label={plural(count, 'comment')} side={side} className="relative" onClick={() => togglePanel('changes', false)}>
         <MessageSquare />{count > 0 && <Count n={count} className="absolute -top-1 -right-1" />}
       </IconButton>
-      <IconButton label={focus ? 'Show files and agent' : 'Hide files and agent'} side="right" aria-pressed={focus} className="aria-pressed:bg-muted aria-pressed:text-foreground"
+      <IconButton label={focus ? 'Show files and agent' : 'Hide files and agent'} side={side} aria-pressed={focus} className="aria-pressed:bg-muted aria-pressed:text-foreground"
         onClick={() => { togglePanel('files', !focus); togglePanel('changes', !focus); }}>
         {focus ? <Minimize2 /> : <Maximize2 />}
       </IconButton>
@@ -172,13 +180,13 @@ export function AnnotateLayer({ loads }: { loads: number }) {
       {/* Clipped to the frame: a circle is stored where it was drawn, and the page may have reflowed since. */}
       <svg className="absolute inset-0 size-full overflow-hidden">
         {comments.map(({ k, c }) => c.anchor.shape && <path key={k} d={path(c.anchor.shape.points)} className="fill-none stroke-dirty opacity-40" strokeWidth={1.5} strokeDasharray="4 3" />)}
-        {mark?.shape && <path d={path(mark.shape)} className="fill-cool/10 stroke-cool" strokeWidth={1.5} />}
-        {drawing && <path d={path(drawing, false)} className="fill-none stroke-cool" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />}
+        {mark?.shape && <path d={path(mark.shape)} className="fill-ring/10 stroke-ring" strokeWidth={1.5} />}
+        {drawing && <path d={path(drawing, false)} className="fill-none stroke-ring" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />}
       </svg>
       {shown != null && outline(comments.find((x) => x.k === shown)?.els ?? [], 'outline-2 outline-dirty', 's')}
       {flashed && outline(flashed.els, 'flash outline-offset-2', `f${flash.at}`)}
-      {tool === 'pointer' && hover && !mark?.els.includes(hover) && outline([hover], 'outline-2 outline-dashed outline-cool', 'h')}
-      {mark && outline(mark.els, 'outline-2 outline-cool bg-cool/5', 'm')}
+      {tool === 'pointer' && hover && !mark?.els.includes(hover) && outline([hover], 'outline-2 outline-dashed outline-ring', 'h')}
+      {mark && outline(mark.els, 'outline-2 outline-ring bg-ring/5', 'm')}
       {badges.map((b) => (
         <button key={b.key} type="button" aria-label={`Comment ${b.k + 1}`} style={{ left: b.left, top: b.top }}
           onClick={() => focusComment(b.k)} onMouseEnter={() => setShown(b.k)} onMouseLeave={() => setShown(null)}
@@ -207,28 +215,69 @@ function markRect(): DOMRect {
   return new DOMRect(left, top, right - left, bottom - top > view.height / 2 ? 0 : bottom - top);
 }
 
+/** One picked element: its tag, its text, and an X that lets it go from the mark. */
+function Chip({ el, els }: { el: Element; els: Element[] }) {
+  const t = describe(el), tag = [t.tag, ...(t.classes?.slice(0, 1) ?? [])].join('.');
+  const remove = () => {
+    const next = els.filter((x) => x !== el);
+    if (next.length) { set({ mark: { ...get().mark!, els: next } }); focusCard(); } else dropMark();
+  };
+  return (
+    <span className="flex h-6 max-w-full items-center gap-1 rounded-md border pr-0.5 pl-1.5 text-xs">
+      <span className="shrink-0 font-mono text-muted-foreground">{tag}</span>
+      {t.text && <span className="truncate">{clip(t.text, 24)}</span>}
+      <button type="button" aria-label={`Remove ${tag}`} onClick={remove}
+        className="grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        <X className="size-3" />
+      </button>
+    </span>
+  );
+}
+
 /** The note for a pending mark, beside it, kept inside the window. Comment or Explain; Add (Cmd/Ctrl+Enter), Esc cancels, a click elsewhere adds what is written. */
 function MarkCard() {
   const mark = useStore((s) => s.mark)!;
   const kind = useStore((s) => s.markKind);
   const n = useNames();
   const anchor = useRef({ getBoundingClientRect: markRect });
+  const [text, setText] = useState('');
+  const field = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => field.current?.focus(), []);
+  const els = mark.els.filter((el) => el.isConnected);
+  const shown = els.length > 4 ? els.slice(0, 3) : els;
+  const submit = () => commitMark(text.trim());
   return (
     <Popover open onOpenChange={(o) => { if (!o) dropMark(); }}>
       <PopoverAnchor virtualRef={anchor} />
       <PopoverContent data-annotate-card side="bottom" align="start" sideOffset={8} collisionPadding={8} avoidCollisions sticky="always" updatePositionStrategy="always"
         aria-label={kind === 'explain' ? 'Explain' : 'Comment'}
-        className="max-h-(--radix-popover-content-available-height) w-80 gap-0 overflow-y-auto rounded-lg border px-3 pt-2.5 pb-0 shadow-lg ring-0"
+        className="max-h-(--radix-popover-content-available-height) w-80 gap-0 overflow-y-auto rounded-xl border p-0 shadow-lg ring-0"
         onOpenAutoFocus={(e) => e.preventDefault()} onCloseAutoFocus={(e) => e.preventDefault()}
         // Clicks in the frame are the Pointer's (shift-click adds); focus moving there is not a dismissal.
         onFocusOutside={(e) => e.preventDefault()}
-        onPointerDownOutside={() => { const text = cardField()?.value.trim(); if (text) commitMark(text); }}>
-        <ToggleGroup type="single" size="sm" value={kind} onValueChange={(v) => v && set({ markKind: v as CommentKind })} aria-label="Kind" className="-ml-1.5">
-          <ToggleGroupItem value="change" className="h-6 gap-1.5 px-1.5 text-xs text-muted-foreground data-[state=on]:text-foreground"><MessageSquare className="size-3.5" />Comment</ToggleGroupItem>
-          <ToggleGroupItem value="explain" className="h-6 gap-1.5 px-1.5 text-xs text-muted-foreground data-[state=on]:text-foreground"><MessageCircleQuestion className="size-3.5" />Explain</ToggleGroupItem>
-        </ToggleGroup>
-        <div className="my-1.5 line-clamp-3 border-l-2 pl-2 text-muted-foreground [overflow-wrap:anywhere]">{summary(mark.els.filter((el) => el.isConnected).map(describe))}</div>
-        <NoteField value="" placeholder={kind === 'explain' ? `What should ${n.agent} explain?` : 'What should change?'} verb="Add" submit={commitMark} cancel={dropMark} />
+        onPointerDownOutside={() => { const t = cardField()?.value.trim(); if (t) commitMark(t); }}>
+        <div className="flex flex-wrap gap-1 px-3 pt-3">
+          {shown.map((el, i) => <Chip key={i} el={el} els={mark.els} />)}
+          {shown.length < els.length && <span className="flex h-6 items-center rounded-md border px-1.5 text-xs text-muted-foreground">+{els.length - shown.length}</span>}
+        </div>
+        <textarea ref={field} value={text} onChange={(e) => setText(e.target.value)}
+          placeholder={kind === 'explain' ? `What should ${n.agent} explain?` : 'What should change?'}
+          className="field-sizing-content min-h-14 w-full resize-none bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground [overflow-wrap:anywhere]"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
+            if (e.key === 'Escape') { e.preventDefault(); dropMark(); }
+          }} />
+        <div className="flex items-center gap-2 border-t px-2 py-1.5">
+          <ToggleGroup type="single" size="sm" value={kind} onValueChange={(v) => v && set({ markKind: v as CommentKind })} aria-label="Kind">
+            <ToggleGroupItem value="change" className="h-6 gap-1.5 px-1.5 text-xs text-muted-foreground data-[state=on]:text-foreground"><MessageSquare className="size-3.5" />Comment</ToggleGroupItem>
+            <ToggleGroupItem value="explain" className="h-6 gap-1.5 px-1.5 text-xs text-muted-foreground data-[state=on]:text-foreground"><MessageCircleQuestion className="size-3.5" />Explain</ToggleGroupItem>
+          </ToggleGroup>
+          <span className="ml-auto text-xs text-muted-foreground">{sendKey}</span>
+          <button type="button" aria-label="Add comment" onClick={submit}
+            className="grid size-7 place-items-center rounded-full bg-ring text-white outline-none hover:bg-ring/85 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+            <ArrowUp className="size-4" />
+          </button>
+        </div>
       </PopoverContent>
     </Popover>
   );

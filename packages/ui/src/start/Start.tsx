@@ -5,15 +5,15 @@
 // the server instead.
 import type { GitProbe, Recent, UpdateState } from '@trove/core/types';
 import { recentName } from '@trove/core/types';
-import { ArrowLeft, ChevronRight, FileText, FolderOpen, Globe, Pin, X } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { ArrowLeft, ChevronRight, FileCode, FileText, FolderOpen, GitBranch, Pin, X } from 'lucide-react';
+import { useEffect, useState, type ComponentProps, type ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Kbd } from '@/components/ui/kbd';
 import { Toaster } from '@/components/ui/sonner';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { load, save } from '@/lib/storage';
 import { dirOf, nameOf, tilde } from '@/lib/text';
@@ -85,9 +85,13 @@ function UpdateButton() {
   return <Button variant="outline" onClick={() => void bridge.installUpdate()}>{`Restart to update to ${u.version}`}</Button>;
 }
 
+type Show = 'all' | 'folders' | 'files';
+
 function Home({ recents, probes, reload, onOpen }: { recents: Recent[]; probes: Probes; reload: () => Promise<void>; onOpen: () => void }) {
-  const pinned = recents.filter((r) => r.pinned);
-  const rest = recents.filter((r) => !r.pinned);
+  const [show, setShow] = useState(() => load<Show>('start-show', 'all'));
+  const shown = recents.filter((r) => show === 'all' || (show === 'files') === !!r.file);
+  const pinned = shown.filter((r) => r.pinned);
+  const rest = shown.filter((r) => !r.pinned);
   const list = (label: string, rows: Recent[]) => rows.length > 0 && (
     <section aria-label={label} className="flex flex-col gap-1">
       <h2 className="px-3 text-xs font-medium text-muted-foreground">{label}</h2>
@@ -103,6 +107,14 @@ function Home({ recents, probes, reload, onOpen }: { recents: Recent[]; probes: 
           <Button onClick={onOpen}>Open</Button>
         </div>
       </div>
+      {recents.length > 0 && (
+        <ToggleGroup type="single" size="sm" variant="outline" spacing={0} value={show} aria-label="Show"
+          onValueChange={(v) => { if (v) { setShow(v as Show); save('start-show', v); } }} className="self-start">
+          <ToggleGroupItem value="all">All</ToggleGroupItem>
+          <ToggleGroupItem value="folders">Folders</ToggleGroupItem>
+          <ToggleGroupItem value="files">Files</ToggleGroupItem>
+        </ToggleGroup>
+      )}
       {list('Pinned', pinned)}
       {list('Recent', rest)}
     </>
@@ -186,7 +198,46 @@ function BranchMenu({ recent: r, git }: { recent: Recent; git: GitProbe }) {
   );
 }
 
-const OPTION = 'flex h-12 w-full items-center gap-3 px-4 text-left text-sm font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:bg-accent [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground';
+const CARD = 'group flex flex-col overflow-hidden rounded-xl border bg-card text-left outline-none transition-[border-color,translate] duration-150 hover:-translate-y-px hover:border-foreground/25 focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:transition-none motion-reduce:hover:translate-y-0';
+
+function Card({ art, icon, title, end, ...props }: { art: ReactNode; icon: ReactNode; title: string; end: ReactNode } & ComponentProps<'button'>) {
+  return (
+    <button className={CARD} {...props}>
+      <div className="flex h-28 items-center justify-center border-b bg-muted/40">
+        <div className="transition-transform duration-250 ease-out group-hover:-translate-y-0.5 motion-reduce:transition-none">{art}</div>
+      </div>
+      <div className="flex items-center gap-2 px-3.5 py-3 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground">
+        {icon}<span className="text-sm font-medium text-foreground">{title}</span><span className="ml-auto flex">{end}</span>
+      </div>
+    </button>
+  );
+}
+
+const TREE_ROW = 'flex h-5 items-center gap-1.5 px-2 [&>svg]:size-3';
+const FolderArt = () => (
+  <div className="w-32 rounded-md border bg-card py-1 text-[11px] text-muted-foreground shadow-xs">
+    <div className={TREE_ROW}>▾ notes</div>
+    <div className={cn(TREE_ROW, 'pl-5')}><FileText />brief.md</div>
+    <div className={cn(TREE_ROW, 'pl-5 text-foreground')}><FileCode />app.html</div>
+    <div className={cn(TREE_ROW, 'pl-5')}><FileText />plan.mdx</div>
+  </div>
+);
+
+const FileArt = () => (
+  <div className="flex h-[92px] w-[76px] -rotate-3 flex-col gap-1.5 rounded-sm rounded-tr-2xl border bg-card px-2.5 pt-4 shadow-xs">
+    {['w-full', 'w-4/5', 'w-3/5 bg-ring/70', 'w-full', 'w-2/3'].map((w, k) => <span key={k} className={cn('h-[5px] rounded-full bg-muted-foreground/25', w)} />)}
+  </div>
+);
+
+const CloneArt = () => (
+  <svg width="120" height="64" viewBox="0 0 120 64" fill="none" strokeWidth="2" aria-hidden>
+    <path d="M8 44H112" className="stroke-muted-foreground/40" />
+    <path d="M56 44C72 44 68 20 84 20H106" className="stroke-ring" />
+    {[24, 56, 88].map((x) => <circle key={x} cx={x} cy="44" r="4" className="fill-card stroke-muted-foreground/60" />)}
+    <circle cx="84" cy="20" r="4" className="fill-card stroke-ring" />
+    <circle cx="106" cy="20" r="4" className="fill-ring stroke-ring" />
+  </svg>
+);
 
 function OpenScreen({ onBack }: { onBack: () => void }) {
   const bridge = window.trove!;
@@ -198,16 +249,13 @@ function OpenScreen({ onBack }: { onBack: () => void }) {
     <>
       <div className="-mb-4"><Button variant="ghost" size="sm" className="-ml-2.5" onClick={onBack}><ArrowLeft />Back</Button></div>
       <Title>Open</Title>
-      <div className="overflow-hidden rounded-lg border">
-        <button className={OPTION} onClick={() => void folder()}><FolderOpen />Folder<Kbd className="ml-auto">⌘O</Kbd></button>
-        <button className={cn(OPTION, 'border-t')} onClick={() => void file()}><FileText />File<Kbd className="ml-auto">⇧⌘O</Kbd></button>
-        <Collapsible open={cloning} onOpenChange={setCloning} className="border-t">
-          <CollapsibleTrigger className={OPTION}>
-            <Globe />Clone<ChevronRight className={cn('ml-auto transition-transform motion-reduce:transition-none', cloning && 'rotate-90')} />
-          </CollapsibleTrigger>
-          <CollapsibleContent><Clone /></CollapsibleContent>
-        </Collapsible>
+      <div className="grid grid-cols-1 gap-3 min-[560px]:grid-cols-3">
+        <Card art={<FolderArt />} icon={<FolderOpen />} title="Folder" end={<Kbd>⌘O</Kbd>} onClick={() => void folder()} />
+        <Card art={<FileArt />} icon={<FileText />} title="File" end={<Kbd>⇧⌘O</Kbd>} onClick={() => void file()} />
+        <Card art={<CloneArt />} icon={<GitBranch />} title="Clone" aria-expanded={cloning} onClick={() => setCloning((c) => !c)}
+          end={<ChevronRight className={cn('size-4 text-muted-foreground transition-transform motion-reduce:transition-none', cloning && 'rotate-90')} />} />
       </div>
+      {cloning && <div className="-mt-5 overflow-hidden rounded-xl border bg-card"><Clone /></div>}
     </>
   );
 }
@@ -240,7 +288,7 @@ function Clone() {
     bridge.clone(target, dir).then((res) => bridge.open({ path: res.path })).catch(fail).finally(() => setBusy(false));
   };
   return (
-    <form className="flex flex-col gap-3 border-t px-4 py-4" onSubmit={(e) => { e.preventDefault(); go(); }}>
+    <form className="flex flex-col gap-3 px-4 py-4" onSubmit={(e) => { e.preventDefault(); go(); }}>
       <Input autoFocus aria-label="Repository URL" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/owner/repo or owner/repo"
         autoComplete="off" spellCheck={false} />
       {(repos === null || repos.length > 0) && (

@@ -149,8 +149,15 @@ export const AGENT_LABELS: Record<AgentId, string> = { claude: 'Claude', codex: 
 export const attachPrompt = (port: number | string) =>
   `Start the markdown-editor skill attached to the Trove server already running on port ${port}: run its attach command instead of serve, stream the events log it prints, and handle batches as the skill says.`;
 /** The shell command that starts `tool` in `root` with attachPrompt; `exec` replaces the shell (the desktop's Terminal script). */
-export const attachCommand = (tool: AgentTool, root: string, port: number | string, exec = false) =>
-  `cd '${root.replaceAll("'", "'\\''")}' && ${exec ? 'exec ' : ''}${tool} "${attachPrompt(port)}"`;
+/** How much an agent Trove starts may do without asking: each tool's flags. Bypass is the default. */
+export type AgentMode = 'ask' | 'auto' | 'bypass';
+export const AGENT_MODES: AgentMode[] = ['bypass', 'auto', 'ask'];
+const MODE_FLAGS: Record<AgentTool, Record<AgentMode, string>> = {
+  claude: { ask: '--permission-mode manual', auto: '--permission-mode auto', bypass: '--dangerously-skip-permissions' },
+  codex: { ask: '-a untrusted', auto: '-a on-failure -s workspace-write', bypass: '--dangerously-bypass-approvals-and-sandbox' },
+};
+export const attachCommand = (tool: AgentTool, root: string, port: number | string, exec = false, mode: AgentMode = 'bypass') =>
+  `cd '${root.replaceAll("'", "'\\''")}' && ${exec ? 'exec ' : ''}${tool} ${MODE_FLAGS[tool][mode]} "${attachPrompt(port)}"`;
 
 /** A repository's main working tree: the first entry of `git worktree list`. */
 export interface RepoRef { root: string; name: string }
@@ -209,7 +216,7 @@ export interface Activity {
 export interface ActivityResponse { entries: Activity[] } // GET /api/activity: newest last, at most 200
 /** POST /api/message -> Activity. from defaults to 'user'; a user's message adds one line to events.log
  * (`message <id>: from the reviewer[, re <id>]. Read it with: grep -F <id> '<activity.jsonl>'`). Each path must be in the review set. */
-export interface MessageBody { text: string; re?: string; paths?: string[]; from?: 'agent' | 'user' }
+export interface MessageBody { text: string; re?: string; paths?: string[]; from?: 'agent' | 'user'; typed?: boolean }
 
 export interface FilesResponse { files: FileRow[]; question: Question | null } // GET /api/files
 export interface DraftsResponse { drafts: Record<string, Draft[]>; edits: Record<string, BlockEdit[]> } // GET /api/drafts
@@ -350,6 +357,9 @@ export interface TroveBridge {
   terminals(): Promise<{ installed: TerminalApp[]; current: TerminalApp }>;
   /** Start agents in `t` from now on, in every window. Rejects when it is not installed. */
   setTerminal(t: TerminalApp): Promise<void>;
+  /** The permission mode agents start with (app setting, default bypass), and setting it for the next start. */
+  mode(): Promise<AgentMode>;
+  setMode(m: AgentMode): Promise<void>;
   /** The update the app has found, and `onUpdate` for each change. */
   update(): Promise<UpdateState>;
   onUpdate(cb: (s: UpdateState) => void): void;

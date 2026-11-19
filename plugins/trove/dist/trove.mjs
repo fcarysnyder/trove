@@ -2508,7 +2508,8 @@ function createApp(o) {
     },
     // A message in History: the agent's (`trove say`), or the user's from the page. The user's gets one line in
     // the events log, like a batch's notice: the text itself may run to many lines, and the agent greps for it.
-    "POST /api/message": (_2, { text, re: re2, paths = [], from = "user" }) => {
+    // typed: the page also typed it into the agent's terminal, so History records it and the events log stays quiet.
+    "POST /api/message": (_2, { text, re: re2, paths = [], from = "user", typed = false }) => {
       if (typeof text !== "string" || !text.trim()) return [400, { error: "text required" }];
       if (re2 !== void 0 && (typeof re2 !== "string" || !/^[\w-]{1,40}$/.test(re2))) return [400, { error: "re is an entry id" }];
       if (!Array.isArray(paths) || from !== "user" && from !== "agent") return [400, { error: "paths is a list, from is agent or user" }];
@@ -2519,8 +2520,8 @@ function createApp(o) {
         if (!rels.includes(rel)) rels.push(rel);
       }
       const e = note("message", "", { from, body: text.trim(), ...re2 ? { re: re2 } : {}, ...rels.length ? { paths: rels } : {} });
-      if (from === "user") {
-        resumed();
+      if (from === "user") resumed();
+      if (from === "user" && !typed) {
         const notice = `message ${e.id}: from the reviewer${re2 ? `, re ${re2}` : ""}. Read it with: grep -F ${e.id} '${files.activity}'`;
         appendFileSync(files.events, `${notice}
 `);

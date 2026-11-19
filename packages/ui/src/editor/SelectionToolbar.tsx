@@ -1,4 +1,4 @@
-import { Copy, MessageCircleQuestion, MessageSquare, MessageSquarePlus, Pencil } from 'lucide-react';
+import { AtSign, Copy, MessageCircleQuestion, MessageSquare, MessageSquarePlus, Pencil } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { Popover, PopoverAnchor, PopoverContent, PopoverHeader, PopoverTitle } from '@/components/ui/popover';
 import { addComment } from './actions';
@@ -38,6 +38,7 @@ export function SelectionToolbar() {
   const tools = [
     ['change', `Comment: ask ${n.agent} to change this (C)`, 'Comment', MessageSquarePlus],
     ['explain', `Explain: ask ${n.agent} about this, without changing it (E)`, 'Explain', MessageCircleQuestion],
+    ['chat', `Add to chat: quote this in your next message to ${n.agent} (A)`, 'Add to chat', AtSign],
     ['edit', 'Edit this block yourself', 'Edit this block', Pencil],
     ['copy', 'Copy the selected text', 'Copy', Copy],
   ] as const;

@@ -30,8 +30,9 @@ export function PathLabel({ path, className, nameClass }: { path: string; classN
   const dir = dirOf(path);
   return (
     <span className={cn('flex min-w-0 items-center', className)}>
-      {dir && <span className="folder min-w-0 font-normal text-muted-foreground">{folderText(dir)}</span>}
-      <span className={cn('shrink-0 truncate', nameClass)}>{nameOf(path)}</span>
+      {/* The folder gives way first; the name truncates only once it is gone. */}
+      {dir && <span className="folder min-w-0 shrink-[100] font-normal text-muted-foreground">{folderText(dir)}</span>}
+      <span className={cn('min-w-0 truncate', nameClass)}>{nameOf(path)}</span>
     </span>
   );
 }

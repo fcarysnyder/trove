@@ -10,6 +10,7 @@ import { Kbd } from '@/components/ui/kbd';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { stateInfo, status } from '@/lib/status';
 import { mod, nameOf, plural, tilde } from '@/lib/text';
@@ -35,6 +36,7 @@ export function DocColumn() {
   const showNew = useStore((s) => s.showNew);
   const editing = useStore((s) => s.editing);
   const question = useStore((s) => s.question);
+  const htmlView = useStore((s) => s.htmlView);
   const needs = useNeedsYou();
   const n = useNames();
   const folder = useFolder();
@@ -53,7 +55,7 @@ export function DocColumn() {
             <Tooltip>
               <PathMenu path={current.path}>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="sm" onClick={() => void copyPath(current.path)} className="-ml-2 max-w-full min-w-0 cursor-pointer justify-start px-2 font-semibold">
+                  <Button variant="ghost" size="sm" onClick={() => void copyPath(current.path)} className="-ml-2 max-w-full min-w-0 shrink cursor-pointer justify-start px-2 font-semibold">
                     <PathLabel path={current.path} nameClass="text-foreground" />
                   </Button>
                 </TooltipTrigger>
@@ -63,6 +65,12 @@ export function DocColumn() {
           )}
           {current?.version != null && <VersionBadge key={current.path} path={current.path} version={current.version} />}
         </span>
+        {current?.kind === 'html' && (
+          <ToggleGroup type="single" size="sm" variant="outline" spacing={0} value={htmlView} onValueChange={(v) => v && set({ htmlView: v as 'preview' | 'source' })}>
+            <ToggleGroupItem value="preview">Preview</ToggleGroupItem>
+            <ToggleGroupItem value="source">Source</ToggleGroupItem>
+          </ToggleGroup>
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex items-center gap-2">
@@ -87,7 +95,7 @@ export function DocColumn() {
       </div>
       <div className="relative flex min-h-0 flex-1 flex-col">
         <DocBody />
-        <AnnotateBar />
+        {htmlView === 'preview' && <AnnotateBar />}
       </div>
       <DocFooter />
       <ConflictDialog />
@@ -168,6 +176,11 @@ function DocView() {
   const [card, setCard] = useState<Card | null>(null);
   const view = useStore((s) => s.view);
   const buf = useStore((s) => s.unsaved[current.path]);
+  // An HTML file's Source view goes down the plain text path: one text block, measured in the page, not the frame.
+  const source = useStore((s) => current.kind === 'html' && s.htmlView === 'source');
+  const parts = useMemo(() => (source ? [{ type: 'text' as const, raw: current.text, path: [] }] : model.parts), [source, model]);
+  const frame = current.kind === 'html' && !source;
+  const bodyAt = (i: number) => (source ? blockEl(i)?.querySelector<HTMLElement>(':scope > .block-body') ?? null : bodyOf(i));
   // A version or Compare always shows its marks; a folder otherwise has only the text before the agent's last update.
   const layered = (showNew || !!view) && !editing && current.kind === 'markdown' && (!folder || !!current.since || !!current.base);
   const edited = folder && buf && !view ? new Set(unsavedBlocks(current.text, buf.was, current.kind)) : null;
@@ -191,20 +204,20 @@ function DocView() {
   useLayoutEffect(() => {
     if (editing) return;
     let found: (AnchorHit | null)[];
-    if (current.kind === 'html') {
+    if (frame) {
       // ponytail: the whole body is one block, so the heading path does not narrow the search; prefix and suffix break ties.
       const text = frameLoads ? bodyOf(null)?.textContent ?? null : null;
       found = current.drafts.map((c) => (text == null ? null : c.anchor.targets?.length ? elementHit(c.anchor) : findAnchor([{ text, path: c.anchor.path }], c.anchor)));
     } else {
-      const items = model.parts.map((b, i) => ({ text: bodyOf(i)?.textContent ?? '', path: b.path }));
+      const items = parts.map((b, i) => ({ text: bodyAt(i)?.textContent ?? '', path: b.path }));
       found = current.drafts.map((c) => findAnchor(items, c.anchor));
     }
     if (JSON.stringify(found) !== JSON.stringify(get().hits)) set({ hits: found });
-    const view = (current.kind === 'html' ? document.querySelector<HTMLIFrameElement>('iframe.doc-frame')?.contentWindow : window) as (Window & typeof globalThis) | null | undefined;
+    const view = (frame ? document.querySelector<HTMLIFrameElement>('iframe.doc-frame')?.contentWindow : window) as (Window & typeof globalThis) | null | undefined;
     // Element comments have badges, not a text range.
-    const ranges = found.flatMap((h, k) => (h && !current.drafts[k]?.anchor.targets?.length ? [toRange(bodyOf(h.i), h.start, h.end)] : [])).filter((r): r is Range => !!r);
+    const ranges = found.flatMap((h, k) => (h && !current.drafts[k]?.anchor.targets?.length ? [toRange(bodyAt(h.i), h.start, h.end)] : [])).filter((r): r is Range => !!r);
     if (view?.CSS?.highlights) view.CSS.highlights.set('comment', new view.Highlight(...ranges));
-  }, [model, current.drafts, frameLoads, editing]);
+  }, [model, parts, current.drafts, frameLoads, editing]);
   // A layout cleanup: the view is keyed by file, and a passive one would run after the next file's lookup and wipe it.
   useLayoutEffect(() => () => { CSS.highlights?.delete('comment'); set({ hits: [] }); }, []);
 
@@ -224,7 +237,7 @@ function DocView() {
     const t = e.target as Element;
     if (!t.ownerDocument.getSelection()?.isCollapsed || t.closest('button')) return;
     const inside = (r: DOMRect) => e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-    const i = get().hits.findIndex((h, k) => h && !get().current?.drafts[k]?.anchor.targets?.length && [...(toRange(bodyOf(h.i), h.start, h.end)?.getClientRects() ?? [])].some(inside));
+    const i = get().hits.findIndex((h, k) => h && !get().current?.drafts[k]?.anchor.targets?.length && [...(toRange(bodyAt(h.i), h.start, h.end)?.getClientRects() ?? [])].some(inside));
     if (i >= 0) focusComment(i);
   };
 
@@ -262,7 +275,7 @@ function DocView() {
   }
   const goneBar = (i: number) => gone.has(i) && <div className="gone" data-text={gone.get(i)} />;
 
-  if (current.kind === 'html') {
+  if (frame) {
     return (
       <div className="relative">
         <iframe
@@ -296,14 +309,14 @@ function DocView() {
   return (
     <div ref={md} className={cn('md', editing && 'doc-editing')} onClick={commentAt} onMouseMove={onMove} onMouseLeave={() => setCard(null)}
       onDoubleClick={(e) => { const b = (e.target as Element).closest<HTMLElement>('.block'); if (b && !(e.target as Element).closest('textarea, button')) editBlock(Number(b.dataset.i)); }}>
-      {model.parts.map((b, i) => (
+      {parts.map((b, i) => (
         <Fragment key={i}>
           {goneBar(i)}
-          <div className={cn('block', edited?.has(i) && 'shadow-[inset_2px_0_0_var(--dirty)]')} data-i={i}>
+          <div className={cn('block', edited?.has(i) && 'unsaved')} data-i={i}>
             {editing?.mode === 'inline' && (editing.index === i || (editing.index == null && current.kind === 'text')) ? <InlineEditor editing={editing} /> : (
               <>
                 {b.type === 'frontmatter' ? <div className="block-body"><pre className="fm">{b.raw}</pre></div>
-                  : b.type === 'text' ? <div className="block-body"><pre className="text">{b.raw}</pre></div>
+                  : b.type === 'text' ? <div className="block-body"><pre className={cn('text', source && 'lines')}>{source ? numbered(b.raw) : b.raw}</pre></div>
                   : <div className="block-body" dangerouslySetInnerHTML={{ __html: model.htmls[i]! }} />}
                 <div className="bars" />
                 {/* No text inside the gutter buttons, so the block's text stays what anchors measure. */}
@@ -320,7 +333,7 @@ function DocView() {
           </div>
         </Fragment>
       ))}
-      {goneBar(model.parts.length)}
+      {goneBar(parts.length)}
       {card && <DiffCard card={card} />}
     </div>
   );
@@ -495,6 +508,9 @@ const withBase = (html: string, path: string) => {
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 const who = (by: VersionBy, agent: string) => (by === 'user' ? 'You' : by === 'agent' ? agent : 'Original');
 
+/** One span per line, each keeping its newline, so the text stays the file's and CSS numbers the lines. */
+const numbered = (text: string) => text.split('\n').map((l, i, all) => (i < all.length - 1 ? <span key={i}>{l}{'\n'}</span> : l && <span key={i}>{l}</span>));
+
 /** The version on disk; its menu lists the kept ones, and picking one marks the open file against it. */
 function VersionBadge({ path, version }: { path: string; version: number }) {
   const [list, setList] = useState<Version[] | null>(null);
@@ -508,8 +524,10 @@ function VersionBadge({ path, version }: { path: string; version: number }) {
           <Badge className="cursor-pointer bg-foreground text-background">v{picked ?? version}</Badge>
         </button>
       </PopoverTrigger>
+      {list && ( // nothing until the list is in, so no empty frame flashes
       <PopoverContent align="start" className="max-h-80 w-72 gap-0 overflow-y-auto p-1">
-        {list?.map((v) => (
+        {!list.length && <p className="px-2 py-1.5 text-sm text-muted-foreground">No earlier versions</p>}
+        {list.map((v) => (
           <button key={v.n} onClick={() => { setOpen(false); void pickVersion(v.n); }}
             className={cn('flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent', v.n === picked && 'bg-accent')}>
             <Badge variant={v.n === version ? 'default' : 'outline'} className={cn('tabular-nums', v.n === version && 'bg-foreground text-background')}>v{v.n}</Badge>
@@ -518,6 +536,7 @@ function VersionBadge({ path, version }: { path: string; version: number }) {
           </button>
         ))}
       </PopoverContent>
+      )}
     </Popover>
   );
 }

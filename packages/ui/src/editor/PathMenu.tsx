@@ -37,3 +37,25 @@ export function PathMenu({ path, children }: { path: string; children: ReactNode
     </ContextMenu>
   );
 }
+
+/**
+ * Right-click a folder heading in the tree: copy its path, show it in the file manager (through `first`, a file in it,
+ * since only listed files are revealed), and on the desktop open another folder.
+ */
+export function DirMenu({ dir, first, children }: { dir: string; first: string; children: ReactNode }) {
+  const root = useStore((s) => s.source?.root);
+  const bridge = window.trove;
+  const other = () => bridge!.pickFolder().then((p) => p && bridge!.open({ path: p.path })).catch((e: Error) => toast.error(e.message));
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem disabled={!root} onSelect={() => void copyPath(dir ? `${root}/${dir}` : root!)}>Copy path</ContextMenuItem>
+        {dir && <ContextMenuItem onSelect={() => void copyPath(dir)}>Copy relative path</ContextMenuItem>}
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => void showInFolder(first)}>{navigator.platform.startsWith('Mac') ? 'Show in Finder' : 'Show in folder'}</ContextMenuItem>
+        {bridge && <ContextMenuItem onSelect={() => void other()}>Open another folder…</ContextMenuItem>}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}

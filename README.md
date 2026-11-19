@@ -87,7 +87,7 @@ trove attach [--root <repo> | --port N] --agent claude|codex|other   join a runn
 trove detach [--root <repo> | --port N]
 trove info [--root <repo> | --port N]                the server's status line
 trove done <file> [--note "<markdown>" | --note -]   release a file back to the reviewer, with what changed
-trove say "<markdown>" | say - [--file <path>]... [--re <id>]   post a message to the page's History
+trove say "<markdown>" | say - [--file <path>]... [--re <id>]   post a message to the page's Chat
 trove ask "<question>"                               show a question on the page
 trove reply "<summary>"                              answer a question the reviewer asked
 ```

@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { attachCommand, call, DEFAULT_DOC_TYPES, inGit, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type SourceKind, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
+import { AGENT_MODES, attachCommand, call, DEFAULT_DOC_TYPES, inGit, probeGit, recentName, serve, type AgentMode, type AgentTool, type App, type GitScope, type SourceKind, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
 import type { IPty } from 'node-pty';
 import { checkForUpdate, installUpdate, updateState, watchForUpdates } from './update';
 import { osc9, osc9Kind } from './osc';
@@ -243,7 +243,7 @@ async function launchAgent(tool: AgentTool, s: SourceWindow): Promise<void> {
   const t = terminal();
   if (t === 'Trove') return startPty(s, tool, 80, 24); // the page resizes it to the pane when it attaches
   const script = join(app.getPath('temp'), `trove-${tool}-${s.port}.command`);
-  writeFileSync(script, `#!/bin/sh\n${attachCommand(tool, s.root, s.port, true)}\n`);
+  writeFileSync(script, `#!/bin/sh\n${attachCommand(tool, s.root, s.port, true, agentMode())}\n`);
   chmodSync(script, 0o755);
   await run('open', TERMINAL_ARGS[t](script)).catch((e: { stderr?: string; message: string }) => {
     throw new Error(`${t} did not open: ${(e.stderr || e.message).trim()}`);
@@ -259,7 +259,7 @@ const TAIL = 256 * 1024; // what a reloaded page replays; nothing survives an ap
 /** The agent in the login shell (the PATH `tools()` found it on), in the repository. One per window. */
 function startPty(s: SourceWindow, tool: AgentTool, cols: number, rows: number): void {
   if (s.pty && s.pty.exitCode === null) return;
-  const proc = pty.spawn(process.env.SHELL || '/bin/zsh', ['-ilc', attachCommand(tool, s.root, s.port, true)], {
+  const proc = pty.spawn(process.env.SHELL || '/bin/zsh', ['-ilc', attachCommand(tool, s.root, s.port, true, agentMode())], {
     cwd: s.root, cols, rows, name: 'xterm-256color', env: { ...process.env, COLORTERM: 'truecolor' },
   });
   const session: Pty = { proc, tool, tail: '', exitCode: null };
@@ -331,13 +331,16 @@ const cloneDir = () => (isDir(join(homedir(), 'code')) ? join(homedir(), 'code')
 
 // The app's own settings (userData/settings.json), for what is not per repository.
 const appSettingsFile = () => join(app.getPath('userData'), 'settings.json');
-const readAppSettings = (): { worktreeDir?: unknown; terminal?: unknown } => { try { return JSON.parse(readFileSync(appSettingsFile(), 'utf8')) ?? {}; } catch { return {}; } };
-function writeAppSettings(patch: { worktreeDir?: string; terminal?: TerminalApp }): void {
+const readAppSettings = (): { worktreeDir?: unknown; terminal?: unknown; agentMode?: unknown } => { try { return JSON.parse(readFileSync(appSettingsFile(), 'utf8')) ?? {}; } catch { return {}; } };
+function writeAppSettings(patch: { worktreeDir?: string; terminal?: TerminalApp; agentMode?: AgentMode }): void {
   mkdirSync(app.getPath('userData'), { recursive: true });
   writeFileSync(appSettingsFile(), JSON.stringify({ ...readAppSettings(), ...patch }, null, 2));
 }
 
 /** Where new worktrees go: the folder picked with the dialog's cog, else one folder for all of them, out of the user's code. */
+/** The permission mode agents start with: the app setting, else bypass. */
+const agentMode = (): AgentMode => { const m = readAppSettings().agentMode; return AGENT_MODES.includes(m as AgentMode) ? (m as AgentMode) : 'bypass'; };
+
 function worktreeDir(): string {
   const d = readAppSettings().worktreeDir;
   return typeof d === 'string' && d ? d : join(homedir(), '.trove', 'worktrees');
@@ -562,6 +565,11 @@ ipcMain.handle('trove:setTerminal', (_e, t: unknown) => {
   if (!terminals().includes(t as TerminalApp)) throw new Error(`${String(t)} is not installed`);
   writeAppSettings({ terminal: t as TerminalApp });
   buildMenu();
+});
+ipcMain.handle('trove:mode', () => agentMode());
+ipcMain.handle('trove:setMode', (_e, m: unknown) => {
+  if (!AGENT_MODES.includes(m as AgentMode)) throw new Error(`${String(m)} is not a permission mode`);
+  writeAppSettings({ agentMode: m as AgentMode });
 });
 ipcMain.handle('trove:recents', () => readRecents());
 ipcMain.handle('trove:pin', (_e, path: unknown, pinned: unknown) => {

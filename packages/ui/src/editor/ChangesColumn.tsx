@@ -1,15 +1,14 @@
 import type { AgentTool, Anchor, BlockEdit, CommentKind, Draft, FileRow } from '@trove/core/types';
-import { ChevronDown, CircleAlert, MessageCircleQuestion, MessageSquare, PanelBottomClose, PanelBottomOpen, PanelRightClose, Pencil, Square, SquareTerminal, Trash, Undo2 } from 'lucide-react';
+import { ChevronDown, CircleAlert, MessageCircleQuestion, MessageSquare, PanelRightClose, Pencil, Square, ChevronsRight, SquareTerminal, Trash, Undo2 } from 'lucide-react';
 import { Tabs } from 'radix-ui';
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { PanelImperativeHandle } from 'react-resizable-panels';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
 import { Kbd } from '@/components/ui/kbd';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { api } from '@/lib/api';
@@ -76,7 +75,14 @@ export function ChangesColumn() {
     ].sort((a, b) => a[0] - b[0]).map(([, r]) => r);
   };
 
-  const [tab, setTab] = useState(() => load('agent-tab', 'changes'));
+  const [tab, setTab] = useState(() => load('agent-tab', 'history'));
+  const session = useSession();
+  const column = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const show = () => { togglePanel('changes', false); setTab('history'); save('agent-tab', 'history'); };
+    window.addEventListener('trove:chat', show);
+    return () => window.removeEventListener('trove:chat', show);
+  }, []);
   const unread = useUnread(tab === 'history');
   let body: ReactNode;
   if (!current) body = <p className="px-4 py-3 text-muted-foreground">No file open</p>;
@@ -99,7 +105,7 @@ export function ChangesColumn() {
   }
 
   return (
-    <section aria-label="Agent" className="flex h-full min-w-0 flex-col">
+    <section ref={column} aria-label="Agent" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">
         <span className="font-semibold text-foreground">Agent</span>
         <Notice />
@@ -118,151 +124,155 @@ export function ChangesColumn() {
         </DropdownMenu>
         <IconButton side="bottom" label="Hide agent" tip="Hide agent (])" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
       </div>
-      <WithTerminal bottom={(fold) => (
-        // The comments and edits still to send, and what went back and forth with the agent.
-        <Tabs.Root value={tab} onValueChange={(t) => { setTab(t); save('agent-tab', t); }} className="flex h-full min-h-0 flex-col">
-          <div className="flex h-9 shrink-0 items-center gap-1 border-b pr-2 pl-4">
-            <Tabs.List aria-label="Agent" className="flex h-full gap-4">
-              <Tabs.Trigger value="changes" className={TAB}>Changes{!!shown && <Count n={shown} />}</Tabs.Trigger>
-              <Tabs.Trigger value="history" className={TAB}>History{!!unread && <Count n={unread} className="bg-agent text-black" />}</Tabs.Trigger>
-            </Tabs.List>
-            <span className="ml-auto">{fold}</span>
-          </div>
-          <Tabs.Content value="changes" className="min-h-0 flex-1"><ScrollArea className="h-full">{body}</ScrollArea></Tabs.Content>
-          <Tabs.Content value="history" className="min-h-0 flex-1"><History path={scope === 'file' ? current?.path : undefined} /></Tabs.Content>
-        </Tabs.Root>
-      )} />
-      <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
+      {/* The comments and edits still to send, and what went back and forth with the agent. */}
+      <Tabs.Root value={tab} onValueChange={(t) => { setTab(t); save('agent-tab', t); }} className="flex min-h-0 flex-1 flex-col">
+        <div className="flex h-9 shrink-0 items-center gap-1 border-b pr-2 pl-4">
+          <Tabs.List aria-label="Agent" className="flex h-full gap-4">
+            <Tabs.Trigger value="history" className={TAB}>Chat{!!unread && <Count n={unread} className="bg-agent text-black" />}</Tabs.Trigger>
+            <Tabs.Trigger value="changes" className={TAB}>Changes<Count n={shown} /></Tabs.Trigger>
+          </Tabs.List>
+        </div>
+        <Tabs.Content value="changes" className="min-h-0 flex-1"><ScrollArea className="h-full">{body}</ScrollArea></Tabs.Content>
+        <Tabs.Content value="history" className="min-h-0 flex-1"><History path={scope === 'file' ? current?.path : undefined} /></Tabs.Content>
+      </Tabs.Root>
+      <div className="flex min-h-12 shrink-0 items-center gap-2 border-t pr-4 pl-2.5">
+        <AgentStatus session={session} />
         <SendButton />
       </div>
+      {session && <AgentDrawer session={session} column={column} />}
     </section>
   );
 }
 
 const TAB = '-mb-px flex items-center gap-1.5 border-b-2 border-transparent font-semibold text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground data-[state=active]:border-foreground data-[state=active]:text-foreground';
 
-const STRIP = 36; // the status strip and the tabs: all that shows of either while it is folded
-const TOOLS: [AgentTool, string][] = [['claude', 'Claude'], ['codex', 'Codex']];
+const TOOLS: [AgentTool, string][] = [['claude', 'Claude Code'], ['codex', 'Codex']];
 
-/**
- * One line over the Agent pane's tabs: the agent, what it is doing or waits on you for, and (desktop) its terminal's
- * toggle. With no agent, Start buttons on the desktop; with one in another terminal app that needs you, that app's Show.
- */
-function AgentStrip({ session, open, onToggle }: { session: Session | null; open?: boolean; onToggle?: () => void }) {
+/** What the agent is doing, or waits on you for, in a few words; with `files` the ones it holds. */
+function useAgentState(session: Session | null) {
   const n = useNames();
-  const source = useStore((s) => s.source);
-  const info = source?.agentInfo;
+  const info = useStore((s) => s.source?.agentInfo);
   const busy = useStore((s) => s.files.filter((f) => f.state === 'working').map((f) => f.path).join('\n'));
   const needs = useNeedsYou();
-  const bridge = window.trove;
   const running = !!session?.running;
-  // Agents start in this app (the app setting) when it is not Trove: one that needs you is there.
-  const [app, setApp] = useState<string | null>(null);
-  useEffect(() => { void bridge?.terminals().then((t) => setApp(t.current === 'Trove' ? null : t.current), () => {}); }, [needs]);
-  const outside = needs && !running ? app : null;
   const connected = !!info?.connected;
   const files = busy ? busy.split('\n') : [];
-  const state = needs ? `${needs === 'question' ? 'has a question' : 'needs you'}${outside ? ` in ${outside}` : ''}`
+  const state = needs ? (needs === 'question' ? 'has a question' : 'needs you')
     : !connected && !running ? 'not running'
     : info?.waiting === 'idle' ? 'done, waiting for you'
     : files.length ? `working on ${files.length === 1 ? nameOf(files[0]) : plural(files.length, 'file')}`
     : !connected ? 'starting'
     : info?.since ? 'working' : 'connected';
   const name = !connected && session ? TOOLS.find(([t]) => t === session.tool)![1] : n.Agent;
+  return { name, state, needs, connected, running, detail: needs ? info?.waitingText : undefined };
+}
+
+const Dot = ({ needs, live, starting }: { needs: unknown; live: boolean; starting?: boolean }) => (
+  <span aria-hidden className={cn('size-2 shrink-0 rounded-full', needs ? 'bg-ring' : live ? 'bg-agent' : 'border border-muted-foreground', starting && 'animate-pulse')} />
+);
+
+/**
+ * The column's bottom bar, left of Send all: the agent and what it is doing, the terminal drawer's toggle (Cmd+J),
+ * Start when none runs (desktop), and Show for an agent that needs you in another terminal app.
+ */
+function AgentStatus({ session }: { session: Session | null }) {
+  const source = useStore((s) => s.source);
+  const drawer = useStore((s) => s.drawer);
+  const { name, state, needs, connected, running } = useAgentState(session);
+  const bridge = window.trove;
+  const [app, setApp] = useState<string | null>(null);
+  useEffect(() => { void bridge?.terminals().then((t) => setApp(t.current === 'Trove' ? null : t.current), () => {}); }, [needs]);
+  const outside = needs && !running ? app : null;
   const start = (tool: AgentTool) => {
     if (source) bridge!.open({ path: source.root, agent: tool, kind: source.kind }).catch((e: unknown) => toast(e instanceof Error ? e.message : String(e)));
   };
   return (
-    <div className={cn('flex h-9 shrink-0 items-center gap-1.5 border-b pr-2 pl-4 text-xs', needs && 'bg-dirty/10')}>
-      <span aria-hidden className={cn('size-2 shrink-0 rounded-full', needs ? 'bg-dirty' : connected || running ? 'bg-agent' : 'border border-muted-foreground', !connected && running && 'animate-pulse')} />
-      <span className={cn('min-w-0 truncate', needs ? 'font-semibold text-dirty' : 'text-foreground')}>
-        {name} <span className={needs ? '' : 'text-muted-foreground'}>{state}</span>
-      </span>
-      {needs && info?.waitingText && <span className="min-w-0 truncate text-muted-foreground">{info.waitingText}</span>}
-      <span className="ml-auto flex shrink-0 items-center gap-1">
-        {outside && <Button variant="outline" size="xs" onClick={() => void bridge!.showTerminal()}>Show {outside}</Button>}
-        {bridge && !connected && !running && TOOLS.map(([tool, label]) => (
-          <Button key={tool} variant="ghost" size="xs" onClick={() => start(tool)}>Start {label}</Button>
-        ))}
-        {running && open && <IconButton side="bottom" label="Stop" onClick={() => void bridge!.pty.kill()}><Square /></IconButton>}
-        {session && onToggle && (
-          <IconButton side="bottom" label={open ? 'Hide terminal' : 'Show terminal'} aria-pressed={open} onClick={onToggle}
-            className={cn(open && 'text-foreground')}><SquareTerminal /></IconButton>
-        )}
-      </span>
+    <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs">
+      <button type="button" disabled={!session} onClick={() => set({ drawer: !drawer })} aria-pressed={session ? drawer : undefined}
+        className={cn('flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:hover:bg-muted', needs && 'text-ring')}>
+        <Dot needs={needs} live={connected || running} starting={!connected && running} />
+        <span className="min-w-0 truncate">{name} <span className={needs ? '' : 'text-muted-foreground'}>{state}{outside ? ` in ${outside}` : ''}</span></span>
+        {session && <><SquareTerminal className="size-3.5 shrink-0 text-muted-foreground" aria-hidden /><Kbd className="shrink-0">⌘J</Kbd></>}
+      </button>
+      {outside && <Button variant="outline" size="xs" onClick={() => void bridge!.showTerminal()}>Show {outside}</Button>}
+      {bridge && !connected && !running && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="xs" className="gap-1">Start<ChevronDown /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" side="top">
+            {TOOLS.map(([tool, label]) => <DropdownMenuItem key={tool} onSelect={() => start(tool)}>{label}</DropdownMenuItem>)}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 }
 
 /**
- * The status strip, then `bottom` (the changes and history tabs). Once the window has a terminal the strip is its
- * header: folded to the strip by default, dragged open to any height. Either the terminal or the tabs folds, never both;
- * the height and what is folded are remembered. A permission prompt or question opens a folded terminal, and answering
- * it in the terminal folds it again. `bottom` gets its fold button, for the right of its tabs.
+ * The agent's terminal (desktop) as a drawer over the Agent column, from its right edge, at least wide enough for the
+ * terminal to read (it reaches over the document). It stays mounted, so the session keeps running and its screen
+ * survives closing. A permission prompt or question opens it; answering one in the terminal closes it again when it
+ * was opened for that.
  */
-function WithTerminal({ bottom }: { bottom: (fold: ReactNode) => ReactNode }) {
-  const session = useSession();
+function AgentDrawer({ session, column }: { session: Session; column: React.RefObject<HTMLElement | null> }) {
+  const open = useStore((s) => s.drawer);
   const needs = useNeedsYou();
   const info = useStore((s) => s.source?.agentInfo);
-  const top = useRef<PanelImperativeHandle>(null);
-  const low = useRef<PanelImperativeHandle>(null);
-  const [saved] = useState(() => ({ height: 360, hidden: true, folded: false, ...load<object>('terminal', {}) }));
-  const [hidden, setHidden] = useState(saved.hidden);
-  const [folded, setFolded] = useState(saved.folded && !saved.hidden);
-  const [animate, setAnimate] = useState(false);
-  const auto = useRef(false); // Trove opened the terminal for a prompt: it folds again once answered
+  const { name, state, running, connected, detail } = useAgentState(session);
+  const [box, setBox] = useState<{ top: number; right: number; height: number; width: number } | null>(null);
+  const auto = useRef(false); // opened for a prompt: it closes once answered
   const answered = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const el = column.current;
+    if (!el) return;
+    const place = () => {
+      const r = el.getBoundingClientRect();
+      // Beside the column, over the document: Chat stays in view.
+      setBox({ top: r.top, right: window.innerWidth - r.left, height: r.height, width: Math.min(720, r.left - 8) });
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    window.addEventListener('resize', place);
+    return () => { ro.disconnect(); window.removeEventListener('resize', place); };
+  }, [column]);
   useEffect(() => {
-    if (!session) return;
-    const id = requestAnimationFrame(() => requestAnimationFrame(() => setAnimate(true))); // as Columns: no motion on load
-    return () => cancelAnimationFrame(id);
-  }, [!!session]);
-  useEffect(() => {
-    if (!needs || !session?.running || !top.current?.isCollapsed()) return;
+    if (!needs || !session.running || get().drawer) return;
     auto.current = true;
-    top.current.resize(saved.height);
-  }, [needs, info?.since, session?.running]);
-  if (!session) return <div className="flex min-h-0 flex-1 flex-col"><AgentStrip session={null} />{bottom(null)}</div>;
+    set({ drawer: true });
+  }, [needs, info?.since, session.running]);
   // Enter, or Escape or a digit at a prompt, answers it (after a turn, Enter sends the next one): the agent works again.
   const typed = (d: string) => {
     const w = info?.waiting;
     if (!w || answered.current === info.since || !(d.includes('\r') || (w !== 'idle' && (d === '\x1b' || /^\d$/.test(d))))) return;
     answered.current = info.since;
     void api('signal', { kind: 'working' }).catch(() => {});
-    if (auto.current) { auto.current = false; top.current?.collapse(); }
+    if (auto.current) { auto.current = false; set({ drawer: false }); }
   };
-  const hide = (h: boolean) => {
-    auto.current = false;
-    if (!h) return top.current?.resize(saved.height);
-    if (low.current?.isCollapsed()) low.current.expand();
-    top.current?.collapse();
-  };
-  const fold = (f: boolean) => {
-    if (!f) return low.current?.expand();
-    if (top.current?.isCollapsed()) top.current.resize(saved.height);
-    low.current?.collapse();
-  };
-  // A drag, hide or fold: what is folded, and an open terminal's height over open tabs, are remembered.
-  const changed = (_: unknown, meta: { isUserInteraction: boolean }) => {
-    const h = !!top.current?.isCollapsed(), f = !!low.current?.isCollapsed();
-    setHidden(h);
-    setFolded(f);
-    if (!h && !f && meta.isUserInteraction) saved.height = Math.round(top.current?.getSize().inPixels ?? saved.height);
-    if (!auto.current) save('terminal', { ...saved, hidden: h, folded: f });
-  };
-  const foldButton = (
-    <IconButton side="bottom" label={folded ? 'Show changes' : 'Hide changes'} onClick={() => fold(!folded)}>{folded ? <PanelBottomOpen /> : <PanelBottomClose />}</IconButton>
-  );
-  return (
-    <ResizablePanelGroup orientation="vertical" onLayoutChanged={changed} className={cn('min-h-0 flex-1', animate && 'animate')}>
-      <ResizablePanel id="terminal" panelRef={top} collapsible collapsedSize={STRIP} minSize={160} defaultSize={hidden ? STRIP : folded ? undefined : saved.height} groupResizeBehavior="preserve-pixel-size">
-        <Suspense fallback={<AgentStrip session={session} />}>
-          <Terminal header={<AgentStrip session={session} open={!hidden} onToggle={() => hide(!hidden)} />} onInput={typed} />
-        </Suspense>
-      </ResizablePanel>
-      <ResizableHandle aria-label="Resize terminal" />
-      <ResizablePanel id="history" panelRef={low} collapsible collapsedSize={STRIP} minSize={120} defaultSize={folded ? STRIP : undefined}>{bottom(foldButton)}</ResizablePanel>
-    </ResizablePanelGroup>
+  if (!box) return null;
+  return createPortal(
+    <div role="dialog" aria-label={`${name} terminal`} aria-hidden={!open} inert={!open}
+      style={{ top: box.top, right: box.right, height: box.height, width: box.width }}
+      className={cn('fixed z-40 flex flex-col border-x bg-terminal shadow-2xl transition-[opacity,translate,visibility] duration-200 ease-out motion-reduce:transition-none', !open && 'invisible translate-x-6 opacity-0')}>
+      <div className={cn('flex h-11 shrink-0 items-center gap-1.5 border-b pr-2 pl-4 text-xs', needs && 'bg-ring/10')}>
+        <Dot needs={needs} live={connected || running} starting={!connected && running} />
+        <span className={cn('min-w-0 truncate', needs ? 'font-semibold text-ring' : 'text-foreground')}>{name} <span className={needs ? '' : 'text-muted-foreground'}>{state}</span></span>
+        {detail && <span className="min-w-0 truncate text-muted-foreground">{detail}</span>}
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          {running && (
+            <Button variant="outline" size="xs" className="text-destructive hover:text-destructive" onClick={() => void window.trove!.pty.kill()}>
+              <Square className="fill-current" />Stop {name}
+            </Button>
+          )}
+          <IconButton side="bottom" label="Hide terminal" tip={`Hide terminal (⌘J): ${name} keeps running`} onClick={() => { auto.current = false; set({ drawer: false }); }}><ChevronsRight /></IconButton>
+        </span>
+      </div>
+      <div className="min-h-0 flex-1">
+        <Suspense fallback={null}><Terminal header={null} onInput={typed} /></Suspense>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -411,7 +421,7 @@ function SendButton() {
     else void send({ kind: act });
   };
   return (
-    <ButtonGroup className="ml-auto min-w-0">
+    <ButtonGroup className="ml-auto min-w-0 shrink-0">
       <Button variant="tier2" size="default" className="min-w-0 truncate" disabled={!comments || offline} onClick={(e) => { if (e.detail <= 1) void send({}); }}>
         <span className="truncate">{comments ? `Send all (${plural(comments, 'comment')}, ${plural(withComments, 'file')})` : 'Send all'}</span>
       </Button>

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { AgentTool, OpenRequest, TerminalApp, TroveBridge, UpdateState } from '@trove/core';
+import type { AgentMode, AgentTool, OpenRequest, TerminalApp, TroveBridge, UpdateState } from '@trove/core';
 
 // invoke rejects with "Error invoking remote method '<channel>': Error: <message>"; the page shows <message>.
 const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args).catch((e: Error) => {
@@ -27,6 +27,8 @@ const trove: TroveBridge = {
   installUpdate: () => invoke('trove:installUpdate'),
   terminals: () => invoke('trove:terminals'),
   setTerminal: (t: TerminalApp) => invoke('trove:setTerminal', t),
+  mode: () => invoke('trove:mode'),
+  setMode: (m: AgentMode) => invoke('trove:setMode', m),
   home: () => invoke('trove:home'),
   githubRepos: () => invoke('trove:githubRepos'),
   clone: (url: string, parent: string) => invoke('trove:clone', url, parent),

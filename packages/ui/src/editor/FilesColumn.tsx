@@ -17,7 +17,7 @@ import { dirOf, nameOf } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { acceptAll, createPr, open, prReady, reveal, setFilters, shown, togglePanel, visible } from './actions';
 import { Count, IconButton, nothingText } from './bits';
-import { PathMenu } from './PathMenu';
+import { DirMenu, PathMenu } from './PathMenu';
 import { StateIcons } from './StateIcon';
 import { get, set, useFolder, useNames, useStore } from './store';
 
@@ -188,14 +188,17 @@ function Folders({ list, query }: { list: FileRow[]; query: string }) {
   const n = useNames();
   const folder = useFolder();
   const unsaved = useStore((s) => s.unsaved);
+  const root = useStore((s) => s.source?.root);
   const groups = Map.groupBy(list, (f) => dirOf(f.path));
   return [...groups].map(([dir, rows]) => (
     <Collapsible key={dir} open={!!query || !closed.includes(dir)}
       onOpenChange={(o) => set((s) => ({ closedDirs: o ? s.closedDirs.filter((d) => d !== dir) : [...s.closedDirs, dir] }))}>
-      <CollapsibleTrigger title={dir || '/'} className="group flex w-full items-center gap-1.5 rounded-sm px-1 py-1.5 text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+      <DirMenu dir={dir} first={rows[0]!.path}>
+      <CollapsibleTrigger title={dir || root} className="group flex w-full items-center gap-1.5 rounded-sm px-1 py-1.5 text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
         <ChevronRight className="size-3.5 shrink-0 transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none" aria-hidden />
-        <span className="folder min-w-0 max-w-full">{`‎${dir || '/'}‎`}</span>
+        <span className="folder min-w-0 max-w-full">{`‎${dir || nameOf(root ?? '') || '/'}‎`}</span>
       </CollapsibleTrigger>
+      </DirMenu>
       <CollapsibleContent>
         {rows.map((f) => (
           <PathMenu key={f.path} path={f.path}>

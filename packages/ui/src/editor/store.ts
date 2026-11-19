@@ -29,6 +29,9 @@ export interface Pick {
   block: number | null; // markdown block index; null in the HTML frame
 }
 
+/** A passage added to chat: its file and what it says (an element's tag first). */
+export interface ChatRef { path: string; quote: string; tag?: string }
+
 export interface State {
   source: SourceInfo | null; // null: an old server without /api/source
   git: GitInfo | null; // null: a server without /api/git
@@ -53,6 +56,9 @@ export interface State {
   query: string; // the Files search (page state, not persisted)
   scope: 'file' | 'all';
   showNew: boolean;
+  htmlView: 'preview' | 'source'; // an HTML file shows rendered or as text
+  drawer: boolean; // the agent's terminal drawer is open (desktop)
+  chat: ChatRef[]; // passages added to the History message box, sent with the next message
   hidden: { files: boolean; changes: boolean };
   activity: Activity[]; // the top of the Changes thread, loaded while the column shows
   committedOpen: boolean;
@@ -96,6 +102,9 @@ let state: State = {
   query: '',
   scope: load<'file' | 'all'>('scope', 'file') === 'all' ? 'all' : 'file',
   showNew: load<boolean | null>('show-new', null) ?? true,
+  htmlView: 'preview',
+  drawer: false,
+  chat: [],
   hidden: { files: load<boolean>('hide-files', false) === true, changes: load<boolean>('hide-changes', false) === true},
   activity: [],
   committedOpen: false,

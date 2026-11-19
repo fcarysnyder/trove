@@ -2,7 +2,7 @@
 import { makeAnchor } from '@trove/core/anchor';
 import { copy } from '@/lib/copy';
 import { flash, open, setShowNew } from '../actions';
-import { get, set } from '../store';
+import { get, set, type ChatRef } from '../store';
 import { toRange } from './layers';
 import { docModel } from './model';
 import { blockEl, bodyOf, frameEl, headingPath, nodeEl } from './dom';
@@ -63,10 +63,11 @@ export function onSelect(doc: Document, target: EventTarget | null) {
   });
 }
 
-export function pickAction(act: 'change' | 'explain' | 'edit' | 'copy') {
-  const { pick } = get();
+export function pickAction(act: 'change' | 'explain' | 'edit' | 'copy' | 'chat') {
+  const { pick, current } = get();
   if (!pick) return;
   set({ pick: null });
+  if (act === 'chat') return current && addToChat({ path: current.path, quote: pick.anchor.quote });
   if (act === 'change' || act === 'explain') {
     set({ composer: { kind: act, anchor: pick.anchor, range: pick.range } });
   } else if (act === 'edit') editBlock(pick.block);
@@ -97,4 +98,12 @@ export async function showBlock(path: string, index: number | null) {
     await new Promise((r) => requestAnimationFrame(r));
   }
   flash(index == null ? frameEl() ?? document.querySelector('.md') : blockEl(index));
+}
+
+/** Add a passage to History's message box (the conversation's or the open thread's): History shows and its box takes focus. */
+export function addToChat(ref: ChatRef) {
+  set((s) => ({ chat: [...s.chat.filter((c) => c.quote !== ref.quote || c.path !== ref.path), ref] }));
+  window.getSelection()?.removeAllRanges();
+  frameEl()?.contentWindow?.getSelection()?.removeAllRanges();
+  window.dispatchEvent(new Event('trove:chat'));
 }

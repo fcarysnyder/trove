@@ -12,8 +12,8 @@ summary paragraph and sections are what readers see there.
 Trove is no longer only for git repositories. A plain folder or a single
 file opens as an editor: every document in the folder, unsaved edits you Save
 or don't, and numbered versions of every save and every change the agent
-makes. The Agent pane becomes a conversation with a thread per file. The
-terminal folds to a status line that opens itself when the agent needs you.
+makes. The Agent pane becomes a chat with a thread per file. The agent's
+terminal is a drawer that opens itself when the agent needs you.
 HTML files gain Pointer and Circle tools for commenting on elements.
 
 ### Added
@@ -25,7 +25,12 @@ HTML files gain Pointer and Circle tools for commenting on elements.
 - On an HTML file, a toolbar adds Pointer (V: click an element, shift-click for more) and Circle (O: circle part of the page). Comments carry each element's selector, id, classes, test ids, text and HTML, and numbered badges mark them on the page. The plugin's new `html-prototype` skill has the agent study how a page is built and make changes in its own classes, tokens and patterns.
 - The Agent pane is one conversation with the agent. Each file gets a thread card with its comments, the agent's notes and replies, and its own reply box. History is kept across restarts.
 - `trove say` posts a markdown message to the page, `--file` puts it in that file's thread, and `--re` answers an entry. `trove done --note` says what changed. Both read long text from stdin with `-`.
-- On the desktop the agent's terminal folds to a status line. It opens itself for a permission prompt or a question, and folds again once you answer. The plugin's hooks (`PermissionRequest`, `Notification`, `Stop`) and Codex's OSC 9 terminal notifications drive it. The window title and Dock also show when the agent needs you, as does the file header when the Agent pane is hidden.
+- On the desktop the agent's terminal is a drawer beside the Agent pane (⌘J), so Chat stays in view. The agent keeps running while it is hidden. It opens itself for a permission prompt or a question and hides again once you answer. The plugin's hooks (`PermissionRequest`, `Notification`, `Stop`) and Codex's OSC 9 terminal notifications drive it. The window title and Dock also show when the agent needs you, as does the file header when the Agent pane is hidden.
+- With the agent in Trove's terminal, a Chat message is typed straight into it, and a slash command runs there with the drawer open. Chat shows when the agent is working, prompts you to answer in the terminal when it asks something, and counts the threads waiting on you, with up and down to step through them.
+- Agents Trove starts run with bypass permissions by default. The mode menu under the message box sets bypass, auto or ask for the next start.
+- Add to chat (A) puts a selected passage into Chat's message box as a quote.
+- An HTML file has Preview and Source tabs; Source shows the HTML with line numbers, and you can comment on it like a text file.
+- One Start menu offers Claude Code or Codex. Home filters its lists by All, Folders or Files. The folder name in the top bar lists pinned and recent sources with Open Folder and Open File, and right-clicking the Files tree's root shows the folder in Finder or opens another.
 - Click a file's path to copy it. Right-click any path to copy the absolute or relative path or the file name, Show in Finder, or, for HTML, Open in browser.
 
 ### Changed
