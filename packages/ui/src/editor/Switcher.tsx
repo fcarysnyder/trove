@@ -9,7 +9,7 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { tilde } from '@/lib/text';
@@ -104,15 +104,15 @@ function PickList({ rows, noun, footer }: { rows: Row[]; noun: string; footer?: 
   };
   return (
     <div onKeyDown={nav}>
-      <div className="relative p-2">
-        <Search className="pointer-events-none absolute top-1/2 left-4.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-        <Input ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Filter ${noun}`} aria-label={`Filter ${noun}`}
-          autoComplete="off" spellCheck={false} className="h-8 pl-8"
+      <InputGroup className="m-2 h-8 w-auto">
+        <InputGroupAddon><Search aria-hidden /></InputGroupAddon>
+        <InputGroupInput ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Filter ${noun}`} aria-label={`Filter ${noun}`}
+          autoComplete="off" spellCheck={false}
           onKeyDown={(e) => {
             const first = shown.find((r) => !r.off);
             if (e.key === 'Enter' && first) { e.preventDefault(); go(first); }
           }} />
-      </div>
+      </InputGroup>
       <div ref={list} className="max-h-80 overflow-auto px-1 pb-1">
         {shown.length === 0 && <p className="px-2 py-1.5 text-sm text-muted-foreground">{rows.length ? `No ${noun} match` : `No ${noun}`}</p>}
         {shown.map((r) => {

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from '@/components/ui/context-menu';
-import { Input } from '@/components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -65,15 +65,17 @@ export function FilesColumn() {
         <Filters off={off} />
         <IconButton side="bottom" label="Hide files" tip="Hide files ([)" onClick={() => togglePanel('files', true)}><PanelLeftClose /></IconButton>
       </div>
-      <div className="relative shrink-0 px-2 pt-2">
-        <Search className="pointer-events-none absolute top-1/2 left-4.5 mt-1 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-        <Input id="file-search" value={query} placeholder="Search files" aria-label="Search files" autoComplete="off" spellCheck={false}
-          onChange={(e) => set({ query: e.target.value })} onKeyDown={onSearchKey} className="h-8 pr-8 pl-8" />
-        {query && (
-          <IconButton label="Clear search" className="absolute top-1/2 right-3 mt-1 -translate-y-1/2" onClick={() => { set({ query: '' }); document.getElementById('file-search')?.focus(); }}>
-            <X />
-          </IconButton>
-        )}
+      <div className="shrink-0 px-2 pt-2">
+        <InputGroup className="h-8">
+          <InputGroupAddon><Search aria-hidden /></InputGroupAddon>
+          <InputGroupInput id="file-search" value={query} placeholder="Search files" aria-label="Search files" autoComplete="off" spellCheck={false}
+            onChange={(e) => set({ query: e.target.value })} onKeyDown={onSearchKey} />
+          {query && (
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton size="icon-xs" aria-label="Clear search" title="Clear search" onClick={() => { set({ query: '' }); document.getElementById('file-search')?.focus(); }}><X /></InputGroupButton>
+            </InputGroupAddon>
+          )}
+        </InputGroup>
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <nav aria-label="Files" className="p-2">
@@ -179,7 +181,7 @@ function Folders({ list, query }: { list: FileRow[]; query: string }) {
           <ContextMenu key={f.path}>
             <ContextMenuTrigger asChild>
               <button data-tree-row title={f.path} aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
-                className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-card hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
+                className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
                   f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
                 <StateIcons file={f} names={n} />
                 <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>

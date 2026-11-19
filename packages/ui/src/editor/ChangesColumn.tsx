@@ -6,6 +6,7 @@ import type { PanelImperativeHandle } from 'react-resizable-panels';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
 import { Kbd } from '@/components/ui/kbd';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -187,8 +188,8 @@ function Row({ kind, anchor, n, found, tools, children, locked, onClick, rowRef 
 }) {
   const Kind = kind === 'explain' ? MessageCircleQuestion : MessageSquare;
   return (
-    <div ref={rowRef} data-note={locked ? undefined : n ?? undefined} onClick={(e) => { if (!(e.target as Element).closest('textarea, button')) onClick?.(); }}
-      className={cn('group/note px-4 py-2', locked ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:bg-card')}>
+    <div ref={rowRef} data-note={locked ? undefined : n ?? undefined} onClick={(e) => { if (!(e.target as Element).closest('button, [data-slot=input-group]')) onClick?.(); }}
+      className={cn('group/note px-4 py-2', locked ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:bg-muted')}>
       <div className="flex min-h-6 items-center gap-1.5 text-xs text-muted-foreground">
         {n != null && <span>{n + 1}</span>}
         <Kind className="size-3.5" aria-hidden />
@@ -202,24 +203,29 @@ function Row({ kind, anchor, n, found, tools, children, locked, onClick, rowRef 
   );
 }
 
-/** A note field that grows with its text; Cmd/Ctrl+Enter submits, Escape cancels. */
+/**
+ * A note field that grows with its text, its actions under it; Cmd/Ctrl+Enter submits, Escape cancels.
+ * In a height-capped parent (the comment card) the field shrinks first and scrolls.
+ */
 export function NoteField({ value, placeholder, verb, submit, cancel }: { value: string; placeholder: string; verb: string; submit: (t: string) => void; cancel: () => void }) {
   const [text, setText] = useState(value);
   const ref = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { ref.current?.focus(); }, []);
+  useEffect(() => { const t = ref.current; t?.focus(); t?.setSelectionRange(t.value.length, t.value.length); }, []); // caret after an existing note
   return (
-    <>
-      <textarea ref={ref} value={text} placeholder={placeholder} rows={1} onChange={(e) => setText(e.target.value)}
-        className="quiet field-sizing-content placeholder:text-muted-foreground"
+    <InputGroup className="min-h-0 bg-background">
+      <InputGroupTextarea ref={ref} value={text} placeholder={placeholder} onChange={(e) => setText(e.target.value)}
+        className="min-h-14 [overflow-wrap:anywhere]"
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(text.trim()); }
           if (e.key === 'Escape') { e.preventDefault(); cancel(); }
         }} />
-      <div className="my-2 flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={() => submit(text.trim())}>{verb}<Kbd>{mod === 'Cmd' ? '⌘↵' : 'Ctrl ↵'}</Kbd></Button>
-        <Button variant="ghost" size="sm" onClick={cancel}>Cancel</Button>
-      </div>
-    </>
+      <InputGroupAddon align="block-end" className="justify-end">
+        <InputGroupButton size="sm" onClick={cancel}>Cancel</InputGroupButton>
+        <InputGroupButton size="sm" variant="default" onClick={() => submit(text.trim())}>
+          {verb}<Kbd className="bg-primary-foreground/15 text-primary-foreground">{mod === 'Cmd' ? '⌘↵' : 'Ctrl ↵'}</Kbd>
+        </InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>
   );
 }
 
@@ -259,7 +265,7 @@ function EditRow({ path, x, locked }: { path: string; x: BlockEdit; locked: bool
   const firstLine = (t: string) => t.split('\n').find((l) => l.trim()) ?? '';
   return (
     <div onClick={(e) => { if (!locked && !(e.target as Element).closest('button')) void showBlock(path, x.index); }}
-      className={cn('group/note px-4 py-2', locked ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:bg-card')}>
+      className={cn('group/note px-4 py-2', locked ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:bg-muted')}>
       <div className="flex min-h-6 items-center gap-1.5 text-xs text-muted-foreground">
         <Pencil className="size-3.5" aria-hidden /><span>Edit</span>
         {!locked && (
@@ -283,13 +289,14 @@ function EditRow({ path, x, locked }: { path: string; x: BlockEdit; locked: bool
   );
 }
 
+/** A file's group heading: opens the file. */
 function FileHead({ f, count }: { f: FileRow; count: number }) {
   return (
-    <button onClick={() => void open(f.path)} title={f.path}
-      className="flex w-full items-center gap-1.5 px-4 pt-2 pb-1 text-left text-[13px] font-medium whitespace-nowrap text-body outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+    <Button variant="ghost" size="sm" onClick={() => void open(f.path)} title={f.path}
+      className="mx-2 mt-1 flex w-[calc(100%-1rem)] justify-start gap-1.5 px-2 text-[13px] text-body">
       <PathLabel path={f.path} className="min-w-0 flex-1" />
       <Count n={count} />
-    </button>
+    </Button>
   );
 }
 
