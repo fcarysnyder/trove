@@ -9,6 +9,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
     "package": "install-electron && electron-vite build && electron-builder --mac --dir",
     "dist": "install-electron && electron-vite build && electron-builder --mac dmg --arm64 --publish never"
   },

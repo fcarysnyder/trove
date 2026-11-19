@@ -36,6 +36,8 @@ const trove: TroveBridge = {
   removeWorktree: (path: string) => invoke('trove:removeWorktree', path),
   worktreeDir: () => invoke('trove:worktreeDir'),
   setWorktreeDir: (path: string) => invoke('trove:setWorktreeDir', path),
+  attention: (on: boolean) => ipcRenderer.send('trove:attention', on),
+  showTerminal: () => invoke('trove:showTerminal'),
   pty: {
     start: (tool: AgentTool, cols: number, rows: number) => invoke('trove:pty:start', tool, cols, rows),
     // send, not invoke: keystrokes and resizes are fire-and-forget.

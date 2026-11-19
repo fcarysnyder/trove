@@ -1,15 +1,7 @@
-import type { AgentTool } from '@trove/core/types';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { PanelTopClose, PanelTopOpen, Square } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { IconButton } from './bits';
-
-const LABEL: Record<AgentTool, string> = { claude: 'Claude Code', codex: 'Codex' };
-const DOT: Record<AgentTool, string> = { claude: 'bg-agent-claude', codex: 'bg-agent-codex' };
+import { useEffect, useRef, type ReactNode } from 'react';
 
 /** The page's colours and mono font, read from its CSS variables; xterm parses oklch() itself. */
 function theme() {
@@ -22,15 +14,15 @@ function theme() {
 }
 
 /**
- * The window's agent terminal (desktop only, through window.trove.pty): main's pty for this window, replayed
- * from its tail on mount. `hidden` folds it to this header; the agent keeps running.
+ * The window's agent terminal (desktop only, through window.trove.pty) under `header`, the Agent pane's status strip:
+ * main's pty for this window, replayed from its tail on mount. A session started after one exited starts on a clean
+ * screen. `onInput` sees what the user types before the pty does.
  */
-export default function Terminal({ hidden, onHide }: { hidden: boolean; onHide: (hidden: boolean) => void }) {
+export default function Terminal({ header, onInput }: { header: ReactNode; onInput: (data: string) => void }) {
   const pty = window.trove!.pty;
   const box = useRef<HTMLDivElement>(null);
-  const term = useRef<XTerm | null>(null);
-  const [tool, setTool] = useState<AgentTool | null>(null);
-  const [exited, setExited] = useState(false);
+  const typed = useRef(onInput);
+  typed.current = onInput;
 
   useEffect(() => {
     const { fontFamily, theme: colours } = theme();
@@ -38,22 +30,24 @@ export default function Terminal({ hidden, onHide }: { hidden: boolean; onHide: 
     const fit = new FitAddon();
     t.loadAddon(fit);
     t.open(box.current!);
-    term.current = t;
     // Each fit tells the pty, so Claude Code redraws (SIGWINCH) at the pane's size. Folded, there is nothing to fit.
     const refit = () => {
       if ((box.current?.clientHeight ?? 0) < 40) return;
       fit.fit();
       pty.resize(t.cols, t.rows);
     };
-    const input = t.onData((d) => pty.write(d));
+    const input = t.onData((d) => { typed.current(d); pty.write(d); });
     let offData = () => {}, offExit = () => {};
-    let gone = false;
+    let gone = false, dead = false;
     // Subscribed once the tail is written: IPC keeps order, so nothing falls between the two.
     void pty.state().then((s) => {
       if (gone) return;
-      if (s) { setTool(s.tool); setExited(s.exitCode !== null); t.write(s.tail); }
-      offData = pty.onData((d) => t.write(d));
-      offExit = pty.onExit(() => setExited(true));
+      if (s) { dead = s.exitCode !== null; t.write(s.tail); }
+      offData = pty.onData((d) => {
+        if (dead) { dead = false; t.reset(); refit(); } // a new session, at this pane's size
+        t.write(d);
+      });
+      offExit = pty.onExit(() => { dead = true; });
       refit();
     });
     const ro = new ResizeObserver(refit);
@@ -64,26 +58,9 @@ export default function Terminal({ hidden, onHide }: { hidden: boolean; onHide: 
     return () => { gone = true; input.dispose(); offData(); offExit(); ro.disconnect(); mo.disconnect(); t.dispose(); };
   }, []);
 
-  const start = () => {
-    const t = term.current!;
-    t.reset();
-    setExited(false);
-    void pty.start(tool!, t.cols, t.rows);
-  };
-
   return (
     <div className="flex h-full min-h-0 flex-col bg-terminal">
-      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b pr-2 pl-4 text-xs">
-        {tool && <span className={cn('size-2 rounded-full', exited ? 'border border-muted-foreground' : DOT[tool])} aria-hidden />}
-        <span className="text-foreground">{tool ? LABEL[tool] : 'Agent'}</span>
-        {exited && <span className="text-muted-foreground">exited</span>}
-        <span className="ml-auto flex items-center">
-          {exited
-            ? tool && <Button variant="ghost" size="sm" onClick={start}>Start</Button>
-            : <IconButton side="bottom" label="Stop" onClick={() => void pty.kill()}><Square /></IconButton>}
-          <IconButton side="bottom" label={hidden ? 'Show terminal' : 'Hide terminal'} onClick={() => onHide(!hidden)}>{hidden ? <PanelTopOpen /> : <PanelTopClose />}</IconButton>
-        </span>
-      </div>
+      {header}
       <div ref={box} className="min-h-0 flex-1 py-1 pl-3" />
     </div>
   );

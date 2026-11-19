@@ -7,7 +7,7 @@ import { load, save } from '@/lib/storage';
 import { applyTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 import { init, togglePanel } from './actions';
-import { ChangesColumn } from './ChangesColumn';
+import { ChangesColumn, useNeedsYou } from './ChangesColumn';
 import { DocColumn } from './DocColumn';
 import { FilesColumn } from './FilesColumn';
 import { onKey } from './keys';
@@ -29,7 +29,9 @@ export function App() {
   const name = useStore((s) => s.source && (s.source.worktree && !s.source.worktree.main ? `${s.source.worktree.name} · ${s.source.repo.name}` : s.source.repo?.name ?? s.source.name));
   useEffect(() => applyTheme(theme), [theme]);
   useEffect(() => { document.documentElement.dataset.agent = agent; }, [agent]);
-  useEffect(() => { document.title = `${question ? '(1) ' : ''}${name ? `${name} · ` : ''}Trove`; }, [question, name]);
+  const needs = !!useNeedsYou();
+  useEffect(() => { document.title = `${needs ? '● ' : ''}${question ? '(1) ' : ''}${name ? `${name} · ` : ''}Trove`; }, [needs, question, name]);
+  useEffect(() => window.trove?.attention(needs), [needs]); // the desktop's own title and the Dock badge
   useEffect(() => {
     void init();
     const collapsed = () => {

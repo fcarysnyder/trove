@@ -513,7 +513,6 @@ export async function init() {
 export async function loadActivity() {
   const res = await optional<ActivityResponse>('activity').catch(() => undefined);
   if (res !== undefined && JSON.stringify(res?.entries ?? []) !== JSON.stringify(get().activity)) set({ activity: res?.entries ?? [] });
-  if (res?.user !== undefined && res.user !== get().reviewer) set({ reviewer: res.user });
 }
 /** A message to the agent from History, new or a reply; it reaches the agent as one events-log line. False when it failed (a toast says why). */
 export async function sendMessage(body: MessageBody) {

@@ -120,10 +120,19 @@ modal.
 
 ## Talk in History
 
-The Agent pane's History tab is the conversation with the user on the page: every batch, every
-release with your note, your messages and theirs, kept across restarts. Put what you tell the user
-about the review there, not only in your session: answers to explain comments, a summary of a
-batch when the per-file notes do not cover it, anything conversational.
+The Agent pane's History tab is the conversation with the user on the page, kept across restarts.
+General messages, yours and theirs, run in order. Everything about one file (the batches that
+commented on it, your release notes, messages tied to it) is one thread for that file, which
+shows in the conversation as a card the user opens. Put what you tell the user about the review
+there, not only in your session: answers to explain comments, a summary of a batch when the
+per-file notes do not cover it, anything conversational.
+
+- **About a file: `--file <path>`**, so it lands in that file's thread (an answer to an explain
+  comment, a question about a passage). A general reply (about the review, the batch as a whole,
+  anything not about one file) omits `--file`.
+- **Don't tell the user to look at your terminal.** This plugin's hooks tell the page when you are
+  waiting on a permission prompt or a question, or have finished your turn, and the page shows
+  "Claude needs you" with the terminal. Just ask in your session as usual.
 
 - `node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" say "<markdown>" --port <port>` posts a message.
   Long text (several lines, quotes, backticks, a leading `-`) goes on stdin with `-`:
@@ -134,15 +143,15 @@ batch when the per-file notes do not cover it, anything conversational.
   EOF
   ```
 
-  `--re <id>` threads it under the entry it answers (a batch id, or a message id); `--file <path>`
-  (repeatable) ties it to files, so it shows when the user filters History to one file. It prints
-  `message <id> is in History`.
+  `--re <id>` names the entry it answers (a batch id, or a message id); `--file <path>`
+  (repeatable) puts it in that file's thread. It prints `message <id> is in History`.
 - **The user writes to you from History.** Each message is one line on the events log:
   `message <id>: from the reviewer[, re <id>]. Read it with: grep -F <id> '<activity.jsonl>'`.
   Run that command; its first line is `{id, at, kind: "message", from: "user", body, re?, paths?}`,
   and `body` is the whole message in markdown. `re` is the entry it answers (grep that id too when
-  you need the context: a batch id is in `batches.jsonl`, any other in `activity.jsonl`). Treat it
-  as the user talking to you: answer with `say --re <id>`, and act on what it asks the way you
+  you need the context: a batch id is in `batches.jsonl`, any other in `activity.jsonl`); `paths`
+  is the file whose thread it was written in. Treat it as the user talking to you: answer with
+  `say --re <id>`, plus `--file <path>` for each of its `paths`, and act on what it asks the way you
   would on the same words in chat. As with comments (step 4 above), anything beyond editing the
   files under review waits for their answer: ask with `say --re <id>` first.
 

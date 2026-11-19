@@ -6,7 +6,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Kbd } from '@/components/ui/kbd';
-import { mod } from '@/lib/text';
+import { sendKey } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { cancelEdit, revertEdit, saveEdit } from '../actions';
 import { IconButton } from '../bits';
@@ -15,7 +15,6 @@ import { expandEdit } from './commands';
 import { tintRuns, type Baseline } from './layers';
 import { docModel } from './model';
 
-const SAVE_KEY = mod === 'Cmd' ? '⌘↵' : 'Ctrl ↵';
 /** Cancel; a folder is edited in place, so there it says what it does. */
 const useDiscard = () => (useFolder() ? "Don't save" : 'Cancel');
 const MIRRORED = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'wordSpacing', 'tabSize', 'textIndent',
@@ -113,7 +112,7 @@ export function InlineEditor({ editing }: { editing: Editing }) {
         }}
       />
       <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground" style={{ marginBottom: marginBottom ?? 12 }}>
-        <Button variant="ghost" size="sm" onClick={() => void save()}>Save<Kbd>{SAVE_KEY}</Kbd></Button>
+        <Button variant="ghost" size="sm" onClick={() => void save()}>Save<Kbd>{sendKey}</Kbd></Button>
         <Button variant="ghost" size="sm" onClick={cancelEdit}>{discard}<Kbd>Esc</Kbd></Button>
         <IconButton label="Expand" onClick={() => expandEdit(value)}><Maximize2 /></IconButton>
         {prior && <Button variant="ghost" size="sm" onClick={() => { set({ editing: null }); void revertEdit(current.path, prior); }}><Undo2 />Revert</Button>}
@@ -178,7 +177,7 @@ function ModalBody({ editing }: { editing: Editing }) {
         <span className="flex-1" />
         {prior && <Button variant="ghost" size="default" onClick={() => { set({ editing: null }); void revertEdit(current.path, prior); }}><Undo2 />Revert</Button>}
         <Button variant="ghost" size="default" onClick={cancelEdit}>{discard}</Button>
-        <Button size="default" onClick={() => void save()}>Save<Kbd className="bg-primary-foreground/15 text-primary-foreground">{SAVE_KEY}</Kbd></Button>
+        <Button size="default" onClick={() => void save()}>Save<Kbd className="bg-primary-foreground/15 text-primary-foreground">{sendKey}</Kbd></Button>
       </div>
     </>
   );

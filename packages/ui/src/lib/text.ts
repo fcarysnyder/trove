@@ -18,6 +18,8 @@ export const ago = (iso: string) => {
   return f.format(-Math.round(s / 86400), 'day');
 };
 export const mod = typeof navigator !== 'undefined' && /Mac/.test(navigator.userAgent) ? 'Cmd' : 'Ctrl';
+/** Cmd/Ctrl+Enter, as a key hint: what saves an edit and sends a note or a message. */
+export const sendKey = mod === 'Cmd' ? '⌘↵' : 'Ctrl ↵';
 export const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 // ponytail: home is guessed from the path (/Users/<name>, /home/<name>); the server could send it if that misses.
 export const tilde = (p: string) => p.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~');
