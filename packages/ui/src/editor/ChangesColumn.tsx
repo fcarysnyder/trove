@@ -16,7 +16,7 @@ import { load, save } from '@/lib/storage';
 import { nameOf, plural, reducedMotion, sendKey } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { loadAll, open, revertEdit, saveDrafts, send, sendable, setScope, togglePanel } from './actions';
-import { Count, IconButton, PathLabel } from './bits';
+import { Count, IconButton, PathLabel, TAB } from './bits';
 import { get, set, useNames, useStore } from './store';
 import { showBlock, showPassage } from './doc/commands';
 import { History, useUnread } from './Activity';
@@ -144,7 +144,6 @@ export function ChangesColumn() {
   );
 }
 
-const TAB = '-mb-px flex items-center gap-1.5 border-b-2 border-transparent font-semibold text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground data-[state=active]:border-foreground data-[state=active]:text-foreground';
 
 const TOOLS: [AgentTool, string][] = [['claude', 'Claude Code'], ['codex', 'Codex']];
 

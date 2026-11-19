@@ -7,6 +7,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import { dirOf, folderText, nameOf } from '@/lib/text';
 
+/** An underlined tab trigger (radix Tabs): the Agent pane's and Home's. */
+export const TAB = '-mb-px flex items-center gap-1.5 border-b-2 border-transparent font-semibold text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground data-[state=active]:border-foreground data-[state=active]:text-foreground';
+
 export const Count = ({ n, className }: { n: number; className?: string }) => (
   <Badge variant="secondary" className={cn('h-4 min-w-4 rounded-full px-1 text-[11px] leading-4 tabular-nums', className)}>{n}</Badge>
 );

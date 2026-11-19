@@ -13,13 +13,13 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from '@/components/ui/input';
 import { Kbd } from '@/components/ui/kbd';
 import { Toaster } from '@/components/ui/sonner';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { load, save } from '@/lib/storage';
 import { dirOf, nameOf, tilde } from '@/lib/text';
 import { applyTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
-import { IconButton, TitleStrip } from '@/editor/bits';
+import { IconButton, TAB, TitleStrip } from '@/editor/bits';
+import { Tabs } from 'radix-ui';
 import mark from '../../../../design/icon/mark/favicon.svg';
 import { toast } from 'sonner';
 
@@ -108,12 +108,13 @@ function Home({ recents, probes, reload, onOpen }: { recents: Recent[]; probes: 
         </div>
       </div>
       {recents.length > 0 && (
-        <ToggleGroup type="single" size="sm" variant="outline" spacing={0} value={show} aria-label="Show"
-          onValueChange={(v) => { if (v) { setShow(v as Show); save('start-show', v); } }} className="self-start">
-          <ToggleGroupItem value="all">All</ToggleGroupItem>
-          <ToggleGroupItem value="folders">Folders</ToggleGroupItem>
-          <ToggleGroupItem value="files">Files</ToggleGroupItem>
-        </ToggleGroup>
+        <Tabs.Root value={show} onValueChange={(v) => { setShow(v as Show); save('start-show', v); }}>
+          <Tabs.List aria-label="Show" className="flex h-9 gap-4 border-b px-3">
+            <Tabs.Trigger value="all" className={TAB}>All</Tabs.Trigger>
+            <Tabs.Trigger value="folders" className={TAB}>Folders</Tabs.Trigger>
+            <Tabs.Trigger value="files" className={TAB}>Files</Tabs.Trigger>
+          </Tabs.List>
+        </Tabs.Root>
       )}
       {list('Pinned', pinned)}
       {list('Recent', rest)}
