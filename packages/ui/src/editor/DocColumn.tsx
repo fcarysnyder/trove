@@ -1,18 +1,21 @@
 import { findAnchor, type AnchorHit } from '@trove/core/anchor';
 import type { DiffOp } from '@trove/core/anchor';
 import { GitBranch, MessageSquare, PanelLeft, PanelRight, Pencil, Undo2 } from 'lucide-react';
-import { recentName } from '@trove/core/types';
+import { recentName, type Version, type VersionBy } from '@trove/core/types';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Kbd } from '@/components/ui/kbd';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { stateInfo, status } from '@/lib/status';
-import { nameOf, plural, tilde } from '@/lib/text';
+import { mod, nameOf, plural, tilde } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { AnnotateBar, AnnotateLayer, commitMark } from './Annotate';
-import { accept, entry, focusComment, loadRecents, nextPending, openRecent, openWorktree, post, reject, restore, revertAll, setShowNew, skip, togglePanel } from './actions';
+import { accept, closeView, compare, discard, entry, focusComment, loadRecents, nextPending, openRecent, openWorktree, pickVersion, post, reject, restore, restoreVersion, revertAll, saveFile, setShowNew, skip, togglePanel, unsavedBlocks, versionsOf } from './actions';
 import { Count, IconButton, nothingText, PathLabel } from './bits';
 import { Icon, StateIcons } from './StateIcon';
 import { get, set, useFolder, useNames, useStore } from './store';
@@ -35,7 +38,7 @@ export function DocColumn() {
   const folder = useFolder();
   const model = current && docModel(current);
   // A folder has nothing to mark new against but the text before the agent's last update.
-  const canNew = !!model?.canShowNew && (!folder || !!current?.since);
+  const canNew = !!model?.canShowNew && (!folder || !!current?.since || !!current?.base);
   const own = current ? current.drafts.length + current.edits.length : 0;
   const newTip = canNew ? 'Show new (N)' : current?.kind === 'markdown' ? 'No earlier version to compare with' : 'Markdown files only';
   return (
@@ -56,6 +59,7 @@ export function DocColumn() {
               <TooltipContent side="bottom" align="start" className="[overflow-wrap:anywhere]">Copy {current.path}</TooltipContent>
             </Tooltip>
           )}
+          {current?.version != null && <VersionBadge key={current.path} path={current.path} version={current.version} />}
         </span>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -79,6 +83,7 @@ export function DocColumn() {
         <AnnotateBar />
       </div>
       <DocFooter />
+      <ConflictDialog />
     </section>
   );
 }
@@ -154,7 +159,11 @@ function DocView() {
   const marks = useRef<Marks | null>(null);
   const [frameLoads, setFrameLoads] = useState(0); // the HTML frame's text is measurable once it has loaded
   const [card, setCard] = useState<Card | null>(null);
-  const layered = showNew && !editing && current.kind === 'markdown' && (!folder || !!current.since);
+  const view = useStore((s) => s.view);
+  const buf = useStore((s) => s.unsaved[current.path]);
+  // A version or Compare always shows its marks; a folder otherwise has only the text before the agent's last update.
+  const layered = (showNew || !!view) && !editing && current.kind === 'markdown' && (!folder || !!current.since || !!current.base);
+  const edited = folder && buf && !view ? new Set(unsavedBlocks(current.text, buf.base, current.kind)) : null;
 
   // Show new: tints, badges and bars, measured on the rendered blocks.
   useLayoutEffect(() => {
@@ -254,7 +263,7 @@ function DocView() {
           className="doc-frame mx-12 block min-h-[60vh] w-[calc(100%-96px)] rounded-lg border-0"
           sandbox="allow-same-origin allow-scripts"
           title="Rendered file"
-          src={`raw/${current.path.split('/').map(encodeURIComponent).join('/')}`}
+          {...(buf || view ? { srcDoc: withBase(current.text, current.path) } : { src: rawUrl(current.path) })}
           onLoad={(e) => {
             const doc = e.currentTarget.contentDocument;
             if (!doc) return;
@@ -283,7 +292,7 @@ function DocView() {
       {model.parts.map((b, i) => (
         <Fragment key={i}>
           {goneBar(i)}
-          <div className="block" data-i={i}>
+          <div className={cn('block', edited?.has(i) && 'shadow-[inset_2px_0_0_var(--dirty)]')} data-i={i}>
             {editing?.mode === 'inline' && (editing.index === i || (editing.index == null && current.kind === 'text')) ? <InlineEditor editing={editing} /> : (
               <>
                 {b.type === 'frontmatter' ? <div className="block-body"><pre className="fm">{b.raw}</pre></div>
@@ -356,6 +365,8 @@ function DiffCard({ card }: { card: Card }) {
 function DocFooter() {
   const current = useStore((s) => s.current);
   const editing = useStore((s) => s.editing);
+  const view = useStore((s) => s.view);
+  const buf = useStore((s) => (s.current ? s.unsaved[s.current.path] : undefined));
   const n = useNames();
   const folder = useFolder();
   useStore((s) => s.files);
@@ -379,8 +390,37 @@ function DocFooter() {
       <TooltipContent>{current.revertable ? 'Back to the text before your first edit' : 'The file changed since your edit'}</TooltipContent>
     </Tooltip>
   );
-  // A folder is edited in place, with no review: only Unlock or Revert all edits, and no footer without either.
+  // A folder is edited in place, with no review: a version or Compare, the file's unsaved edits, else only Unlock or
+  // Revert all edits, and no footer without any.
   if (folder) {
+    if (view) {
+      const what = view.n == null ? `${n.Agent}'s changes` : `v${view.n} · ${who(view.by!, n.Agent)} · ${when(view.at!)}`;
+      return (
+        <div className={row}>
+          <span className={label}>{what}</span>
+          {view.n == null ? (
+            <>
+              <Button variant="outline" onClick={act(discard)}>Keep {n.Agent}'s</Button>
+              <Button onClick={act(() => saveFile(get().conflict?.hash))}>Save mine</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={act(closeView)}>Back<Kbd>Esc</Kbd></Button>
+              <Button onClick={act(restoreVersion)}>Restore v{view.n}</Button>
+            </>
+          )}
+        </div>
+      );
+    }
+    if (buf) {
+      return (
+        <div className={row}>
+          <span className={label}>{plural(Math.max(1, unsavedBlocks(buf.text, buf.base, current.kind).length), 'unsaved edit')}</span>
+          <Button variant="outline" disabled={busy} onClick={act(discard)}>Don't save</Button>
+          <Button disabled={busy} onClick={act(() => saveFile())}>Save<Kbd className="bg-primary-foreground/15 text-primary-foreground">{SAVE_KEY}</Kbd></Button>
+        </div>
+      );
+    }
     if (f.state !== 'working' && !f.edited) return null;
     const info = stateInfo(f.state === 'working' ? 'working' : 'edited', n);
     return (
@@ -435,5 +475,64 @@ function RejectButton({ path, untracked, disabled }: { path: string; untracked: 
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+const SAVE_KEY = mod === 'Cmd' ? '⌘S' : 'Ctrl S';
+const rawUrl = (path: string) => `raw/${path.split('/').map(encodeURIComponent).join('/')}`;
+/** Unsaved or picked HTML is not on disk: its text in the frame, with relative links resolving beside the file as on disk. */
+const withBase = (html: string, path: string) => {
+  const tag = `<base href="${new URL(rawUrl(path), location.href).href}">`;
+  return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, `$&${tag}`) : tag + html;
+};
+const when = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const who = (by: VersionBy, agent: string) => (by === 'user' ? 'You' : by === 'agent' ? agent : 'Original');
+
+/** The version on disk; its menu lists the kept ones, and picking one marks the open file against it. */
+function VersionBadge({ path, version }: { path: string; version: number }) {
+  const [list, setList] = useState<Version[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const picked = useStore((s) => s.view?.n);
+  const n = useNames();
+  return (
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) void versionsOf(path).then(setList, () => setList([])); }}>
+      <PopoverTrigger asChild>
+        <button aria-label={`Version ${picked ?? version}`} className="ml-1 shrink-0 rounded-4xl outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <Badge className="cursor-pointer bg-foreground text-background">v{picked ?? version}</Badge>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="max-h-80 w-72 gap-0 overflow-y-auto p-1">
+        {list?.map((v) => (
+          <button key={v.n} onClick={() => { setOpen(false); void pickVersion(v.n); }}
+            className={cn('flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent', v.n === picked && 'bg-accent')}>
+            <Badge variant={v.n === version ? 'default' : 'outline'} className={cn('tabular-nums', v.n === version && 'bg-foreground text-background')}>v{v.n}</Badge>
+            <span className="min-w-0 flex-1 truncate text-foreground">{who(v.by, n.Agent)}{v.n === version && <span className="text-muted-foreground"> · current</span>}</span>
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{when(v.at)}</span>
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** Save found the file changed on disk since your first unsaved edit: never a silent overwrite. */
+function ConflictDialog() {
+  const conflict = useStore((s) => s.conflict);
+  const viewing = useStore((s) => !!s.view);
+  const n = useNames();
+  return (
+    <Dialog open={!!conflict && !viewing} onOpenChange={(o) => { if (!o) set({ conflict: null }); }}>
+      <DialogContent showCloseButton={false} className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{n.Agent} changed this file</DialogTitle>
+          {conflict?.at && <DialogDescription>{when(conflict.at)}</DialogDescription>}
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={compare}>Compare</Button>
+          <Button variant="outline" onClick={discard}>Keep {n.Agent}'s</Button>
+          <Button onClick={() => void saveFile(conflict?.hash)}>Save mine</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

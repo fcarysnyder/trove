@@ -72,7 +72,7 @@ export interface FileEntry {
 export interface FileRow extends FileEntry {
   state: FileState;
   updated: boolean; // the agent changed it after a send; cleared by Accept
-  edited: boolean; // the user saved an edit in this review
+  edited: boolean; // the user saved an edit in this review (never in a folder, which keeps versions instead)
   drafts: number; // unsent comments
 }
 

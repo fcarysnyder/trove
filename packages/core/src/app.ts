@@ -437,6 +437,8 @@ export function createApp(o: AppOptions): App {
       // Save never approves: an accepted file goes back to pending, and only Accept accepts.
       source.unstage(rel);
       write(rel, next);
+      // A folder keeps versions instead of edit records: its Save is the whole file, and the version list is its undo.
+      if (versions) return (versions.add(rel, 'user', next), [200, { hash: sha(next) }]);
       // One entry per block: a second Save of the same block keeps its original `before`.
       const e = edits();
       const rec = (e[rel] ??= { before: text, blocks: [] });
@@ -448,7 +450,6 @@ export function createApp(o: AppOptions): App {
       else rec.blocks.push({ id: randomUUID().slice(0, 8), ...block, time: new Date().toISOString() });
       rec.blocks = rec.blocks.filter((b) => b.before !== b.after); // a block edited back to where it was is no edit
       saveEdits(e);
-      versions?.add(rel, 'user', next);
       return [200, { hash: sha(next) }];
     },
     // Back to the text before the user's first edit in this review, never to the index or HEAD, so
@@ -467,7 +468,6 @@ export function createApp(o: AppOptions): App {
       if (id === undefined) {
         if (sha(text) !== edit.saved) return [409, { error: 'The file changed since your edit' }];
         write(rel, edit.before);
-        versions?.add(rel, 'user', edit.before);
         dropEdit(rel);
         return [200, { hash: sha(edit.before) }];
       }
@@ -478,7 +478,6 @@ export function createApp(o: AppOptions): App {
       if (at === -1) return [409, { error: 'The text changed since your edit' }];
       const next = text.slice(0, at) + one.before + text.slice(at + one.after.length);
       write(rel, next);
-      versions?.add(rel, 'user', next);
       edit.blocks = edit.blocks.filter((b) => b !== one);
       if (edit.blocks.length) {
         edit.saved = sha(next);

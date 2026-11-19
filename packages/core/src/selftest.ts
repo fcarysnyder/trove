@@ -747,18 +747,17 @@ async function folderCase(temps: string[]) {
   assert.deepEqual((await post('/api/release', { path: 'docs/b.md' })).body, { released: true, updated: false });
   assert.equal((await rows())['docs/b.md'], 'queue false false 0');
 
-  // Edits save in place, and revert.
+  // Edits save in place, as versions rather than edit records: nothing to revert, the version list is the undo.
   const saved = await post('/api/save', { path: 'docs/c.html', hash: sha(seed['docs/c.html']), raw: '<p>C2</p>\n' });
-  assert.deepEqual([saved.status, readFileSync(join(root, 'docs/c.html'), 'utf8'), (await rows())['docs/c.html']], [200, '<p>C2</p>\n', 'queue false true 0']);
-  assert.equal((await post('/api/revert', { path: 'docs/c.html' })).status, 200);
-  assert.deepEqual([readFileSync(join(root, 'docs/c.html'), 'utf8'), (await rows())['docs/c.html']], [seed['docs/c.html'], 'queue false false 0']);
+  assert.deepEqual([saved.status, readFileSync(join(root, 'docs/c.html'), 'utf8'), (await rows())['docs/c.html']], [200, '<p>C2</p>\n', 'queue false false 0']);
+  assert.equal((await post('/api/revert', { path: 'docs/c.html' })).status, 404);
   writeFileSync(join(root, 'new.md'), '# New\n');
   assert.equal((await rows())['new.md'], 'queue false false 0', 'a new file lists on the next request');
 
   // Versions: the first open is the original, a Save the user's, a change Trove notices (or the agent's release) the agent's.
   const vs = async (p: string) => (await get(`/api/versions?path=${encodeURIComponent(p)}`)).map((v: any) => `${v.n} ${v.by}`);
   assert.deepEqual(await vs('docs/b.md'), ['2 agent', '1 original'], 'the release: the text at send, then the agent\'s');
-  assert.deepEqual(await vs('docs/c.html'), ['3 user', '2 user', '1 original'], 'Save and Revert all are the user\'s');
+  assert.deepEqual(await vs('docs/c.html'), ['2 user', '1 original'], 'a Save is the user\'s');
   assert.equal(a.version, 1);
   const two = '# A\n\nTwo.\n';
   assert.equal((await post('/api/save', { path: 'a.md', hash: a.hash, raw: two })).status, 200, 'markdown saves whole without an index');

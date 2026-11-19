@@ -1,6 +1,6 @@
 // One small store for the editor. Actions (actions.ts) read and write it directly, so the 2s poll
 // always sees the latest state; components subscribe to slices with useStore.
-import type { Activity, Anchor, BlockEdit, CommentKind, Draft, FileResponse, FileRow, GitInfo, Question, Recent, Settings, SourceInfo } from '@trove/core/types';
+import type { Activity, Anchor, BlockEdit, CommentKind, Draft, FileResponse, FileRow, GitInfo, Question, Recent, Settings, SourceInfo, VersionBy } from '@trove/core/types';
 import { AGENT_LABELS, DEFAULT_SETTINGS } from '@trove/core/types';
 import type { AnchorHit } from '@trove/core/anchor';
 import { useSyncExternalStore } from 'react';
@@ -16,6 +16,12 @@ export interface Editing {
   title?: string; // modal title
   style?: Record<string, string>; // inline: the rendered block's type, so the source is set the way it reads
 }
+
+/** A folder file's edits not yet written: its text, and the disk's hash and text it was based on. */
+export interface Unsaved { text: string; hash: string; base: string }
+
+/** The open file shown read-only with Show new marks: a version (`n`) against the text open now, or the agent's text against yours (Compare, n null). */
+export interface View { path: string; n: number | null; text: string; base: string; by?: VersionBy; at?: string }
 
 export interface Pick {
   anchor: Anchor;
@@ -56,6 +62,9 @@ export interface State {
   rejecting: boolean; // the open file's Reject confirm is showing
   closedDirs: string[];
   settingsOpen: boolean;
+  unsaved: Record<string, Unsaved>; // a folder's unsaved edits by path, kept per source root in localStorage
+  view: View | null;
+  conflict: { text: string; hash: string; at: string | null } | null; // Save found the file changed on disk: the agent's text, its hash, when
 }
 
 let state: State = {
@@ -90,6 +99,9 @@ let state: State = {
   rejecting: false,
   closedDirs: [],
   settingsOpen: false,
+  unsaved: {},
+  view: null,
+  conflict: null,
 };
 
 const listeners = new Set<() => void>();

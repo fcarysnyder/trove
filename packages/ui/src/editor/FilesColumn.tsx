@@ -187,6 +187,7 @@ function Folders({ list, query }: { list: FileRow[]; query: string }) {
   const current = useStore((s) => s.current?.path);
   const n = useNames();
   const folder = useFolder();
+  const unsaved = useStore((s) => s.unsaved);
   const groups = Map.groupBy(list, (f) => dirOf(f.path));
   return [...groups].map(([dir, rows]) => (
     <Collapsible key={dir} open={!!query || !closed.includes(dir)}
@@ -204,6 +205,7 @@ function Folders({ list, query }: { list: FileRow[]; query: string }) {
               {folder ? <FileIcon file={f} /> : <StateIcons file={f} names={n} />}
               <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
               {folder && <Marks file={f} names={n} />}
+              {folder && unsaved[f.path] && <span role="img" aria-label="Unsaved edits" title="Unsaved edits" className="size-1.5 shrink-0 rounded-full bg-dirty" />}
               {f.drafts > 0 && <Count n={f.drafts} />}
             </button>
           </PathMenu>
