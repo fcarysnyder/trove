@@ -44,6 +44,7 @@ export async function selftest(): Promise<void> {
     await switchCase(temps);
     await agentCase(temps);
     await folderCase(temps);
+    await historyCase(temps);
   } finally {
     for (const t of temps) rmSync(t, { recursive: true, force: true });
   }
@@ -600,10 +601,11 @@ async function agentCase(temps: string[]) {
   assert.deepEqual([(await source()).agentInfo, (await source()).agent], [{ ...claude, connected: false }, 'claude'],
     'who attached survives a restart; with no process to follow, connected does not');
   assert.deepEqual((await call(port, 'POST', '/api/agent', { id: null })).body, none, 'detach');
-  // Activity: past sends from the batches log, then this run's moves; any other events-log line as written.
+  // Activity: the last run's entries from activity.jsonl, then this run's moves; any other events-log line as written.
   appendFileSync((await source()).eventsLog, 'pr 7: opened\n');
   const activity = (await call(port, 'GET', '/api/activity')).body.entries.map((e: any) => [e.kind, e.text, e.comments]);
-  assert.deepEqual(activity, [['batch', sent.id, 1], ['detach', 'Claude', undefined], ['event', 'pr 7: opened', undefined]]);
+  assert.deepEqual(activity, [['attach', 'Codex', undefined], ['batch', sent.id, 1], ['attach', 'Cursor', undefined], ['attach', 'Claude', undefined],
+    ['detach', 'Claude', undefined], ['event', 'pr 7: opened', undefined]]);
   assert.equal((await call(port, 'GET', '/api/activity', undefined, { host: 'evil.example' })).status, 403);
   assert.equal((await call(port, 'POST', '/api/accept', { path: 'a.md', hash })).body.error, 'The agent is working on this file');
   await app.close();
@@ -612,6 +614,76 @@ async function agentCase(temps: string[]) {
   await app.close();
   ({ app, port } = await listen({ root, agent: 'claude' }));
   assert.deepEqual([(await source()).agentInfo.label, (await source()).agentInfo.connected], ['Claude', true], 'the serving agent is attached');
+  await app.close();
+}
+
+// History: every entry lands in activity.jsonl and comes back after a restart, an older state dir's sends
+// from the batches log once each; the agent's notes and messages, and the user's, each with one events-log line.
+async function historyCase(temps: string[]) {
+  const { root } = newRepo('trove-history-');
+  temps.push(root);
+  writeFileSync(join(root, 'a.md'), '# A\n\nText.\n');
+  writeFileSync(join(root, 'b.md'), '# B\n\nText.\n');
+  const anchor = { quote: 'Text', prefix: '', suffix: '', path: [], raw: '' };
+  mkdirSync(join(root, '.git', 'trove'));
+  appendFileSync(join(root, '.git', 'trove', 'batches.jsonl'),
+    `${JSON.stringify({ id: 'old1', sentAt: '2026-01-01T00:00:00.000Z', items: [{ path: 'a.md', kind: 'explain', note: 'Why?', anchor }] })}\n`);
+  let { app, port } = await listen({ root, quietMs: 50 });
+  const post = (path: string, body: unknown) => call(port, 'POST', path, body);
+  const entries = async () => (await call(port, 'GET', '/api/activity')).body.entries as any[];
+  const { eventsLog, stateDir } = (await call(port, 'GET', '/api/source')).body;
+  const log = join(stateDir, 'activity.jsonl');
+  const events = () => (existsSync(eventsLog) ? readFileSync(eventsLog, 'utf8') : '');
+  assert.deepEqual((await entries()).map((e) => [e.id, e.kind, e.paths]), [['old1', 'batch', ['a.md']]], 'an older state dir: its sends');
+  assert.equal((await call(port, 'GET', '/api/batch?id=old1')).body.items[0].note, 'Why?');
+  assert.equal((await call(port, 'GET', '/api/batch?id=nope')).status, 404);
+
+  // The agent's message (`say`): markdown of any length, about files, answering an entry; nothing echoed to its events log.
+  const long = 'Line one, "quoted".\n\n- a list\n- of `code`\n';
+  const said = (await post('/api/message', { text: long, from: 'agent', paths: [join(root, 'a.md'), 'a.md'], re: 'old1' })).body;
+  assert.deepEqual([said.kind, said.from, said.body, said.paths, said.re, said.text], ['message', 'agent', long.trim(), ['a.md'], 'old1', '']);
+  assert.equal((await post('/api/message', { text: 'x', paths: ['nope.md'] })).status, 404);
+  assert.equal((await post('/api/message', { text: '  ' })).status, 400);
+  assert.equal((await post('/api/message', { text: 'x', re: 'not an id!' })).status, 400);
+  assert.equal((await post('/api/message', { text: 'x', from: 'robot' })).status, 400);
+  assert.equal(events(), '');
+
+  // The user's reply from the page: one line on the events log, which names the grep that finds the whole text.
+  const mine = (await post('/api/message', { text: 'Thanks.\nAlso: shorten it.', re: said.id })).body;
+  assert.deepEqual([mine.from, mine.re], ['user', said.id]);
+  assert.equal(events(), `message ${mine.id}: from the reviewer, re ${said.id}. Read it with: grep -F ${mine.id} '${log}'\n`);
+  assert.deepEqual(readFileSync(log, 'utf8').split('\n').filter((l) => l.includes(mine.id)).map((l) => JSON.parse(l).body), ['Thanks.\nAlso: shorten it.']);
+  const plain = (await post('/api/message', { text: 'Start on b.md', paths: ['b.md'] })).body;
+  assert.ok(events().endsWith(`message ${plain.id}: from the reviewer. Read it with: grep -F ${plain.id} '${log}'\n`));
+
+  // `done --note`: on the release; on the quiet release that got there first; else a message about the file.
+  for (const p of ['a.md', 'b.md']) await post('/api/drafts', { path: p, drafts: [{ kind: 'change', note: 'n', anchor }] });
+  const sent = (await post('/api/send', {})).body;
+  writeFileSync(join(root, 'a.md'), '# A\n\nBetter text.\n');
+  assert.equal((await post('/api/release', { path: 'a.md', note: 7 })).status, 400);
+  assert.deepEqual((await post('/api/release', { path: 'a.md', note: 'Rewrote the **intro**.' })).body, { released: true, updated: true });
+  writeFileSync(join(root, 'b.md'), '# B\n\nShorter.\n');
+  app.tick(Date.now());
+  app.tick(Date.now() + 100);
+  assert.deepEqual((await post('/api/release', { path: 'b.md', note: 'Shortened it.' })).body, { released: false, updated: true });
+  await post('/api/release', { path: 'b.md', note: 'And again.' });
+
+  const shape = (es: any[]) => es.map((e) => [e.kind, e.from ?? null, e.body ?? e.text, e.paths ?? null]);
+  const expected = [
+    ['batch', null, 'old1', ['a.md']],
+    ['message', 'agent', long.trim(), ['a.md']],
+    ['message', 'user', 'Thanks.\nAlso: shorten it.', null],
+    ['message', 'user', 'Start on b.md', ['b.md']],
+    ['batch', null, sent.id, ['a.md', 'b.md']],
+    ['release', 'agent', 'Rewrote the **intro**.', ['a.md']],
+    ['release', 'agent', 'Shortened it.', ['b.md']],
+    ['message', 'agent', 'And again.', ['b.md']],
+  ];
+  assert.deepEqual(shape(await entries()), expected, 'events-log lines for batches and messages are not entries of their own');
+  assert.equal((await call(port, 'GET', '/api/activity')).body.user, 't', "the reviewer's git name, for the avatar");
+  await app.close();
+  ({ app, port } = await listen({ root }));
+  assert.deepEqual(shape(await entries()), expected, 'all of it survives a restart, each send once');
   await app.close();
 }
 

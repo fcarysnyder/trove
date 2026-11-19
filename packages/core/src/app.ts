@@ -67,6 +67,13 @@ function locate(text: string, needle: string, hint: number) {
   return needle ? best : Math.min(hint, text.length);
 }
 
+/** A JSON-lines file's records; a missing file is none, and a line cut short or corrupt is passed over. */
+function jsonl(file: string): any[] {
+  let text = '';
+  try { text = readFileSync(file, 'utf8'); } catch { return []; }
+  return text.split('\n').flatMap((l) => { try { return l ? [JSON.parse(l)] : []; } catch { return []; } });
+}
+
 interface EditRecord { before: string; saved?: string; blocks: BlockEdit[] }
 /** A rejected file's backup: the working text, the index copy (null: none) and its comment drafts. */
 interface Rejected { text: string; staged: string | null; drafts: Draft[]; at: string }
@@ -82,7 +89,7 @@ export function createApp(o: AppOptions): App {
   const log = o.log ?? console.log;
   const quietMs = o.quietMs ?? 5000;
   const uiDir = o.uiDir ? realpathSync(o.uiDir) : null;
-  const files = { drafts: join(dir, 'drafts.json'), edits: join(dir, 'edits.json'), batches: join(dir, 'batches.jsonl'), events: join(dir, 'events.log'), state: join(dir, 'state.json'), server: join(dir, 'server.json') };
+  const files = { drafts: join(dir, 'drafts.json'), edits: join(dir, 'edits.json'), batches: join(dir, 'batches.jsonl'), events: join(dir, 'events.log'), state: join(dir, 'state.json'), server: join(dir, 'server.json'), activity: join(dir, 'activity.jsonl') };
 
   // Settings: the file, with this run's options on top until a POST changes the same key.
   let stored = loadSettings(dir);
@@ -137,15 +144,30 @@ export function createApp(o: AppOptions): App {
     seen: [...seen], skipped: [...skipped], rejected: Object.fromEntries(rejected), agent }));
   if (serving) saveState();
   const REJECTED: Result = [409, { error: 'Rejected: restore it first' }];
-  // What the agent drawer lists, newest last: the batches log's last sends, then what this run sees.
+  // What the agent drawer lists, newest last, kept in activity.jsonl so History survives a restart. An
+  // entry written again (a release that gets the agent's note later) is a second line with the same id.
+  const KEEP = 200;
   const activity: Activity[] = [];
+  const persist = (e: Activity) => appendFileSync(files.activity, `${JSON.stringify(e)}\n`);
   const note = (kind: Activity['kind'], text: string, more: Partial<Activity> = {}) => {
-    activity.push({ at: new Date().toISOString(), kind, text, ...more });
-    activity.splice(0, activity.length - 100);
+    const e: Activity = { id: randomUUID().slice(0, 8), at: new Date().toISOString(), kind, text, ...more };
+    activity.push(e);
+    activity.splice(0, activity.length - KEEP);
+    persist(e);
+    return e;
   };
   const sentEntry = (b: { id: string; sentAt: string; items: { path: string | null }[] }): Activity =>
-    ({ at: b.sentAt, kind: 'batch', text: b.id, comments: b.items.length, paths: [...new Set(b.items.map((c) => c.path as string))] });
-  try { activity.push(...readFileSync(files.batches, 'utf8').trim().split('\n').slice(-100).map((l) => sentEntry(JSON.parse(l)))); } catch {}
+    ({ id: b.id, at: b.sentAt, kind: 'batch', text: b.id, comments: b.items.length, paths: [...new Set(b.items.map((c) => c.path as string))] });
+  // ponytail: both logs are read whole at start; trim activity.jsonl if it ever gets slow.
+  // A later line with an entry's id replaces it (a re-written entry keeps its time, so its place); then the
+  // batches log's sends that activity.jsonl lacks, which is all of them in an older state dir.
+  const byId = new Map<string, Activity>();
+  for (const e of jsonl(files.activity)) if (e?.id) byId.set(e.id, e);
+  for (const b of jsonl(files.batches)) if (b?.id && !byId.has(b.id)) byId.set(b.id, sentEntry(b));
+  activity.push(...[...byId.values()].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).slice(-KEEP));
+  // The reviewer's name, for History's avatar: git's user.name (this repository's, else the global one).
+  let reviewer: string | null = null;
+  execFile('git', ['config', 'user.name'], { cwd: top }, (error, out) => { if (!error) reviewer = out.trim() || null; });
 
   function list(): FileEntry[] {
     const before = seen.size;
@@ -184,13 +206,21 @@ export function createApp(o: AppOptions): App {
   // The file's block edits as the page shows them: `ok` while the edit's text is still in the file.
   const editRows = (rel: string, text: string): BlockEdit[] => (edits()[rel]?.blocks ?? []).map((b) => ({ ...b, ok: locate(text, b.after, b.at) !== -1 }));
 
-  function release(rel: string) {
+  // `body`: the agent's note on what it changed (`done --note`). A file the quiet release already let go
+  // gets it on that release; one with no release to take it, as a message about the file.
+  function release(rel: string, body?: string) {
+    const said = body ? { from: 'agent' as const, body } : {};
     const w = working.get(rel);
-    if (!w) return false;
+    if (!w) {
+      const last = activity.findLast((e) => e.kind === 'release' && e.text === rel);
+      if (body && last && !last.body) persist(Object.assign(last, said));
+      else if (body) note('message', '', { ...said, paths: [rel] });
+      return false;
+    }
     working.delete(rel);
     if (hashOf(rel) !== w.hash) updated.set(rel, w.text);
     saveState();
-    note('release', rel);
+    note('release', rel, { paths: [rel], ...said });
     return true;
   }
   // Fallback release: the file changed after send and then stayed the same for quietMs.
@@ -214,7 +244,7 @@ export function createApp(o: AppOptions): App {
     const tail = readFileSync(files.events).subarray(eventsAt);
     const end = tail.lastIndexOf(10) + 1; // a line still being written waits
     eventsAt += end;
-    for (const line of tail.subarray(0, end).toString('utf8').split('\n')) if (line && !line.startsWith('batch ')) note('event', line);
+    for (const line of tail.subarray(0, end).toString('utf8').split('\n')) if (line && !/^(batch|message) /.test(line)) note('event', line);
   }
 
   const port = () => { const a = server.address(); return a && typeof a === 'object' ? a.port : 0; };
@@ -464,8 +494,9 @@ export function createApp(o: AppOptions): App {
       saveState();
       const id = randomUUID().slice(0, 8);
       const sentPaths = new Set(items.map((c) => c.path));
-      appendFileSync(files.batches, `${JSON.stringify({ id, sentAt: new Date().toISOString(), items })}\n`);
-      note('batch', id, { comments: items.length, paths: [...sentPaths] as string[] });
+      const sentAt = new Date().toISOString();
+      appendFileSync(files.batches, `${JSON.stringify({ id, sentAt, items })}\n`);
+      note('batch', id, { id, at: sentAt, comments: items.length, paths: [...sentPaths] as string[] });
       saveDrafts(keep);
       // A notice, not the batch itself: a long line is cut short on its way to the agent.
       const notice = `batch ${id}: ${items.length} ${items.length === 1 ? 'comment' : 'comments'} on ${sentPaths.size} ${sentPaths.size === 1 ? 'file' : 'files'}. Read it with: grep -F ${id} '${files.batches}'`;
@@ -494,17 +525,43 @@ export function createApp(o: AppOptions): App {
       if (typeof text !== 'string' || !['question', 'reply'].includes(kind)) return [400, { error: 'text, and kind question or reply' }];
       question = text.trim() ? { text: text.trim().slice(0, 300), kind, at: new Date().toISOString() } : null;
       saveState();
-      if (question) note(kind, question.text);
+      if (question) note(kind, question.text, { from: 'agent' });
       return [200, { question }];
     },
-    // `done <file>` from the agent and the page's Unlock button.
-    'POST /api/release': (_, { path }) => {
+    // `done <file> [--note <markdown>]` from the agent and the page's Unlock button.
+    'POST /api/release': (_, { path, note: body }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: `not in the review set: ${path}` }];
-      return [200, { released: release(rel), updated: updated.has(rel) }];
+      if (body !== undefined && typeof body !== 'string') return [400, { error: 'note is text' }];
+      return [200, { released: release(rel, body?.trim() || undefined), updated: updated.has(rel) }];
+    },
+    // A message in History: the agent's (`trove say`), or the user's from the page. The user's gets one line in
+    // the events log, like a batch's notice: the text itself may run to many lines, and the agent greps for it.
+    'POST /api/message': (_, { text, re, paths = [], from = 'user' }) => {
+      if (typeof text !== 'string' || !text.trim()) return [400, { error: 'text required' }];
+      if (re !== undefined && (typeof re !== 'string' || !/^[\w-]{1,40}$/.test(re))) return [400, { error: 're is an entry id' }];
+      if (!Array.isArray(paths) || (from !== 'user' && from !== 'agent')) return [400, { error: 'paths is a list, from is agent or user' }];
+      const rels: string[] = [];
+      for (const p of paths) {
+        const rel = listed(p);
+        if (!rel) return [404, { error: `not in the review set: ${p}` }];
+        if (!rels.includes(rel)) rels.push(rel);
+      }
+      const e = note('message', '', { from, body: text.trim(), ...(re ? { re } : {}), ...(rels.length ? { paths: rels } : {}) });
+      if (from === 'user') {
+        const notice = `message ${e.id}: from the reviewer${re ? `, re ${re}` : ''}. Read it with: grep -F ${e.id} '${files.activity}'`;
+        appendFileSync(files.events, `${notice}\n`);
+        log(notice);
+      }
+      return [200, e];
+    },
+    // One send's comments, for History's expanded batch.
+    'GET /api/batch': (q) => {
+      const b = jsonl(files.batches).find((x) => x?.id === q.get('id'));
+      return b ? [200, b] : [404, { error: 'no such batch' }];
     },
     'GET /api/source': () => [200, info()],
-    'GET /api/activity': () => (follow(), [200, { entries: activity }]),
+    'GET /api/activity': () => (follow(), [200, { entries: activity, user: reviewer }]),
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
     // The file in the system's file manager. Never a shell: the path is one argument.
     'POST /api/reveal': (_, { path }) => {

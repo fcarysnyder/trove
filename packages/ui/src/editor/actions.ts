@@ -1,6 +1,6 @@
 // The editor's behaviour, ported from the old page's script: polling, opening, stepping, accepting,
 // drafts, edits and sending. Components call these; they read and write the store.
-import type { ActivityResponse, BlockEdit, CommentKind, Draft, DraftsResponse, FileResponse, FileRow, FilesResponse, GitInfo, Recent, SendBody, Settings, SourceInfo } from '@trove/core/types';
+import type { ActivityResponse, BlockEdit, CommentKind, Draft, DraftsResponse, FileResponse, FileRow, FilesResponse, GitInfo, MessageBody, Recent, SendBody, Settings, SourceInfo } from '@trove/core/types';
 import { toast } from 'sonner';
 import { api, ApiError, optional } from '@/lib/api';
 import { passes, normalizeOff, type FilterKey } from '@/lib/filter';
@@ -399,6 +399,18 @@ export async function init() {
 export async function loadActivity() {
   const res = await optional<ActivityResponse>('activity').catch(() => undefined);
   if (res !== undefined && JSON.stringify(res?.entries ?? []) !== JSON.stringify(get().activity)) set({ activity: res?.entries ?? [] });
+  if (res?.user !== undefined && res.user !== get().reviewer) set({ reviewer: res.user });
+}
+/** A message to the agent from History, new or a reply; it reaches the agent as one events-log line. False when it failed (a toast says why). */
+export async function sendMessage(body: MessageBody) {
+  try {
+    await api('message', body);
+  } catch (e) {
+    toast(errText(e));
+    return false;
+  }
+  await loadActivity();
+  return true;
 }
 /** The attached agent changes under the page (`trove attach`, `detach`): its colour and name follow. */
 async function loadSource() {
