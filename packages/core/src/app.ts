@@ -11,6 +11,7 @@ import { blocks, splice } from './anchor.js';
 import { included, kindOf, loadSettings, mergeSettings, saveSettings } from './settings.js';
 import { agentAbove, alive, peerOf } from './presence.js';
 import { folderStateDir, inGit, openFolder, openSource, sha, withChanges } from './source.js';
+import { versionStore } from './versions.js';
 import { AGENT_LABELS, DEFAULT_DOC_TYPES, type Activity, type AgentId, type AgentInfo, type BlockEdit, type Draft, type FileEntry, type GitInfo, type GitScope, type Question, type Settings, type SourceInfo, type SourceKind } from './types.js';
 
 export interface AppOptions {
@@ -42,12 +43,16 @@ export interface App {
   list(): FileEntry[];
   /** Branch, worktrees and changed-path count, as GET /api/git answers; null for a folder. */
   git(): GitInfo | null;
+  /** Turn on the doc type of `path` (a file) in this source's settings when it is off: opening a file lists it. */
+  enableTypeFor(path: string): void;
   /** Run once a second: releases locked files that changed and then stayed quiet. */
   tick(now?: number): void;
   close(): Promise<void>;
 }
 
 const MAX_BYTES = 512 * 1024;
+/** What opens a path or URL in the system's own app: one argument, never a shell (on Windows explorer, not cmd's start). */
+const OPENER = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'";
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
@@ -98,14 +103,17 @@ export function createApp(o: AppOptions): App {
   if (o.base !== undefined) overrides.base = o.base;
   if (o.exclude !== undefined) overrides.exclude = o.exclude;
   let current = mergeSettings(stored, overrides);
-  // A file opened in a folder lists even when its type is off there: opening it turns the type on.
-  const type = source.kind === 'folder' && statSync(asked).isFile() && !kindOf(asked, current)
-    ? DEFAULT_DOC_TYPES.find((t) => t.extensions.some((e) => asked.toLowerCase().endsWith(e))) : undefined;
-  if (type) {
+  function enableTypeFor(path: string) {
+    const type = kindOf(path, current) ? undefined : DEFAULT_DOC_TYPES.find((t) => t.extensions.some((e) => path.toLowerCase().endsWith(e)));
+    if (!type) return;
     stored = mergeSettings(stored, { types: { [type.id]: true } });
     saveSettings(dir, stored);
     current = mergeSettings(stored, overrides);
   }
+  // A file opened in a folder lists even when its type is off there: opening it turns the type on.
+  if (source.kind === 'folder' && statSync(asked).isFile()) enableTypeFor(asked);
+  // A folder's numbered copies of each file (versions.ts); a repository has git's history instead.
+  const versions = source.kind === 'folder' ? versionStore(dir) : null;
 
   // Locks, the agent's snapshots and its waiting question live on disk too, so a restart keeps them:
   // {working: {path: {hash, text}}, updated: {path: text}, question, seen, skipped, rejected}.
@@ -218,7 +226,11 @@ export function createApp(o: AppOptions): App {
       return false;
     }
     working.delete(rel);
-    if (hashOf(rel) !== w.hash) updated.set(rel, w.text);
+    if (hashOf(rel) !== w.hash) {
+      updated.set(rel, w.text);
+      versions?.notice(rel, w.text); // what it was at the send, if Trove had no copy yet
+      versions?.add(rel, 'agent', read(rel));
+    }
     saveState();
     note('release', rel, { paths: [rel], ...said });
     return true;
@@ -265,8 +277,14 @@ export function createApp(o: AppOptions): App {
     };
   };
 
-  // A folder is edited in place: no review state, no git that writes, no HEAD to go back to.
-  const NOT_GIT = (what?: string): Result => (what ? [409, { error: `No ${what} in a folder: ${basename(top)} is edited in place` }]
+  // A folder is edited in place: no review state, no git that writes, no HEAD to go back to. These routes answer a folder
+  // 409 (`No <what> in a folder`), or 404 with no `what`; the dispatcher checks once.
+  const GIT_ONLY: Record<string, string | null> = {
+    'POST /api/accept': 'accept', 'POST /api/unaccept': 'accept', 'POST /api/accept-all': 'accept', 'POST /api/skip': 'skip',
+    'POST /api/reject': 'reject', 'POST /api/pr': 'pull request', 'GET /api/git': null, 'POST /api/switch': null,
+  };
+  const repo = source as ReturnType<typeof openSource>; // for the GIT_ONLY routes, which only run on a repository
+  const NOT_GIT = (what: string | null): Result => (what ? [409, { error: `No ${what} in a folder: ${basename(top)} is edited in place` }]
     : [404, { error: `${basename(top)} is open as a folder, without git` }]);
 
   const routes: Record<string, (q: URLSearchParams, body: any, req?: IncomingMessage) => Result> = {
@@ -304,7 +322,8 @@ export function createApp(o: AppOptions): App {
       // revertable: the file is still exactly what the user's last Save wrote.
       // base: what Show new marks green against; since: the text before the agent's last update, if any.
       return [200, { path: rel, kind: f.kind, text, base: source.baseOf(rel, text, current), since: updated.get(rel) ?? null, hash: sha(text), locked: working.has(rel),
-        drafts: drafts()[rel] ?? [], edited: !!edit, revertable: edit?.saved === sha(text), edits: editRows(rel, text) }];
+        drafts: drafts()[rel] ?? [], edited: !!edit, revertable: edit?.saved === sha(text), edits: editRows(rel, text),
+        ...(versions ? { version: versions.notice(rel, text).n } : {}) }];
     },
     'POST /api/drafts': (_, { path, drafts: list }) => {
       const rel = listed(path);
@@ -318,14 +337,13 @@ export function createApp(o: AppOptions): App {
     },
     // Accepts only the text the user last saw: a file that changed since is refused.
     'POST /api/accept': (_, { path, hash }) => {
-      if (source.kind !== 'git') return NOT_GIT('accept');
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
       const now = hashOf(rel);
       if (now !== hash) return [409, { error: 'The file changed; read it again before accepting', hash: now }];
-      source.accept(rel);
+      repo.accept(rel);
       updated.delete(rel);
       skipped.delete(rel);
       saveState();
@@ -334,7 +352,6 @@ export function createApp(o: AppOptions): App {
     },
     // Skip: come back to it later. Only the editor's mark; git is untouched.
     'POST /api/skip': (_, { path, on }) => {
-      if (source.kind !== 'git') return NOT_GIT('skip');
       const rel = listed(path);
       if (!rel || typeof on !== 'boolean') return [400, { error: 'path and on required' }];
       if (working.has(rel)) return BUSY();
@@ -348,7 +365,6 @@ export function createApp(o: AppOptions): App {
     // copy and the file's drafts are saved first, so Restore can put them back. Refused on a version
     // the user did not see. Its edits are dropped.
     'POST /api/reject': (_, { path, hash }) => {
-      if (source.kind !== 'git') return NOT_GIT('reject');
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       if (working.has(rel)) return BUSY();
@@ -356,11 +372,11 @@ export function createApp(o: AppOptions): App {
       const text = read(rel);
       if (sha(text) !== hash) return [409, { error: 'The file changed; read it again before rejecting', hash: sha(text) }];
       const d = drafts();
-      rejected.set(rel, { text, staged: source.indexed(rel), drafts: d[rel] ?? [], at: new Date().toISOString() });
+      rejected.set(rel, { text, staged: repo.indexed(rel), drafts: d[rel] ?? [], at: new Date().toISOString() });
       updated.delete(rel);
       skipped.delete(rel);
       saveState(); // the backup is on disk before the file changes
-      source.reject(rel);
+      repo.reject(rel);
       if (d[rel]) { delete d[rel]; saveDrafts(d); }
       dropEdit(rel);
       return [200, { ok: true }];
@@ -384,21 +400,19 @@ export function createApp(o: AppOptions): App {
     // Accept all: the listed, free (not working, not rejected) paths given, in one git add. No hash check:
     // the user chose to accept files as they are now, seen or not.
     'POST /api/accept-all': (_, { paths }) => {
-      if (source.kind !== 'git') return NOT_GIT('accept');
       if (!Array.isArray(paths)) return [400, { error: 'paths required' }];
       const rels = [...new Set(paths.map(listed).filter((r): r is string => !!r && !working.has(r) && !rejected.has(r)))];
-      source.accept(...rels);
+      repo.accept(...rels);
       for (const rel of rels) { updated.delete(rel); skipped.delete(rel); dropEdit(rel); }
       saveState();
       return [200, { accepted: rels.length }];
     },
     'POST /api/unaccept': (_, { path }) => {
-      if (source.kind !== 'git') return NOT_GIT('accept');
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
-      source.unaccept(rel);
+      repo.unaccept(rel);
       return [200, { ok: true }];
     },
     'POST /api/save': (_, { path, hash, index, raw }) => {
@@ -408,10 +422,13 @@ export function createApp(o: AppOptions): App {
       if (working.has(rel)) return BUSY();
       if (rejected.has(rel)) return REJECTED;
       const text = read(rel);
+      versions?.notice(rel, text); // a change on disk since the last copy is someone else's
       if (sha(text) !== hash) return [409, { error: 'The file changed since you started editing', hash: sha(text) }];
-      let next = raw; // HTML and text are edited as one whole file; markdown one block at a time
+      // HTML and text are edited as one whole file, and so is any file saved without an index (a folder's Save);
+      // markdown otherwise one block at a time.
+      let next = raw;
       let block: Omit<BlockEdit, 'id' | 'time'> = { before: text, after: raw, path: [], index: null, at: 0 };
-      if (f.kind === 'markdown') {
+      if (f.kind === 'markdown' && index !== undefined) {
         try { next = splice(text, index, raw); } catch { return [400, { error: `no block ${index}` }]; }
         const all = blocks(text);
         block = { before: all[index].raw.trimEnd(), after: raw.trimEnd(), path: all[index].path, index,
@@ -431,6 +448,7 @@ export function createApp(o: AppOptions): App {
       else rec.blocks.push({ id: randomUUID().slice(0, 8), ...block, time: new Date().toISOString() });
       rec.blocks = rec.blocks.filter((b) => b.before !== b.after); // a block edited back to where it was is no edit
       saveEdits(e);
+      versions?.add(rel, 'user', next);
       return [200, { hash: sha(next) }];
     },
     // Back to the text before the user's first edit in this review, never to the index or HEAD, so
@@ -449,6 +467,7 @@ export function createApp(o: AppOptions): App {
       if (id === undefined) {
         if (sha(text) !== edit.saved) return [409, { error: 'The file changed since your edit' }];
         write(rel, edit.before);
+        versions?.add(rel, 'user', edit.before);
         dropEdit(rel);
         return [200, { hash: sha(edit.before) }];
       }
@@ -459,6 +478,7 @@ export function createApp(o: AppOptions): App {
       if (at === -1) return [409, { error: 'The text changed since your edit' }];
       const next = text.slice(0, at) + one.before + text.slice(at + one.after.length);
       write(rel, next);
+      versions?.add(rel, 'user', next);
       edit.blocks = edit.blocks.filter((b) => b !== one);
       if (edit.blocks.length) {
         edit.saved = sha(next);
@@ -507,7 +527,6 @@ export function createApp(o: AppOptions): App {
     // Create PR: once nothing waits for review, ask the agent to commit what is staged and open a pull
     // request. Trove itself never commits; this is one line in the events log, like a batch's notice.
     'POST /api/pr': () => {
-      if (source.kind !== 'git') return NOT_GIT('pull request');
       const rows = list();
       if (rows.some((f) => working.has(f.path) || (!f.staged && !f.rejected && !f.skipped))) return [409, { error: 'Files are still waiting for review' }];
       const staged = rows.filter((f) => f.staged && !f.committed).length;
@@ -561,6 +580,15 @@ export function createApp(o: AppOptions): App {
       return b ? [200, b] : [404, { error: 'no such batch' }];
     },
     'GET /api/source': () => [200, info()],
+    'GET /api/versions': (q) => {
+      const rel = listed(q.get('path'));
+      return rel ? [200, versions?.list(rel) ?? []] : [404, { error: 'not in the review set' }];
+    },
+    'GET /api/version': (q) => {
+      const rel = listed(q.get('path'));
+      const v = rel && versions?.get(rel, Number(q.get('n')));
+      return v ? [200, v] : [404, { error: 'no such version' }];
+    },
     'GET /api/activity': () => (follow(), [200, { entries: activity, user: reviewer }]),
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
     // The file in the system's file manager. Never a shell: the path is one argument.
@@ -568,18 +596,17 @@ export function createApp(o: AppOptions): App {
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       const abs = join(top, rel);
-      execFile(...(process.platform === 'darwin' ? ['open', ['-R', abs]] : process.platform === 'win32' ? ['explorer', [`/select,${abs}`]] : ['xdg-open', [dirname(abs)]]) as [string, string[]], () => {});
+      execFile(OPENER, process.platform === 'darwin' ? ['-R', abs] : process.platform === 'win32' ? [`/select,${abs}`] : [dirname(abs)], () => {});
       return [200, {}];
     },
     // An HTML file in the default browser as this server serves it, the frame's URL, so its relative assets resolve and
     // the browser opens it whatever app owns .html. Nothing else opens: Trove may be the system's app for markdown.
-    // One argument, never a shell (on Windows explorer, not cmd's start).
     'POST /api/open': (_, { path }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       if (kindOf(rel, current) !== 'html') return [400, { error: 'only HTML files open in the browser' }];
       const url = `http://127.0.0.1:${port()}/raw/${rel.split('/').map(encodeURIComponent).join('/')}`;
-      execFile(process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open', [url], () => {});
+      execFile(OPENER, [url], () => {});
       return [200, { url }];
     },
     'POST /api/agent': (_, { id, label }, req) => {
@@ -592,17 +619,16 @@ export function createApp(o: AppOptions): App {
       if (agent) note('attach', agent.label);
       return [200, agentInfo()];
     },
-    'GET /api/git': () => { const g = git(); return g ? [200, g] : NOT_GIT(); },
+    'GET /api/git': () => [200, git()],
     // The same as running `git switch <branch>` by hand, no more: no stash, no discard. Git itself
     // refuses when uncommitted changes would be overwritten; its message is the answer.
     'POST /api/switch': (_, { branch }) => {
-      if (source.kind !== 'git') return NOT_GIT();
-      const target = typeof branch === 'string' ? source.branches().find((b) => b.name === branch) : undefined;
+      const target = typeof branch === 'string' ? repo.branches().find((b) => b.name === branch) : undefined;
       if (!target) return [404, { error: `no such branch: ${branch}` }];
       if (target.current) return [200, git()!];
       if (target.worktree) return [409, { error: `${branch} is checked out in ${target.worktree}`, worktree: target.worktree }];
       if (working.size) return [409, { error: `${Who()} is working on a file` }];
-      const failed = source.switchTo(branch);
+      const failed = repo.switchTo(branch);
       if (failed) return [409, { error: failed }];
       // What the review listed belongs to the branch it was on: start the committed set over from
       // what git reports here, so a file committed there does not show as committed here.
@@ -664,8 +690,10 @@ export function createApp(o: AppOptions): App {
       return reply(404);
     }
 
-    const route = routes[`${req.method} ${pathname}`];
+    const key = `${req.method} ${pathname}`;
+    const route = routes[key];
     if (!route) return reply(404);
+    if (source.kind !== 'git' && key in GIT_ONLY) return json(NOT_GIT(GIT_ONLY[key]));
     // A route that throws (say, a listed file vanished or is a dangling link) answers 500 instead of
     // taking the server down.
     const run = (body?: unknown) => { try { json(route(searchParams, body, req)); } catch (error) { json([500, { error: (error as Error).message }]); } };
@@ -699,7 +727,7 @@ export function createApp(o: AppOptions): App {
   const forget = () => { try { if (JSON.parse(readFileSync(files.server, 'utf8')).port === port()) rmSync(files.server); } catch {} };
 
   return {
-    server, info, list, tick, git,
+    server, info, list, tick, git, enableTypeFor,
     settings: () => current,
     close: () => new Promise<void>((ok) => { forget(); server.close(() => ok()); server.closeAllConnections(); }),
   };

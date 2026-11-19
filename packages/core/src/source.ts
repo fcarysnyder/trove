@@ -251,7 +251,6 @@ export function openFolder(root: string) {
     stateDir,
     place: () => ({ repo: self, worktree: { path: top, name: self.name, branch: null, main: true } as WorktreeRef }),
     branch: () => null,
-    resolveBase: (_s: Settings): string | null => null,
     list: (s: Settings): FileEntry[] => walk(top, s, git).map((path) => ({ path, kind: kindOf(path, s)!, untracked: false, staged: false })),
     /** Save and Send: nothing is staged here. */
     unstage: (_rel: string) => {},

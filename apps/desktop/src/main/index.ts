@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { attachCommand, call, DEFAULT_DOC_TYPES, inGit, kindOf, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type SourceKind, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
+import { attachCommand, DEFAULT_DOC_TYPES, inGit, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type SourceKind, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
 import type { IPty } from 'node-pty';
 import { checkForUpdate, installUpdate, updateState, watchForUpdates } from './update';
 
@@ -102,10 +102,8 @@ function fileWindow(file: string): SourceWindow | undefined {
 
 /** `file` on the window's page (its #file= hash); its type is turned on in that folder first when it is off there. */
 async function showFile(s: SourceWindow, file: string): Promise<void> {
-  const rel = relPath(s.root, file);
-  const type = kindOf(rel, s.core.settings()) ? null : DEFAULT_DOC_TYPES.find((t) => t.extensions.includes(extname(rel).toLowerCase()));
-  if (type) await call(s.port, 'POST', '/api/settings', { types: { [type.id]: true } });
-  s.win.webContents.send('trove:open-file', rel);
+  s.core.enableTypeFor(file);
+  s.win.webContents.send('trove:open-file', relPath(s.root, file));
 }
 
 async function openNow(req: OpenRequest, t: Target): Promise<void> {
@@ -412,6 +410,11 @@ function guard(win: BrowserWindow, allowed: (target: URL) => boolean): void {
   win.webContents.setWindowOpenHandler(({ url }) => {
     external(url);
     return { action: 'deny' };
+  });
+  // The page holds unsaved edits (a folder's beforeunload): ask before the window closes.
+  win.webContents.on('will-prevent-unload', (e) => {
+    const close = dialog.showMessageBoxSync(win, { type: 'question', buttons: ["Don't save", 'Cancel'], defaultId: 1, cancelId: 1, message: 'Close without saving your edits?' }) === 0;
+    if (close) e.preventDefault();
   });
 }
 
