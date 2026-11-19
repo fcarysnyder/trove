@@ -89,7 +89,7 @@ export function FilesColumn() {
             </p>
           ) : (
             <>
-              <Folders list={folders} query={query} />
+              <Folders list={folders} query={query} head />
               <Section label="Committed" list={committed} query={query} open={committedOpen || !!query} onOpenChange={(o) => set({ committedOpen: o })} />
               <Section label="Rejected" list={rejected} query={query} open={rejectedOpen || !!query} onOpenChange={(o) => set({ rejectedOpen: o })} />
             </>
@@ -181,39 +181,68 @@ function Marks({ file, names }: { file: FileRow; names: Names }) {
   });
 }
 
-/** Files grouped under their folder, each folder a disclosure the user can close; all open while searching. */
-function Folders({ list, query }: { list: FileRow[]; query: string }) {
-  const closed = useStore((s) => s.closedDirs);
+type Dir = { dir: string; items: (FileRow | Dir)[] };
+const isDir = (x: FileRow | Dir): x is Dir => 'items' in x;
+const firstFile = (d: Dir): string => { const x = d.items[0]!; return isDir(x) ? firstFile(x) : x.path; };
+
+/** The list as nested folders, each folder and file where it first appears, so the tree keeps the list's order (n / N). */
+function nest(list: FileRow[]): Dir {
+  const root: Dir = { dir: '', items: [] };
+  const dirs = new Map([['', root]]);
+  const at = (dir: string): Dir => {
+    let d = dirs.get(dir);
+    if (!d) {
+      d = { dir, items: [] };
+      dirs.set(dir, d);
+      at(dirOf(dir)).items.push(d);
+    }
+    return d;
+  };
+  for (const f of list) at(dirOf(f.path)).items.push(f);
+  return root;
+}
+
+/** Files in nested folders, like `tree`: each folder a disclosure the user can close (all open while searching). `head`: show the root as a row. */
+function Folders({ list, query, head = false }: { list: FileRow[]; query: string; head?: boolean }) {
+  const root = useStore((s) => s.source?.root);
+  const tree = nest(list);
+  if (!head) return <Items items={tree.items} query={query} />;
+  return tree.items.length ? <Folder d={tree} name={nameOf(root ?? '') || '/'} query={query} /> : null;
+}
+
+function Folder({ d, name, query }: { d: Dir; name: string; query: string }) {
+  const closed = useStore((s) => s.closedDirs.includes(d.dir));
+  const root = useStore((s) => s.source?.root);
+  return (
+    <Collapsible open={!!query || !closed}
+      onOpenChange={(o) => set((s) => ({ closedDirs: o ? s.closedDirs.filter((x) => x !== d.dir) : [...s.closedDirs, d.dir] }))}>
+      <DirMenu dir={d.dir} first={firstFile(d)}>
+        <CollapsibleTrigger title={d.dir || root} className="group flex w-full items-center gap-1.5 rounded-sm px-1 py-1 text-left text-body outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 group-aria-expanded:rotate-90 motion-reduce:transition-none" aria-hidden />
+          <span className="min-w-0 truncate">{name}</span>
+        </CollapsibleTrigger>
+      </DirMenu>
+      <CollapsibleContent className="ml-[11px] border-l pl-1"><Items items={d.items} query={query} /></CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function Items({ items, query }: { items: (FileRow | Dir)[]; query: string }) {
   const current = useStore((s) => s.current?.path);
   const n = useNames();
   const folder = useFolder();
   const unsaved = useStore((s) => s.unsaved);
-  const root = useStore((s) => s.source?.root);
-  const groups = Map.groupBy(list, (f) => dirOf(f.path));
-  return [...groups].map(([dir, rows]) => (
-    <Collapsible key={dir} open={!!query || !closed.includes(dir)}
-      onOpenChange={(o) => set((s) => ({ closedDirs: o ? s.closedDirs.filter((d) => d !== dir) : [...s.closedDirs, dir] }))}>
-      <DirMenu dir={dir} first={rows[0]!.path}>
-      <CollapsibleTrigger title={dir || root} className="group flex w-full items-center gap-1.5 rounded-sm px-1 py-1.5 text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
-        <ChevronRight className="size-3.5 shrink-0 transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none" aria-hidden />
-        <span className="folder min-w-0 max-w-full">{`‎${dir || nameOf(root ?? '') || '/'}‎`}</span>
-      </CollapsibleTrigger>
-      </DirMenu>
-      <CollapsibleContent>
-        {rows.map((f) => (
-          <PathMenu key={f.path} path={f.path}>
-            <button data-tree-row title={f.path} aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
-              className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
-                f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
-              {folder ? <FileIcon file={f} /> : <StateIcons file={f} names={n} />}
-              <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
-              {folder && <Marks file={f} names={n} />}
-              {folder && unsaved[f.path] && <span role="img" aria-label="Unsaved edits" title="Unsaved edits" className="size-1.5 shrink-0 rounded-full bg-dirty" />}
-              {f.drafts > 0 && <Count n={f.drafts} />}
-            </button>
-          </PathMenu>
-        ))}
-      </CollapsibleContent>
-    </Collapsible>
+  return items.map((f) => isDir(f) ? <Folder key={`d:${f.dir}`} d={f} name={nameOf(f.dir)} query={query} /> : (
+    <PathMenu key={f.path} path={f.path}>
+      <button data-tree-row title={f.path} aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
+        className={cn('flex w-full items-center gap-1.5 rounded-sm px-1 py-1 text-left outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
+          f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
+        {folder ? <FileIcon file={f} /> : <StateIcons file={f} names={n} />}
+        <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
+        {folder && <Marks file={f} names={n} />}
+        {folder && unsaved[f.path] && <span role="img" aria-label="Unsaved edits" title="Unsaved edits" className="size-1.5 shrink-0 rounded-full bg-dirty" />}
+        {f.drafts > 0 && <Count n={f.drafts} />}
+      </button>
+    </PathMenu>
   ));
 }

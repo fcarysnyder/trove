@@ -2,7 +2,7 @@
 // trove 0.8.0: bundled CLI and engine (@trove/core, marked). Node 22+, no dependencies.
 
 // bin/trove.mjs
-import { existsSync as existsSync4, realpathSync as realpathSync4, statSync as statSync3 } from "node:fs";
+import { existsSync as existsSync4, readFileSync as readFileSync5, realpathSync as realpathSync4, statSync as statSync3 } from "node:fs";
 import { basename as basename5, dirname as dirname4, join as join6, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
 import { text as stdin } from "node:stream/consumers";
 import { fileURLToPath } from "node:url";
@@ -2559,9 +2559,15 @@ function createApp(o) {
     },
     "GET /api/activity": () => (follow(), [200, { entries: activity }]),
     // `trove signal` from the agent's hooks, and the desktop's terminal: what the agent waits on the user for. The last one wins.
-    "POST /api/signal": (_2, { kind, text }) => {
+    // reply: the answer the agent's turn ended with (Claude Code's Stop hook), shown in Chat unless the agent already said it.
+    "POST /api/signal": (_2, { kind, text, reply }) => {
       if (!["permission", "question", "idle", "working"].includes(kind)) return [400, { error: "kind is permission, question, idle or working" }];
-      if (text !== void 0 && typeof text !== "string") return [400, { error: "text is a string" }];
+      if (text !== void 0 && typeof text !== "string" || reply !== void 0 && typeof reply !== "string") return [400, { error: "text and reply are strings" }];
+      const body = kind === "idle" ? reply?.trim().slice(0, 2e4) : void 0;
+      if (body) {
+        const since = activity.findLastIndex((e) => e.from === "user");
+        if (!activity.slice(since + 1).some((e) => e.from === "agent" && e.body === body)) note("message", "", { from: "agent", body });
+      }
       if (kind === "working") unwait();
       else signal2 = { waiting: kind, ...text?.trim() ? { text: text.trim().slice(0, 200) } : {}, since: (/* @__PURE__ */ new Date()).toISOString() };
       return [200, agentInfo()];
@@ -3381,6 +3387,13 @@ async function agentCase(temps) {
   await call(port, "POST", "/api/message", { text: "Also this." });
   assert.equal((await source()).agentInfo.waiting, "question", "but not a question");
   assert.equal((await signal2({ kind: "working" })).waiting, null);
+  const said = async () => (await call(port, "GET", "/api/activity")).body.entries.filter((e) => e.from === "agent").map((e) => e.body);
+  assert.equal((await call(port, "POST", "/api/signal", { kind: "idle", reply: 7 })).status, 400);
+  await signal2({ kind: "idle", reply: " Rendering needs a frame. " });
+  await signal2({ kind: "idle", reply: "Rendering needs a frame." });
+  assert.deepEqual(await said(), ["Rendering needs a frame."], "the reply is a message, once");
+  await signal2({ kind: "permission", reply: "Not an answer." });
+  assert.deepEqual(await said(), ["Rendering needs a frame."], "only idle carries a reply");
   await app.close();
   ({ app, port } = await listen({ root, agent: "claude" }));
   assert.deepEqual([(await source()).agentInfo.label, (await source()).agentInfo.connected], ["Claude", true], "the serving agent is attached");
@@ -3608,6 +3621,31 @@ async function firstLine(port, file = null) {
   const what = git ? `reviewing ${queued} files on ${git.body.branch ?? git.body.head}${git.body.worktree && !git.body.worktree.main ? ` (${git.body.worktree.name})` : ""}` : `editing ${files.body.files.length} files in ${source.body.name}`;
   return `${what} at http://127.0.0.1:${port}${file ? `/?file=${encodeURIComponent(file)}` : ""}; notices in ${source.body.eventsLog}; after each file run: ${invoked()} done <file> --port ${port}`;
 }
+function lastReply(input) {
+  if (typeof input.last_assistant_message === "string") return input.last_assistant_message;
+  if (typeof input.transcript_path !== "string") return void 0;
+  let lines;
+  try {
+    lines = readFileSync5(input.transcript_path, "utf8").trimEnd().split("\n");
+  } catch {
+    return void 0;
+  }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let e;
+    try {
+      e = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    const c = e.message?.content;
+    if (e.type === "user" && !e.isMeta && (typeof c === "string" || c?.some?.((b) => b.type === "text"))) return void 0;
+    if (e.type === "assistant" && Array.isArray(c)) {
+      const t = c.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+      if (t) return t;
+    }
+  }
+  return void 0;
+}
 var NOTIFIED = { permission_prompt: "permission", elicitation_dialog: "question", idle_prompt: "idle" };
 async function signal(kind, values) {
   let input = {};
@@ -3625,10 +3663,11 @@ async function signal(kind, values) {
   ] : kind;
   if (!["permission", "question", "idle", "working"].includes(what ?? "")) return;
   const root = values.root !== "." ? values.root : process.env.CLAUDE_PROJECT_DIR || input.cwd || ".";
-  const port = values.port ? Number(values.port) : (await running(root))?.port;
+  const port = values.port ? Number(values.port) : Number(process.env.TROVE_PORT) || (await running(root))?.port;
   if (!port) return;
   const text = typeof input.tool_name === "string" ? input.tool_name : typeof input.message === "string" ? input.message : void 0;
-  await call(port, "POST", "/api/signal", { kind: what, ...text ? { text } : {} });
+  const reply = kind === "idle" ? lastReply(input) : void 0;
+  await call(port, "POST", "/api/signal", { kind: what, ...text ? { text } : {}, ...reply ? { reply } : {} });
 }
 async function main() {
   const [command, ...args] = process.argv.slice(2);
