@@ -67,6 +67,9 @@ export interface FileEntry {
   committed?: boolean; // the staged copy got committed while the review was open
   skipped?: boolean; // the user will come back to it; the editor's mark only, no git effect
   rejected?: boolean; // taken out of the change set (back to HEAD, or deleted); listed from its backup until restored
+  // Folder sources: never marked reviewed (no snapshot). Listed as accepted, a plain file in the tree, until it
+  // changes after the folder was first opened or this review touches it (the agent, an edit, a comment, a skip).
+  unreviewed?: boolean;
 }
 
 export interface FileRow extends FileEntry {
@@ -138,19 +141,25 @@ export interface RepoRef { root: string; name: string }
 /** The worktree a root is: its folder's basename, its branch (null when detached), and whether it is the main checkout. */
 export interface WorktreeRef { path: string; name: string; branch: string | null; main: boolean }
 
+/**
+ * git: a working tree; the index is the approval state. folder: a plain folder, or one opened as a folder inside a
+ * repository; Trove runs no git command that writes, Accept stores a snapshot in the state dir, there is no Reject.
+ */
+export type SourceKind = 'git' | 'folder';
+
 export interface SourceInfo {
-  kind: 'git';
-  root: string; // absolute path of the git toplevel
+  kind: SourceKind;
+  root: string; // absolute path of the git toplevel, or of the folder
   name: string; // last path segment, for titles
-  repo: RepoRef; // the repository this root belongs to (its main checkout)
-  worktree: WorktreeRef; // this root as a worktree of that repository
-  branch: string | null; // current branch (null when detached)
+  repo: RepoRef; // the repository this root belongs to (its main checkout); a folder: {root, name}
+  worktree: WorktreeRef; // this root as a worktree of that repository; a folder: {path: root, name, branch: null, main: true}
+  branch: string | null; // current branch (null when detached, and for a folder)
   base: string | null; // branch scope: the resolved base ref
-  scope: GitScope;
+  scope: GitScope; // always 'uncommitted' for a folder
   agent: 'claude' | 'other'; // compatibility: agentInfo.id === 'claude' ? 'claude' : 'other'
   agentInfo: AgentInfo;
   port: number;
-  stateDir: string; // where drafts, edits, batches and state live
+  stateDir: string; // where drafts, edits, batches and state live: <git-dir>/trove, or ~/.trove/folders/<hash> for a folder
   eventsLog: string;
   batchesLog: string;
   doneCommand: string; // what the agent runs after each file, e.g. `trove done <file> --port 4824`
@@ -182,7 +191,7 @@ export interface FileResponse { // GET /api/file?path=
   kind: DocKind;
   text: string;
   hash: string;
-  base: string | null; // what Show new marks against (staged copy, else HEAD)
+  base: string | null; // what Show new marks against (staged copy, else HEAD; a folder: the snapshot Accept stored, else null)
   since: string | null; // the text before the agent's last update, if any
   locked: boolean;
   drafts: Draft[];
@@ -196,13 +205,13 @@ export interface AcceptBody { path: string; hash: string } // POST /api/accept -
 export interface UnacceptBody { path: string } // POST /api/unaccept -> {ok}
 export interface AcceptAllBody { paths: string[] } // POST /api/accept-all -> {accepted: n}; unlisted, working and rejected paths are passed over; no hash
 export interface SkipBody { path: string; on: boolean } // POST /api/skip -> {ok}; no git write
-export interface RejectBody { path: string; hash: string } // POST /api/reject -> {ok}; tracked: back to HEAD, new: deleted; backed up first
+export interface RejectBody { path: string; hash: string } // POST /api/reject -> {ok}; tracked: back to HEAD, new: deleted; backed up first. 409 for a folder
 export interface RestoreBody { path: string } // POST /api/restore -> {ok}; the index copy, the working text and the drafts come back
 export interface SaveBody { path: string; hash: string; index?: number; raw: string } // POST /api/save -> {hash}
 export interface RevertBody { path: string; edit?: string; hash?: string } // POST /api/revert -> {hash}
 export interface SendBody { paths?: string[]; kind?: CommentKind } // POST /api/send
 export interface SendResponse { id: string; comments: number; files: number; locked: string[] }
-export interface PrResponse { id: string; files: number } // POST /api/pr {} -> 409 while a file waits for review (queue or working)
+export interface PrResponse { id: string; files: number } // POST /api/pr {} -> 409 while a file waits for review (queue or working), and for a folder
 export interface AskBody { text: string; kind?: 'question' | 'reply' } // POST /api/ask -> {question}
 export interface ReleaseBody { path: string } // POST /api/release -> {released, updated}
 export interface AgentBody { id: AgentId | null; label?: string } // POST /api/agent -> AgentInfo; id null detaches
@@ -213,7 +222,7 @@ export type SettingsResponse = Settings; // GET /api/settings; POST /api/setting
 export interface BranchInfo { name: string; current: boolean; worktree: string | null; upstream?: string; lastCommit: string }
 /** One worktree of the repository, main checkout first. `name`: the folder's basename. `changes`: its uncommitted doc paths, by its own settings (GitInfo and GitProbe only). */
 export interface WorktreeInfo { path: string; name: string; branch: string | null; head: string; current: boolean; main: boolean; changes?: number }
-/** GET /api/git: where the source stands, for the repository and branch switcher. */
+/** GET /api/git: where the source stands, for the repository and branch switcher. 404 for a folder, as is POST /api/switch. */
 export interface GitInfo {
   root: string;
   repo: RepoRef;
@@ -252,7 +261,7 @@ export interface GitProbe {
 export interface Recent {
   path: string;
   name: string;
-  kind: 'git';
+  kind: SourceKind;
   openedAt: string;
   scope?: GitScope;
   base?: string | null;
@@ -264,15 +273,19 @@ export interface Recent {
 /** How a recent reads: `<repo> / <worktree>` for a linked worktree, `<repo>` for the main checkout, `name` for older entries. */
 export const recentName = (r: Pick<Recent, 'name' | 'repo' | 'worktree'>) => (r.repo ? (r.worktree ? `${r.repo} / ${r.worktree}` : r.repo) : r.name);
 
-/** `agent`: start the server, then a Terminal session of that tool attached to it, then the window. */
-export interface OpenRequest { path: string; scope?: GitScope; base?: string | null; agent?: AgentTool | null }
+/**
+ * `agent`: start the server, then a Terminal session of that tool attached to it, then the window. `path`: a folder, or a
+ * file, which opens its folder as a folder source with the file selected (in a window already showing it, if one is open).
+ * `kind`: 'folder' serves a folder as a folder even inside a repository; default git inside one, else folder.
+ */
+export interface OpenRequest { path: string; scope?: GitScope; base?: string | null; agent?: AgentTool | null; kind?: SourceKind }
 
 export interface TroveBridge {
   /** Native folder picker. null when cancelled; `git` null when the folder is not in a git repository (it cannot be opened). */
   pickFolder(): Promise<{ path: string; git: GitProbe | null } | null>;
   /** Inspect a path (a recent, or a staged one) without opening it. null when it is not a folder; `git` null when it is not in a repository. */
   probe(path: string): Promise<{ path: string; git: GitProbe | null } | null>;
-  /** Start a server for the repository and open it in a window; the zero-state window closes if it is the only one. Rejects `not a git repository: <path>` for anything else. */
+  /** Start a server for the repository or folder and open it in a window; the zero-state window closes if it is the only one. */
   open(req: OpenRequest): Promise<void>;
   recents(): Promise<Recent[]>;
   forget(path: string): Promise<void>;

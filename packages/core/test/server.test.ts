@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -27,4 +27,21 @@ test('a second server on a repository refuses until the first closes; a stale se
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}, 30_000);
+
+test('a folder server is found from the folder, a file in it or a folder below it, and refuses a second one', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'trove-one-folder-')));
+  mkdirSync(join(root, 'sub'));
+  writeFileSync(join(root, 'a.md'), '# A\n');
+  const opts = { root: join(root, 'a.md'), port: 0, uiDir: null, agent: null, log: () => {} };
+  const first = await serve({ ...opts, by: 'desktop' });
+  try {
+    for (const at of [root, join(root, 'a.md'), join(root, 'sub')]) expect(await running(at)).toMatchObject({ port: first.port, by: 'desktop' });
+    await expect(serve({ ...opts, root })).rejects.toThrow(`Trove is already serving this folder at http://127.0.0.1:${first.port} (desktop app).`);
+  } finally {
+    await first.app.close();
+    rmSync(first.app.info().stateDir, { recursive: true, force: true });
+  }
+  expect(await running(root)).toBe(null);
+  rmSync(root, { recursive: true, force: true });
 }, 30_000);
