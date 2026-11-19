@@ -352,6 +352,10 @@ export interface TroveBridge {
   worktreeDir(): Promise<string>;
   /** Make `path` (an existing folder) where new worktrees go, for every window; then that path. */
   setWorktreeDir(path: string): Promise<string>;
+  /** The agent waits on the user (or no longer): "● " leads the window's title and the Dock badge counts the window. */
+  attention(on: boolean): void;
+  /** The terminal app agents start in (the app setting), to the front; nothing when that is Trove. */
+  showTerminal(): Promise<void>;
   /** This window's agent terminal: one pty per repository window, which main starts when the terminal setting is 'Trove'. */
   pty: {
     /** Start `tool` in the repository when no session is running (the Start button after it exits). */

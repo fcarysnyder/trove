@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { attachCommand, call, DEFAULT_DOC_TYPES, inGit, kindOf, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type SourceKind, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
 import type { IPty } from 'node-pty';
 import { checkForUpdate, installUpdate, updateState, watchForUpdates } from './update';
+import { osc9, osc9Kind } from './osc';
 
 const uiDir = join(import.meta.dirname, '../ui'); // out/main -> out/ui, however Electron was launched
 const startHtml = join(uiDir, 'start.html');
@@ -253,7 +254,12 @@ function startPty(s: SourceWindow, tool: AgentTool, cols: number, rows: number):
   });
   const session: Pty = { proc, tool, tail: '', exitCode: null };
   const send = (channel: string, arg: unknown) => { if (s.pty === session && !s.win.isDestroyed()) s.win.webContents.send(channel, arg); };
+  let carry = ''; // an OSC 9 notification cut between chunks
   proc.onData((d) => {
+    const n = osc9(d, carry);
+    carry = n.carry;
+    const text = n.texts.at(-1);
+    if (text !== undefined) void call(s.port, 'POST', '/api/signal', { kind: osc9Kind(text), ...(text ? { text } : {}) }).catch(() => {});
     session.tail += d;
     if (session.tail.length > 2 * TAIL) session.tail = session.tail.slice(-TAIL);
     send('trove:pty:data', d);
@@ -586,6 +592,25 @@ ipcMain.handle('trove:pty:state', (e) => {
   return p ? { tool: p.tool, tail: p.tail, exitCode: p.exitCode } : null;
 });
 ipcMain.handle('trove:drop', (_e, path: unknown) => openPath(str(path)));
+// While a window's agent waits on the user: "● " leads its title, and the Dock's badge counts such windows.
+const needy = new Set<BrowserWindow>();
+const badge = () => app.dock?.setBadge(needy.size ? String(needy.size) : '');
+ipcMain.on('trove:attention', (e, on: unknown) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!win || (on === true) === needy.has(win)) return;
+  if (on === true) {
+    needy.add(win);
+    win.once('closed', () => { needy.delete(win); badge(); });
+  } else needy.delete(win);
+  const title = win.getTitle().replace(/^● /, '');
+  win.setTitle(on === true ? `● ${title}` : title);
+  badge();
+});
+// The terminal app agents start in, to the front: the agent there is waiting on the user.
+ipcMain.handle('trove:showTerminal', async () => {
+  const t = terminal();
+  if (t !== 'Trove') await run('open', ['-a', t]);
+});
 
 // ---- lifecycle -------------------------------------------------------------------------------
 
