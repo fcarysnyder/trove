@@ -136,7 +136,7 @@ function Nothing() {
               className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-sm text-foreground">{e.title}</span>
-                <span className="truncate font-mono text-xs text-muted-foreground">{e.sub}</span>
+                <span className="truncate text-xs text-muted-foreground">{e.sub}</span>
               </span>
               <Count n={e.n} />
             </button>
@@ -407,7 +407,7 @@ function DocFooter() {
           <span className={label}>{what}</span>
           {view.n == null ? (
             <>
-              <Button variant="outline" onClick={act(discard)}>Keep {n.Agent}'s</Button>
+              <Button variant="outline" onClick={act(discard)}>Keep {n.agent}'s</Button>
               <Button onClick={act(() => saveFile(get().conflict?.hash))}>Save mine</Button>
             </>
           ) : (
@@ -531,12 +531,12 @@ function ConflictDialog() {
     <Dialog open={!!conflict && !viewing} onOpenChange={(o) => { if (!o) set({ conflict: null }); }}>
       <DialogContent showCloseButton={false} className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{n.Agent} changed this file</DialogTitle>
+          <DialogTitle>{n.who} changed this file</DialogTitle>
           {conflict?.at && <DialogDescription>{when(conflict.at)}</DialogDescription>}
         </DialogHeader>
         <DialogFooter>
           <Button variant="ghost" onClick={compare}>Compare</Button>
-          <Button variant="outline" onClick={discard}>Keep {n.Agent}'s</Button>
+          <Button variant="outline" onClick={discard}>Keep {n.agent}'s</Button>
           <Button onClick={() => void saveFile(conflict?.hash)}>Save mine</Button>
         </DialogFooter>
       </DialogContent>

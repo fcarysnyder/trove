@@ -42,7 +42,7 @@ export function Switcher() {
         <FolderOpen />
         <span className="flex min-w-0 flex-col">
           <span className="truncate text-[13px] leading-4 font-semibold text-foreground">{source.name}</span>
-          <span className="truncate font-mono text-[11px] leading-4 text-muted-foreground">{tilde(dirOf(source.root))}</span>
+          <span className="truncate text-[11px] leading-4 text-muted-foreground">{tilde(dirOf(source.root))}</span>
         </span>
       </div>
     );
@@ -64,7 +64,7 @@ export function Switcher() {
                 <span className="max-w-[240px] truncate">{git.repo.name}</span>
                 {git.dirty > 0 && <Count n={git.dirty} />}
               </span>
-              <span className="max-w-[280px] truncate font-mono text-[11px] leading-4 font-normal text-muted-foreground">{where}</span>
+              <span className="max-w-[280px] truncate text-[11px] leading-4 font-normal text-muted-foreground">{where}</span>
             </span>
             <ChevronDown className="ml-auto size-4" />
           </Button>

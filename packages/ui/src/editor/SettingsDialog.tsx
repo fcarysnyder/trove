@@ -48,7 +48,7 @@ function Row({ label, note, htmlFor, children }: { label: string; note?: string;
 function Fact({ label, value }: { label: string; value: string | null }) {
   return (
     <Row label={label}>
-      <code className="folder max-w-[420px] font-mono text-xs text-body" title={value ?? undefined}>{`\u200E${value ?? '–'}\u200E`}</code>
+      <span className="folder max-w-[420px] text-xs text-body" title={value ?? undefined}>{`\u200E${value ?? '–'}\u200E`}</span>
     </Row>
   );
 }
