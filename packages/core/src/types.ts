@@ -82,6 +82,21 @@ export interface Anchor {
   suffix: string;
   path: string[]; // heading path above the passage
   raw: string; // up to 400 chars of the block's source (HTML: outerHTML around the selection)
+  /** HTML: the elements a pointer or loop mark is about, in pick order. quote, raw and path still describe the first. */
+  targets?: ElementTarget[];
+  /** HTML: the loop drawn around `targets`, in the frame's document coordinates, rounded, at most 64 points. */
+  shape?: { kind: 'loop'; points: [number, number][] };
+}
+
+/** One element of an HTML file, with what finds it in source. Values from the rendered page; text and html are clipped. */
+export interface ElementTarget {
+  selector: string; // a CSS selector that matched it in the frame
+  tag: string;
+  id?: string;
+  classes?: string[];
+  testIds?: string[]; // data-testid and data-component values on it and its ancestors, nearest first
+  text?: string; // its text, whitespace collapsed, up to 160 chars
+  html: string; // its outerHTML, up to 400 chars
 }
 
 export type CommentKind = 'change' | 'explain';
