@@ -283,6 +283,8 @@ export interface OpenRequest { path: string; scope?: GitScope; base?: string | n
 export interface TroveBridge {
   /** Native folder picker. null when cancelled; `git` null when the folder is not in a git repository (it cannot be opened). */
   pickFolder(): Promise<{ path: string; git: GitProbe | null } | null>;
+  /** Native file picker for documents of the doc types. null when cancelled. */
+  pickFile(): Promise<string | null>;
   /** Inspect a path (a recent, or a staged one) without opening it. null when it is not a folder; `git` null when it is not in a repository. */
   probe(path: string): Promise<{ path: string; git: GitProbe | null } | null>;
   /** Start a server for the repository or folder and open it in a window; the zero-state window closes if it is the only one. */

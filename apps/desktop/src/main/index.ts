@@ -1,12 +1,12 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron';
 import { execFile } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { attachCommand, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
+import { attachCommand, call, DEFAULT_DOC_TYPES, inGit, kindOf, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type SourceKind, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
 import type { IPty } from 'node-pty';
 import { checkForUpdate, installUpdate, updateState, watchForUpdates } from './update';
 
@@ -18,7 +18,7 @@ const MAX_RECENTS = 20;
 // On the Mac the page draws its own title strip (TitleStrip in the UI) with the traffic lights in it.
 const frame = process.platform === 'darwin' ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 14, y: 10 } } : {};
 
-interface SourceWindow { win: BrowserWindow; core: App; path: string; root: string; port: number; pty: Pty | null }
+interface SourceWindow { win: BrowserWindow; core: App; path: string; root: string; port: number; kind: SourceKind; pty: Pty | null }
 /** The window's agent terminal: running while `exitCode` is null; after exit it stays for its tail. */
 interface Pty { proc: IPty; tool: AgentTool; tail: string; exitCode: number | null }
 const sources = new Set<SourceWindow>();
@@ -29,7 +29,7 @@ let startWin: BrowserWindow | null = null;
 function readRecents(): Recent[] {
   try {
     const list = JSON.parse(readFileSync(recentsFile(), 'utf8'));
-    return Array.isArray(list) ? list.filter((r) => r?.kind === 'git') : []; // folder entries predate repositories-only
+    return Array.isArray(list) ? list.filter((r) => r?.kind === 'git' || r?.kind === 'folder') : [];
   } catch {
     return [];
   }
@@ -56,39 +56,74 @@ function probe(path: string) {
   return isDir(abs) ? { path: abs, git: probeGit(abs) } : null;
 }
 
-/** Opens with the scope the source was last opened with, else the source's settings. */
+/** Opens with the kind and scope the source was last opened with, else the source's settings. */
 function reopen(path: string): Promise<void> {
   const abs = resolve(path);
   const last = readRecents().find((r) => r.path === abs);
-  return openSource({ path: abs, scope: last?.scope, base: last?.base });
+  return openSource({ path: abs, scope: last?.scope, base: last?.base, kind: last?.kind });
 }
 
-// One open per path at a time, so a double click cannot start two servers for one source.
+/** The doc types' extensions: what Finder, File > Open and a drop open as a document. */
+const DOC_EXTS = DEFAULT_DOC_TYPES.flatMap((t) => t.extensions);
+const relPath = (root: string, file: string) => relative(root, file).split(sep).join('/');
+type Target = { dir: string; file: string | null; kind: SourceKind };
+
+/** What a request opens: a file, its folder as a folder with the file selected; a folder, its repository when it is in one, unless `kind` says folder. */
+function targetOf(req: OpenRequest): Target {
+  const abs = resolve(req.path);
+  if (isDir(abs)) return { dir: abs, file: null, kind: req.kind ?? (inGit(abs) ? 'git' : 'folder') };
+  if (!existsSync(abs)) throw new Error(`Nothing at ${abs}`);
+  if (!DOC_EXTS.includes(extname(abs).toLowerCase())) throw new Error(`Trove opens ${DOC_EXTS.join(', ')} files and folders`);
+  const file = realpathSync(abs);
+  return { dir: dirname(file), file, kind: 'folder' };
+}
+
+// One open per source at a time, so a double click cannot start two servers for one source. Files for one
+// folder (Finder opening several) queue behind each other and land in the window the first one opened.
 const opening = new Map<string, Promise<void>>();
 function openSource(req: OpenRequest): Promise<void> {
-  const path = resolve(req.path);
-  let run = opening.get(path);
-  if (!run) {
-    run = openNow({ ...req, path }).finally(() => opening.delete(path));
-    opening.set(path, run);
-  }
+  let t: Target;
+  try { t = targetOf(req); } catch (e) { return Promise.reject(e); }
+  const key = `${t.kind}:${t.dir}`;
+  const prev = opening.get(key);
+  if (prev && !t.file) return prev;
+  const run: Promise<void> = (prev?.catch(() => {}) ?? Promise.resolve()).then(() => openNow(req, t))
+    .finally(() => { if (opening.get(key) === run) opening.delete(key); });
+  opening.set(key, run);
   return run;
 }
 
-async function openNow(req: OpenRequest): Promise<void> {
-  const path = req.path;
+/** The folder window a file opens in: its own folder's, else the nearest folder's above it that lists it. */
+function fileWindow(file: string): SourceWindow | undefined {
+  return [...sources].filter((s) => s.kind === 'folder' && file.startsWith(s.root + sep))
+    .sort((a, b) => b.root.length - a.root.length)
+    .find((s) => dirname(file) === s.root || s.core.list().some((f) => f.path === relPath(s.root, file)));
+}
+
+/** `file` on the window's page (its #file= hash); its type is turned on in that folder first when it is off there. */
+async function showFile(s: SourceWindow, file: string): Promise<void> {
+  const rel = relPath(s.root, file);
+  const type = kindOf(rel, s.core.settings()) ? null : DEFAULT_DOC_TYPES.find((t) => t.extensions.includes(extname(rel).toLowerCase()));
+  if (type) await call(s.port, 'POST', '/api/settings', { types: { [type.id]: true } });
+  s.win.webContents.send('trove:open-file', rel);
+}
+
+async function openNow(req: OpenRequest, t: Target): Promise<void> {
   // Exact roots only: a worktree is its own toplevel, so it gets its own window beside the main checkout's.
-  const open = [...sources].find((s) => s.path === path || s.root === path);
+  // A repository and the same folder opened as a folder are two sources with a window each.
+  const open = t.file ? fileWindow(t.file) : [...sources].find((s) => s.kind === t.kind && (s.path === t.dir || s.root === t.dir));
   if (open) {
     if (req.agent !== undefined) writeRecents(readRecents().map((r) => (r.path === open.root ? { ...r, agent: req.agent } : r)));
     if (req.agent) await launchAgent(req.agent, open);
+    if (t.file) await showFile(open, t.file);
     open.win.show();
     open.win.focus();
     return;
   }
   const onlyStart = BrowserWindow.getAllWindows().length === 1 && startWin !== null;
   const { app: core, url } = await serve({
-    root: path,
+    root: t.file ?? t.dir, // a file turns its type on in its folder when it is off there
+    folder: t.kind === 'folder',
     scope: req.scope,
     base: req.base,
     uiDir,
@@ -103,11 +138,11 @@ async function openNow(req: OpenRequest): Promise<void> {
     {
       path: info.root,
       name: info.name,
-      repo: info.repo.name,
-      ...(info.worktree.main ? {} : { worktree: info.worktree.name }),
+      // A folder reads by its name; a repository by its name and worktree, with its scope.
+      ...(info.kind === 'git' ? { repo: info.repo.name, ...(info.worktree.main ? {} : { worktree: info.worktree.name }) } : {}),
       kind: info.kind,
       openedAt: new Date().toISOString(),
-      scope: info.scope,
+      ...(info.kind === 'git' ? { scope: info.scope } : {}),
       ...(req.base !== undefined ? { base: req.base } : {}),
       agent: req.agent !== undefined ? req.agent : (last?.agent ?? null),
     },
@@ -122,7 +157,7 @@ async function openNow(req: OpenRequest): Promise<void> {
     // The bridge here too: the editor's repository and branch menus open other worktrees and recents with it.
     webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
-  const source: SourceWindow = { win, core, path, root: info.root, port: info.port, pty: null };
+  const source: SourceWindow = { win, core, path: t.dir, root: info.root, port: info.port, kind: info.kind, pty: null };
   sources.add(source);
   win.on('page-title-updated', (e) => e.preventDefault());
   win.on('closed', () => {
@@ -136,21 +171,23 @@ async function openNow(req: OpenRequest): Promise<void> {
   // window, whose Connect popover has the command to paste; the start page shows why.
   let failed: unknown = null;
   if (req.agent) await launchAgent(req.agent, source).catch((e: unknown) => { failed = e; });
-  await win.loadURL(req.agent ? `${url}/?waiting=${req.agent}` : url);
+  const query = new URLSearchParams({ ...(req.agent ? { waiting: req.agent } : {}), ...(t.file ? { file: relPath(info.root, t.file) } : {}) }).toString();
+  await win.loadURL(query ? `${url}/?${query}` : url);
   if (failed) throw failed;
   if (onlyStart) startWin?.close();
 }
 
-/** Errors from the menu, the dock or a drop have no page to land on. */
+/** Errors from the menu, Finder, the dock or a drop have no page to land on; with no window left, the start page opens. */
 function openOrReport(run: () => Promise<void>): void {
-  run().catch((err: unknown) => dialog.showErrorBox('Trove could not open that repository', String(err instanceof Error ? err.message : err)));
+  run().catch((err: unknown) => {
+    dialog.showErrorBox('Trove could not open it', String(err instanceof Error ? err.message : err));
+    if (!BrowserWindow.getAllWindows().length) openStart();
+  });
 }
 
-/** A repository opens; any other folder waits on the zero state, which says it is not a repository. */
-function openOrStage(picked: ReturnType<typeof probe>): void {
-  if (!picked) return;
-  if (picked.git) openOrReport(() => reopen(picked.path));
-  else openStart(picked.path);
+/** A folder opens as it was last opened, else as its repository or as a folder; a file opens in its folder. */
+function openPath(path: string): void {
+  openOrReport(() => (isDir(resolve(path)) ? reopen(path) : openSource({ path })));
 }
 
 // ---- agents ----------------------------------------------------------------------------------
@@ -378,11 +415,9 @@ function guard(win: BrowserWindow, allowed: (target: URL) => boolean): void {
   });
 }
 
-/** `staged`: a folder to show in the zero state (it reads the path from the hash). */
-function openStart(staged?: string): void {
-  const load = (win: BrowserWindow) => win.loadFile(startHtml, staged ? { hash: encodeURIComponent(staged) } : undefined);
+function openStart(): void {
+  const load = (win: BrowserWindow) => win.loadFile(startHtml);
   if (startWin) {
-    if (staged) void load(startWin);
     startWin.show();
     startWin.focus();
     return;
@@ -408,6 +443,16 @@ async function pickFolder(parent?: BrowserWindow | null) {
   const res = parent ? await dialog.showOpenDialog(parent, opts) : await dialog.showOpenDialog(opts);
   const path = res.canceled ? undefined : res.filePaths[0];
   return path ? probe(path) : null;
+}
+
+/** A document of the doc types, or with `folders` a folder too (File > Open…). */
+async function pickPath(parent: BrowserWindow | null, folders = false): Promise<string | null> {
+  const opts = {
+    properties: (folders ? ['openFile', 'openDirectory'] : ['openFile']) as Array<'openFile' | 'openDirectory'>,
+    filters: [{ name: 'Documents', extensions: DOC_EXTS.map((e) => e.slice(1)) }],
+  };
+  const res = parent ? await dialog.showOpenDialog(parent, opts) : await dialog.showOpenDialog(opts);
+  return res.canceled ? null : res.filePaths[0] ?? null;
 }
 
 /** The app menu's update item: what the updater is doing, or a check by hand (packaged apps only). */
@@ -443,7 +488,7 @@ function buildMenu(): void {
         {
           label: 'Open…',
           accelerator: 'CmdOrCtrl+O',
-          click: () => void pickFolder(BrowserWindow.getFocusedWindow()).then(openOrStage),
+          click: () => void pickPath(BrowserWindow.getFocusedWindow(), true).then((p) => p && openPath(p)),
         },
         {
           label: 'Open Recent',
@@ -477,13 +522,15 @@ const str = (v: unknown): string => {
 const SCOPES: GitScope[] = ['uncommitted', 'branch'];
 
 ipcMain.handle('trove:pickFolder', (e) => pickFolder(BrowserWindow.fromWebContents(e.sender)));
+ipcMain.handle('trove:pickFile', (e) => pickPath(BrowserWindow.fromWebContents(e.sender)));
 ipcMain.handle('trove:probe', (_e, path: unknown) => probe(str(path)));
 ipcMain.handle('trove:open', (_e, req: unknown) => {
   const r = (req ?? {}) as Partial<Record<keyof OpenRequest, unknown>>;
   if (r.scope !== undefined && !SCOPES.includes(r.scope as GitScope)) throw new Error(`unknown scope ${String(r.scope)}`);
   if (r.base !== undefined && r.base !== null && typeof r.base !== 'string') throw new Error('base must be a string');
   if (r.agent !== undefined && r.agent !== null && !TOOLS.includes(r.agent as AgentTool)) throw new Error(`unknown agent ${String(r.agent)}`);
-  return openSource({ path: str(r.path), scope: r.scope as GitScope | undefined, base: r.base as string | null | undefined, agent: r.agent as AgentTool | null | undefined });
+  if (r.kind !== undefined && r.kind !== 'git' && r.kind !== 'folder') throw new Error(`unknown kind ${String(r.kind)}`);
+  return openSource({ path: str(r.path), scope: r.scope as GitScope | undefined, base: r.base as string | null | undefined, agent: r.agent as AgentTool | null | undefined, kind: r.kind });
 });
 ipcMain.handle('trove:tools', () => tools());
 ipcMain.handle('trove:update', () => updateState());
@@ -538,13 +585,22 @@ ipcMain.handle('trove:pty:state', (e) => {
   const p = own(e)?.pty;
   return p ? { tool: p.tool, tail: p.tail, exitCode: p.exitCode } : null;
 });
-ipcMain.handle('trove:drop', (_e, path: unknown) => openOrStage(probe(str(path))));
+ipcMain.handle('trove:drop', (_e, path: unknown) => openPath(str(path)));
 
 // ---- lifecycle -------------------------------------------------------------------------------
 
 // Same userData (recents.json) in dev and in the packaged app.
 app.setPath('userData', join(app.getPath('appData'), 'Trove'));
 nativeTheme.themeSource = 'system';
+
+// Finder's Open With (electron-builder.yml's fileAssociations), a file dropped on the Dock icon, `open -a Trove <file>`.
+// The file that launches the app arrives before ready: it waits until then and opens instead of the start page.
+const launched: string[] = [];
+app.on('open-file', (e, path) => {
+  e.preventDefault();
+  if (app.isReady()) openPath(path);
+  else launched.push(path);
+});
 
 app.whenReady().then(() => {
   // The bundle's icon.icns is the dark one (an .icns holds one appearance; design/icon/README.md says
@@ -553,7 +609,8 @@ app.whenReady().then(() => {
   const dockIcon = () => app.dock?.setIcon(join(app.getAppPath(), 'assets', nativeTheme.shouldUseDarkColors ? 'icon.png' : 'icon-light.png'));
   if (process.platform === 'darwin') { dockIcon(); nativeTheme.on('updated', dockIcon); }
   buildMenu();
-  openStart();
+  if (launched.length) launched.splice(0).forEach(openPath);
+  else openStart();
   // Each change redraws the menu's update item and reaches every window's start page.
   watchForUpdates((u: UpdateState) => {
     buildMenu();
