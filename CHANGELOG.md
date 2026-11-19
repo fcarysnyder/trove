@@ -9,12 +9,16 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-19
+
 Trove is no longer only for git repositories. A plain folder or a single
 file opens as an editor: every document in the folder, unsaved edits you Save
 or don't, and numbered versions of every save and every change the agent
-makes. The Agent pane becomes a chat with a thread per file, and comments and edits still to send are its Changes. The agent's
-terminal is a drawer that opens itself when the agent needs you.
-HTML files gain Pointer and Circle tools for commenting on elements.
+makes. The Agent pane becomes a chat with a thread per file, beside Changes,
+the comments and edits still to send. The agent's terminal is a drawer that
+opens itself when the agent needs you, and agents start with bypass
+permissions unless you choose otherwise. HTML files gain Pointer and Circle
+tools for commenting on elements, and a Source tab for reading the raw HTML.
 
 ### Added
 
@@ -23,7 +27,7 @@ HTML files gain Pointer and Circle tools for commenting on elements.
 - A folder keeps the last 50 versions of each file: the original, your saves and the agent's changes. The `vN` badge beside the file name lists them, and Restore brings one back as unsaved edits.
 - Home lists pinned and recent repositories, folders and files. A repository's `git · branch` badge opens it on another branch. Open is its own screen with Folder, File and Clone.
 - On an HTML file, a toolbar adds Pointer (V: click an element, shift-click for more) and Circle (O: circle part of the page). Comments carry each element's selector, id, classes, test ids, text and HTML, and numbered badges mark them on the page. The plugin's new `html-prototype` skill has the agent study how a page is built and make changes in its own classes, tokens and patterns.
-- The Agent pane is one conversation with the agent. Each file gets a thread card with its comments, the agent's notes and replies, and its own reply box. History is kept across restarts.
+- The Agent pane is one conversation with the agent. Each file gets a thread card with its comments, the agent's notes and replies, and its own reply box. Chat is kept across restarts.
 - `trove say` posts a markdown message to the page, `--file` puts it in that file's thread, and `--re` answers an entry. `trove done --note` says what changed. Both read long text from stdin with `-`.
 - On the desktop the agent's terminal is a drawer beside the Agent pane (⌘J), so Chat stays in view. The agent keeps running while it is hidden. It opens itself for a permission prompt or a question and hides again once you answer. The plugin's hooks (`PermissionRequest`, `Notification`, `Stop`) and Codex's OSC 9 terminal notifications drive it. The window title and Dock also show when the agent needs you, as does the file header when the Agent pane is hidden.
 - With the agent in Trove's terminal, a Chat message is typed straight into it, and a slash command runs there with the drawer open. Chat shows when the agent is working, prompts you to answer in the terminal when it asks something, and counts the threads waiting on you, with up and down to step through them.
