@@ -4,13 +4,13 @@ import type { ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { api } from '@/lib/api';
+import { copy } from '@/lib/copy';
 import { kindOf, nameOf } from '@/lib/text';
 import { showInFolder } from './actions';
 import { useStore } from './store';
 
 /** Copy `text` (a path) to the clipboard and say so. */
-export const copyPath = (text: string) =>
-  navigator.clipboard.writeText(text).then(() => void toast(`Copied ${text}`), () => void toast.error('Copy failed'));
+export const copyPath = (text: string) => copy(text, `Copied ${text}`);
 
 /** An HTML file in the default browser, as the server serves it. */
 const openInBrowser = (path: string) => api('open', { path }).catch((e: Error) => toast.error(e.message));

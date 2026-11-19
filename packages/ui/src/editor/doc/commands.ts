@@ -1,6 +1,6 @@
 // Commands shared by the document, the selection toolbar, Changes and the keyboard.
 import { makeAnchor } from '@trove/core/anchor';
-import { toast } from 'sonner';
+import { copy } from '@/lib/copy';
 import { flash, open, setShowNew } from '../actions';
 import { get, set } from '../store';
 import { toRange } from './layers';
@@ -70,7 +70,7 @@ export function pickAction(act: 'change' | 'explain' | 'edit' | 'copy') {
   if (act === 'change' || act === 'explain') {
     set({ composer: { kind: act, anchor: pick.anchor, range: pick.range } });
   } else if (act === 'edit') editBlock(pick.block);
-  else navigator.clipboard.writeText(pick.text).then(() => toast('Copied'), () => toast('Copy failed'));
+  else void copy(pick.text);
 }
 
 /** Open the comment's file if needed, then bring its passage into view and flash it. */

@@ -9,7 +9,6 @@ import { inFolders, stepFrom } from '@/lib/status';
 import { save } from '@/lib/storage';
 import { kindOf } from '@/lib/text';
 import { get, isFolder, set, type State } from './store';
-import { getAnn } from './doc/annotate';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -24,7 +23,7 @@ export function sendable(s: State = get()): [comments: number, files: number] {
   return [live.reduce((n, f) => n + f.drafts, 0), live.length];
 }
 /** An open editor, composer, note edit or element mark is never replaced under the user. */
-const busy = (s: State) => !!(s.editing || s.composer || s.noteEdit || getAnn().mark);
+const busy = (s: State) => !!(s.editing || s.composer || s.noteEdit || s.mark);
 
 export async function loadAll() {
   const { drafts, edits } = await api<DraftsResponse>('drafts');
@@ -430,9 +429,9 @@ export async function loadRecents() {
   }) });
 }
 
-/** A recent repository or folder in its own window, with the scope it was last opened with. */
+/** A recent in its own window as it was last opened: its file selected in its folder, else with its kind and scope. */
 export async function openRecent(r: Recent) {
-  await window.trove?.open({ path: r.path, scope: r.scope, base: r.base, kind: r.kind }).catch((e) => toast(errText(e)));
+  await window.trove?.open(r.file ? { path: r.file } : { path: r.path, scope: r.scope, base: r.base, kind: r.kind }).catch((e) => toast(errText(e)));
 }
 
 /** Another worktree is another root: a new window on the desktop, else a dialog with the command that serves it. */

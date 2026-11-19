@@ -9,11 +9,11 @@ markdown and HTML, driven by git or by a plain folder, that runs three ways from
    today's skill. Install from this repo, say "review my docs", get the same page and workflow.
 2. **CLI** (`trove serve`, `trove done|ask|reply`): the plugin's runtime, also installable from
    npm for other agents and terminals.
-3. **Desktop app** (`apps/desktop`, Electron): the zero state's Open card has a Git column
-   (Repository, with its branch scope; Clone) and a Folder column (Folder, File); each source gets
-   a window. Repository on a folder that is not one stays on the zero state with "Not a git
-   repository. Try again."; Folder takes it. Finder opens documents in Trove (Open With, the Dock
-   icon), each in its folder.
+3. **Desktop app** (`apps/desktop`, Electron): Home lists Pinned and Recent sources (a repository's
+   `git · <branch>` badge opens it on another branch); Open has Folder (a repository's top-level folder
+   opens as the repository, any other folder as a folder), File (its folder, the file selected) and
+   Clone. Each source gets a window, which starts the agent its recent remembers. Finder opens
+   documents in Trove (Open With, the Dock icon), each in its folder.
 
 ## Principles
 

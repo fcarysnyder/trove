@@ -12,7 +12,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { tilde } from '@/lib/text';
+import { copy } from '@/lib/copy';
+import { dirOf, tilde } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { loadGit, loadRecents, openRecent, openWorktree, switchBranch } from './actions';
 import { Count, IconButton } from './bits';
@@ -41,7 +42,7 @@ export function Switcher() {
         <FolderOpen />
         <span className="flex min-w-0 flex-col">
           <span className="truncate text-[13px] leading-4 font-semibold text-foreground">{source.name}</span>
-          <span className="truncate font-mono text-[11px] leading-4 text-muted-foreground">{tilde(source.root.slice(0, source.root.lastIndexOf('/')) || '/')}</span>
+          <span className="truncate font-mono text-[11px] leading-4 text-muted-foreground">{tilde(dirOf(source.root))}</span>
         </span>
       </div>
     );
@@ -220,7 +221,6 @@ function ServeDialog() {
   const bin = done?.split(' done ')[0] || 'trove';
   const quoted = root && (/[\s'"$`\\]/.test(root) ? `'${root.replaceAll("'", String.raw`'\''`)}'` : root);
   const command = `${bin} serve --root ${quoted} --port 0`;
-  const copy = () => navigator.clipboard.writeText(command).then(() => toast('Copied'), () => toast('Copy failed'));
   return (
     <Dialog open={!!root} onOpenChange={(open) => { if (!open) set({ serveRoot: null }); }}>
       {/* Focus the dialog, not the copy button, whose tooltip would take the first Escape. */}
@@ -231,7 +231,7 @@ function ServeDialog() {
         </DialogHeader>
         <div className="flex items-start gap-1">
           <code className="min-w-0 flex-1 rounded-sm bg-background px-2 py-1.5 font-mono text-xs break-all text-foreground">{command}</code>
-          <IconButton label="Copy command" onClick={copy}><Copy /></IconButton>
+          <IconButton label="Copy command" onClick={() => void copy(command)}><Copy /></IconButton>
         </div>
       </DialogContent>
     </Dialog>

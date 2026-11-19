@@ -303,23 +303,26 @@ export interface Recent {
   openedAt: string;
   scope?: GitScope;
   base?: string | null;
-  agent?: AgentTool | null; // the last agent choice on the start page's Agent step
+  agent?: AgentTool | null; // the agent last started with it; opening it starts that agent again
   repo?: string; // the repository's name (RepoRef.name)
   worktree?: string; // a linked worktree's name; absent for the main checkout
+  file?: string; // opened with Open file: the file's absolute path; the recent reads as it and reopens it selected in its folder
+  pinned?: boolean; // kept at the top of Home and never dropped from the recents
 }
 
 /** How a recent reads: `<repo> / <worktree>` for a linked worktree, `<repo>` for the main checkout, `name` for older entries. */
 export const recentName = (r: Pick<Recent, 'name' | 'repo' | 'worktree'>) => (r.repo ? (r.worktree ? `${r.repo} / ${r.worktree}` : r.repo) : r.name);
 
 /**
- * `agent`: start the server, then a Terminal session of that tool attached to it, then the window. `path`: a folder, or a
+ * `agent`: start the server, then a Terminal session of that tool attached to it, then the window; undefined starts the one
+ * the recent remembers, if any, and null none. `path`: a folder, or a
  * file, which opens its folder as a folder source with the file selected (in a window already showing it, if one is open).
- * `kind`: 'folder' serves a folder as a folder even inside a repository; default git inside one, else folder.
+ * `kind`: 'folder' serves a folder as a folder even inside a repository; default git for a repository's top-level folder, else folder.
  */
 export interface OpenRequest { path: string; scope?: GitScope; base?: string | null; agent?: AgentTool | null; kind?: SourceKind }
 
 export interface TroveBridge {
-  /** Native folder picker. null when cancelled; `git` null when the folder is not in a git repository (it cannot be opened). */
+  /** Native folder picker. null when cancelled; `git` null when the folder is not in a git repository. */
   pickFolder(): Promise<{ path: string; git: GitProbe | null } | null>;
   /** Native file picker for documents of the doc types. null when cancelled. */
   pickFile(): Promise<string | null>;
@@ -329,6 +332,8 @@ export interface TroveBridge {
   open(req: OpenRequest): Promise<void>;
   recents(): Promise<Recent[]>;
   forget(path: string): Promise<void>;
+  /** Pin or unpin a recent. */
+  pin(path: string, pinned: boolean): Promise<void>;
   /** Which agent CLIs are on the user's login-shell PATH. */
   tools(): Promise<Record<AgentTool, boolean>>;
   /** 'Trove' and the terminal apps installed, and where agents start (the app setting, else Trove). */

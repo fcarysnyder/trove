@@ -20,6 +20,7 @@ const trove: TroveBridge = {
   open: (req: OpenRequest) => invoke('trove:open', req),
   recents: () => invoke('trove:recents'),
   forget: (path: string) => invoke('trove:forget', path),
+  pin: (path: string, pinned: boolean) => invoke('trove:pin', path, pinned),
   tools: () => invoke('trove:tools'),
   update: () => invoke('trove:update'),
   onUpdate: (cb: (s: UpdateState) => void) => { ipcRenderer.on('trove:update', (_e, s: UpdateState) => cb(s)); },
