@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { api } from '@/lib/api';
-import { nameOf } from '@/lib/text';
+import { kindOf, nameOf } from '@/lib/text';
 import { showInFolder } from './actions';
 import { useStore } from './store';
 
@@ -12,13 +12,14 @@ import { useStore } from './store';
 export const copyPath = (text: string) =>
   navigator.clipboard.writeText(text).then(() => void toast(`Copied ${text}`), () => void toast.error('Copy failed'));
 
-/** The file in its default app, opened by the server. */
-const openFile = (path: string) => api('open', { path }).catch((e: Error) => toast.error(e.message));
+/** An HTML file in the default browser, as the server serves it. */
+const openInBrowser = (path: string) => api('open', { path }).catch((e: Error) => toast.error(e.message));
 
 /**
  * Right-click `children` for the file at `path`, relative to the root. `children` becomes the menu's trigger, so it is
  * one element, or a trigger that passes props on (`<TooltipTrigger asChild>`, not `<Tooltip>`):
- * copy its path, relative path or name; show it in the file manager; open it in its default app.
+ * copy its path, relative path or name; show it in the file manager; an HTML file, open it in the browser. Nothing opens
+ * markdown or text elsewhere: Trove may be the system's app for them.
  */
 export function PathMenu({ path, children }: { path: string; children: ReactNode }) {
   const root = useStore((s) => s.source?.root);
@@ -31,7 +32,7 @@ export function PathMenu({ path, children }: { path: string; children: ReactNode
         <ContextMenuItem onSelect={() => void copyPath(nameOf(path))}>Copy filename</ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => void showInFolder(path)}>{navigator.platform.startsWith('Mac') ? 'Show in Finder' : 'Show in folder'}</ContextMenuItem>
-        <ContextMenuItem onSelect={() => void openFile(path)}>Open in default app</ContextMenuItem>
+        {kindOf(path) === 'html' && <ContextMenuItem onSelect={() => void openInBrowser(path)}>Open in browser</ContextMenuItem>}
       </ContextMenuContent>
     </ContextMenu>
   );

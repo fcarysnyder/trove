@@ -487,13 +487,16 @@ export function createApp(o: AppOptions): App {
       execFile(...(process.platform === 'darwin' ? ['open', ['-R', abs]] : process.platform === 'win32' ? ['explorer', [`/select,${abs}`]] : ['xdg-open', [dirname(abs)]]) as [string, string[]], () => {});
       return [200, {}];
     },
-    // The file in its default app, the same way: one argument, no shell (on Windows explorer opens it, not cmd's start).
+    // An HTML file in the default browser as this server serves it, the frame's URL, so its relative assets resolve and
+    // the browser opens it whatever app owns .html. Nothing else opens: Trove may be the system's app for markdown.
+    // One argument, never a shell (on Windows explorer, not cmd's start).
     'POST /api/open': (_, { path }) => {
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
-      const abs = join(top, rel);
-      execFile(process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open', [abs], () => {});
-      return [200, {}];
+      if (kindOf(rel, current) !== 'html') return [400, { error: 'only HTML files open in the browser' }];
+      const url = `http://127.0.0.1:${port()}/raw/${rel.split('/').map(encodeURIComponent).join('/')}`;
+      execFile(process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open', [url], () => {});
+      return [200, { url }];
     },
     'POST /api/agent': (_, { id, label }, req) => {
       if (id !== null && !Object.hasOwn(AGENT_LABELS, id)) return [400, { error: 'id is claude, codex, other or null' }];
