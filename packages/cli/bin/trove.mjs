@@ -9,6 +9,7 @@
 //   trove done <file> [--note "<markdown>" | --note -] [--root <repo> | --port N]
 //   trove say "<markdown>" | say - [--file <path>]... [--re <entry id>] [--root <repo> | --port N]   (-: the text from stdin)
 //   trove ask "<question>" | reply "<summary>" | ask --clear [--root <repo> | --port N]
+//   trove signal permission|question|idle|working|notification [--root <path> | --port N]   (the plugin's hooks; stdin: the hook's JSON)
 // Without --port these find the server running on --root's repository, else on its folder or the nearest one above
 // (default: the current directory). --folder serves a folder inside a repository as a folder: no git writes.
 //   trove --selftest
@@ -57,6 +58,32 @@ async function stdin() {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+// A Claude Code Notification's type -> what the page shows; other types are not signals.
+const NOTIFIED = { permission_prompt: 'permission', elicitation_dialog: 'question', idle_prompt: 'idle' };
+
+/**
+ * `signal <kind>`, run by the plugin's hooks in every Claude Code session, Trove or not: tells the server for the
+ * session's project (CLAUDE_PROJECT_DIR, else the hook's cwd, else --root) what the agent waits for. Always exits 0
+ * and prints nothing: a hook's output would reach the session, and most sessions have no Trove server.
+ */
+async function signal(/** @type {string | undefined} */ kind, /** @type {{root: string, port?: string}} */ values) {
+  /** @type {any} */
+  let input = {};
+  if (!process.stdin.isTTY) {
+    // A hook closes stdin after its JSON; anything else gets a second, then is let go.
+    const text = await Promise.race([stdin().catch(() => ''), new Promise((ok) => setTimeout(ok, 1000, '').unref())]);
+    process.stdin.destroy();
+    try { input = JSON.parse(String(text)) ?? {}; } catch {}
+  }
+  const what = kind === 'notification' ? NOTIFIED[/** @type {keyof typeof NOTIFIED} */ (input.notification_type)] : kind;
+  if (!['permission', 'question', 'idle', 'working'].includes(what ?? '')) return;
+  const root = values.root !== '.' ? values.root : process.env.CLAUDE_PROJECT_DIR || input.cwd || '.';
+  const port = values.port ? Number(values.port) : (await running(root))?.port;
+  if (!port) return;
+  const text = typeof input.tool_name === 'string' ? input.tool_name : typeof input.message === 'string' ? input.message : undefined;
+  await call(port, 'POST', '/api/signal', { kind: what, ...(text ? { text } : {}) });
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === '--selftest') {
@@ -73,6 +100,7 @@ async function main() {
       note: { type: 'string' }, file: { type: 'string', multiple: true }, re: { type: 'string' },
     },
   });
+  if (command === 'signal') return signal(positionals[0], values).catch(() => {});
   // serve binds 4824 by default; the other commands go to --port, else the server on --root's repository.
   const finds = ['attach', 'detach', 'info', 'done', 'say', 'ask', 'reply'].includes(command);
   const port = values.port ? Number(values.port) : finds ? (await running(values.root))?.port : 4824;

@@ -586,7 +586,7 @@ async function agentCase(temps: string[]) {
   const opts = { root, agent: null };
   let { app, port } = await listen(opts);
   const source = async () => (await call(port, 'GET', '/api/source')).body;
-  const none = { id: 'other', label: 'the agent', connected: false, at: null };
+  const none = { id: 'other', label: 'the agent', connected: false, at: null, waiting: null, since: null };
   assert.deepEqual([(await source()).agentInfo, (await source()).agent], [none, 'other'], 'nothing attached');
   assert.equal((await call(port, 'POST', '/api/agent', { id: 'cursor' })).status, 400);
   const codex = await call(port, 'POST', '/api/agent', { id: 'codex' });
@@ -615,6 +615,19 @@ async function agentCase(temps: string[]) {
   await app.close();
   ({ app, port } = await listen(opts));
   assert.deepEqual((await source()).agentInfo, none, 'detach survives a restart');
+  // Signals (`trove signal`, the desktop's terminal): what the agent waits on the user for, the last one wins.
+  const signal = async (body: unknown) => (await call(port, 'POST', '/api/signal', body)).body;
+  assert.equal((await call(port, 'POST', '/api/signal', { kind: 'nap' })).status, 400);
+  assert.equal((await call(port, 'POST', '/api/signal', { kind: 'idle', text: 7 })).status, 400);
+  const asked = await signal({ kind: 'permission', text: ' Bash ' });
+  assert.deepEqual([asked.waiting, asked.waitingText, typeof asked.since], ['permission', 'Bash', 'string']);
+  assert.deepEqual([(await signal({ kind: 'idle' })).waitingText, (await source()).agentInfo.waiting], [undefined, 'idle'], 'the last signal wins');
+  await call(port, 'POST', '/api/message', { text: 'Go on.' });
+  assert.equal((await source()).agentInfo.waiting, null, "the user's message ends an idle wait");
+  await signal({ kind: 'question', text: 'Which one?' });
+  await call(port, 'POST', '/api/message', { text: 'Also this.' });
+  assert.equal((await source()).agentInfo.waiting, 'question', 'but not a question');
+  assert.equal((await signal({ kind: 'working' })).waiting, null);
   await app.close();
   ({ app, port } = await listen({ root, agent: 'claude' }));
   assert.deepEqual([(await source()).agentInfo.label, (await source()).agentInfo.connected], ['Claude', true], 'the serving agent is attached');
@@ -684,7 +697,7 @@ async function historyCase(temps: string[]) {
     ['message', 'agent', 'And again.', ['b.md']],
   ];
   assert.deepEqual(shape(await entries()), expected, 'events-log lines for batches and messages are not entries of their own');
-  assert.equal((await call(port, 'GET', '/api/activity')).body.user, 't', "the reviewer's git name, for the avatar");
+  assert.deepEqual((await entries()).filter((e) => e.kind === 'batch').map((e) => e.counts), [{ 'a.md': 1 }, { 'a.md': 1, 'b.md': 1 }], 'comments per file');
   await app.close();
   ({ app, port } = await listen({ root }));
   assert.deepEqual(shape(await entries()), expected, 'all of it survives a restart, each send once');

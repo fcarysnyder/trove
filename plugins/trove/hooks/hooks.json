@@ -1,0 +1,14 @@
+{
+  "description": "Tells a Trove server for this project when Claude needs the user (a permission prompt, a question, its turn ended), so the page can say so. Observe only: prints nothing, decides nothing, and does nothing when no Trove serves the project.",
+  "hooks": {
+    "PermissionRequest": [
+      { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs\" signal permission", "timeout": 5 }] }
+    ],
+    "Notification": [
+      { "matcher": "permission_prompt|elicitation_dialog|idle_prompt", "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs\" signal notification", "timeout": 5 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs\" signal idle", "timeout": 5 }] }
+    ]
+  }
+}

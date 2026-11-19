@@ -11,7 +11,7 @@ import { blocks, splice } from './anchor.js';
 import { included, kindOf, loadSettings, mergeSettings, saveSettings } from './settings.js';
 import { agentAbove, alive, peerOf } from './presence.js';
 import { folderStateDir, inGit, openFolder, openSource, sha, withChanges } from './source.js';
-import { AGENT_LABELS, DEFAULT_DOC_TYPES, type Activity, type AgentId, type AgentInfo, type BlockEdit, type Draft, type FileEntry, type GitInfo, type GitScope, type Question, type Settings, type SourceInfo, type SourceKind } from './types.js';
+import { AGENT_LABELS, DEFAULT_DOC_TYPES, type Activity, type AgentId, type AgentInfo, type AgentWaiting, type BlockEdit, type Draft, type FileEntry, type GitInfo, type GitScope, type Question, type Settings, type SourceInfo, type SourceKind } from './types.js';
 
 export interface AppOptions {
   // A folder or a file. Inside a git working tree, that working tree; anywhere else, the folder (a file's folder) as a
@@ -134,9 +134,16 @@ export function createApp(o: AppOptions): App {
   const serving = o.agent === undefined ? (process.env.CLAUDECODE ? 'claude' : null) : o.agent;
   let agent: Agent | null = serving ? attached(serving, undefined, agentAbove(process.pid, serving)) : saved.agent ?? null;
   let attachedHere = !!serving;
-  const agentInfo = (): AgentInfo => agent
-    ? { id: agent.id, label: agent.label, at: agent.at, connected: agent.pid ? alive(agent.pid) : attachedHere }
-    : { id: 'other', label: AGENT_LABELS.other, connected: false, at: null };
+  // What the agent waits on the user for, from its hooks or the desktop's terminal (POST /api/signal). Memory only.
+  let signal: { waiting: AgentWaiting | null; text?: string; since: string | null } = { waiting: null, since: null };
+  const unwait = () => { signal = { waiting: null, since: new Date().toISOString() }; };
+  // The user wrote or sent something: an agent whose turn ended is about to work again.
+  const resumed = () => { if (signal.waiting === 'idle') unwait(); };
+  const agentInfo = (): AgentInfo => ({
+    ...(agent ? { id: agent.id, label: agent.label, at: agent.at, connected: agent.pid ? alive(agent.pid) : attachedHere }
+      : { id: 'other' as const, label: AGENT_LABELS.other, connected: false, at: null }),
+    waiting: signal.waiting, ...(signal.text ? { waitingText: signal.text } : {}), since: signal.since,
+  });
   const Who = () => { const l = agentInfo().label; return l[0].toUpperCase() + l.slice(1); };
   const BUSY = (): Result => [409, { error: `${Who()} is working on this file` }];
   const saveState = () => writeFileSync(files.state, JSON.stringify({
@@ -156,8 +163,13 @@ export function createApp(o: AppOptions): App {
     persist(e);
     return e;
   };
+  const counts = (items: { path: string | null }[]) => {
+    const n: Record<string, number> = {};
+    for (const c of items) n[c.path as string] = (n[c.path as string] ?? 0) + 1;
+    return n;
+  };
   const sentEntry = (b: { id: string; sentAt: string; items: { path: string | null }[] }): Activity =>
-    ({ id: b.id, at: b.sentAt, kind: 'batch', text: b.id, comments: b.items.length, paths: [...new Set(b.items.map((c) => c.path as string))] });
+    ({ id: b.id, at: b.sentAt, kind: 'batch', text: b.id, comments: b.items.length, paths: Object.keys(counts(b.items)), counts: counts(b.items) });
   // ponytail: both logs are read whole at start; trim activity.jsonl if it ever gets slow.
   // A later line with an entry's id replaces it (a re-written entry keeps its time, so its place); then the
   // batches log's sends that activity.jsonl lacks, which is all of them in an older state dir.
@@ -165,9 +177,6 @@ export function createApp(o: AppOptions): App {
   for (const e of jsonl(files.activity)) if (e?.id) byId.set(e.id, e);
   for (const b of jsonl(files.batches)) if (b?.id && !byId.has(b.id)) byId.set(b.id, sentEntry(b));
   activity.push(...[...byId.values()].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).slice(-KEEP));
-  // The reviewer's name, for History's avatar: git's user.name (this repository's, else the global one).
-  let reviewer: string | null = null;
-  execFile('git', ['config', 'user.name'], { cwd: top }, (error, out) => { if (!error) reviewer = out.trim() || null; });
 
   function list(): FileEntry[] {
     const before = seen.size;
@@ -496,7 +505,8 @@ export function createApp(o: AppOptions): App {
       const sentPaths = new Set(items.map((c) => c.path));
       const sentAt = new Date().toISOString();
       appendFileSync(files.batches, `${JSON.stringify({ id, sentAt, items })}\n`);
-      note('batch', id, { id, at: sentAt, comments: items.length, paths: [...sentPaths] as string[] });
+      note('batch', id, { id, at: sentAt, comments: items.length, paths: [...sentPaths] as string[], counts: counts(items) });
+      resumed();
       saveDrafts(keep);
       // A notice, not the batch itself: a long line is cut short on its way to the agent.
       const notice = `batch ${id}: ${items.length} ${items.length === 1 ? 'comment' : 'comments'} on ${sentPaths.size} ${sentPaths.size === 1 ? 'file' : 'files'}. Read it with: grep -F ${id} '${files.batches}'`;
@@ -549,6 +559,7 @@ export function createApp(o: AppOptions): App {
       }
       const e = note('message', '', { from, body: text.trim(), ...(re ? { re } : {}), ...(rels.length ? { paths: rels } : {}) });
       if (from === 'user') {
+        resumed();
         const notice = `message ${e.id}: from the reviewer${re ? `, re ${re}` : ''}. Read it with: grep -F ${e.id} '${files.activity}'`;
         appendFileSync(files.events, `${notice}\n`);
         log(notice);
@@ -561,7 +572,15 @@ export function createApp(o: AppOptions): App {
       return b ? [200, b] : [404, { error: 'no such batch' }];
     },
     'GET /api/source': () => [200, info()],
-    'GET /api/activity': () => (follow(), [200, { entries: activity, user: reviewer }]),
+    'GET /api/activity': () => (follow(), [200, { entries: activity }]),
+    // `trove signal` from the agent's hooks, and the desktop's terminal: what the agent waits on the user for. The last one wins.
+    'POST /api/signal': (_, { kind, text }) => {
+      if (!['permission', 'question', 'idle', 'working'].includes(kind)) return [400, { error: 'kind is permission, question, idle or working' }];
+      if (text !== undefined && typeof text !== 'string') return [400, { error: 'text is a string' }];
+      if (kind === 'working') unwait();
+      else signal = { waiting: kind, ...(text?.trim() ? { text: text.trim().slice(0, 200) } : {}), since: new Date().toISOString() };
+      return [200, agentInfo()];
+    },
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
     // The file in the system's file manager. Never a shell: the path is one argument.
     'POST /api/reveal': (_, { path }) => {
@@ -588,6 +607,7 @@ export function createApp(o: AppOptions): App {
       if (id === null && agent) note('detach', agent.label);
       agent = id === null ? null : attached(id, label?.trim(), agentAbove(peerOf(req!.socket.remotePort!), id));
       attachedHere = id !== null;
+      signal = { waiting: null, since: null }; // a new session, or none
       saveState();
       if (agent) note('attach', agent.label);
       return [200, agentInfo()];

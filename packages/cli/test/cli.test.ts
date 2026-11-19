@@ -45,6 +45,18 @@ test('the bundle builds, serves a repository and prints the done command', async
     const said = (await (await fetch(`http://127.0.0.1:${port}/api/activity`)).json()).entries.filter((e: any) => e.kind === 'message');
     expect(said.map((e: any) => [e.from, e.body, e.paths, e.re])).toEqual([
       ['agent', '- two lines,\n"quoted" `code`', ['a.md'], undefined], ['agent', 'Short answer', undefined, id], ['agent', 'Tightened it.', ['b.md'], undefined]]);
+    // signal, as the plugin's hooks run it: the project from the environment, the hook's JSON on stdin, nothing printed.
+    const hook = (kind: string, input: object) => spawnSync(process.execPath, [bundle, 'signal', kind],
+      { encoding: 'utf8', input: JSON.stringify(input), cwd: tmpdir(), env: { ...process.env, CLAUDE_PROJECT_DIR: root } });
+    const waiting = async () => (await (await fetch(`http://127.0.0.1:${port}/api/source`)).json()).agentInfo;
+    expect(hook('notification', { notification_type: 'elicitation_dialog', message: 'Pick one' })).toMatchObject({ status: 0, stdout: '', stderr: '' });
+    expect(await waiting()).toMatchObject({ waiting: 'question', waitingText: 'Pick one' });
+    expect(hook('permission', { tool_name: 'Bash' }).stdout).toBe('');
+    expect(await waiting()).toMatchObject({ waiting: 'permission', waitingText: 'Bash' });
+    hook('notification', { notification_type: 'auth_success' });
+    expect((await waiting()).waiting).toBe('permission');
+    hook('idle', {});
+    expect((await waiting()).waiting).toBe('idle');
     const again = spawnSync(process.execPath, [bundle, 'serve', '--root', root, '--port', '0'], { encoding: 'utf8' });
     expect(again.stdout.trim()).toBe(`Trove is already serving this repository at http://127.0.0.1:${port} (trove serve).\n`
       + `Attach with: trove attach --port ${port} --agent claude. Pass --force to start another.`);
@@ -56,6 +68,16 @@ test('the bundle builds, serves a repository and prints the done command', async
     rmSync(root, { recursive: true, force: true });
   }
 }, 30_000);
+
+test('signal exits 0 and prints nothing when no Trove serves the project', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'trove-none-'));
+  try {
+    const run = spawnSync(process.execPath, [bundle, 'signal', 'permission'], { encoding: 'utf8', input: '{"tool_name":"Bash"}', env: { ...process.env, CLAUDE_PROJECT_DIR: dir } });
+    expect([run.status, run.stdout, run.stderr]).toEqual([0, '', '']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('attach says so when nothing is serving', () => {
   const run = spawnSync(process.execPath, [bundle, 'attach', '--port', '1', '--agent', 'codex'], { encoding: 'utf8' });

@@ -133,11 +133,15 @@ export type AgentTool = 'claude' | 'codex';
 export type UpdateState = { state: 'none' } | { state: 'downloading'; version: string } | { state: 'ready'; version: string } | { state: 'error'; message: string };
 /** Where the desktop starts an agent: 'Trove' is the terminal in the window's Agent pane, the rest are macOS terminal apps. */
 export type TerminalApp = 'Trove' | 'Terminal' | 'iTerm' | 'Ghostty' | 'WezTerm' | 'kitty' | 'Alacritty';
+/** What the agent waits on the user for: a permission prompt, a question (an elicitation dialog), or its turn ended. */
+export type AgentWaiting = 'permission' | 'question' | 'idle';
 /**
  * The agent attached to a server, set by `trove attach` (POST /api/agent) and kept in state.json.
- * With nothing attached: {id: 'other', label: 'the agent', connected: false, at: null}.
+ * With nothing attached: {id: 'other', label: 'the agent', connected: false, at: null, waiting: null, since: null}.
+ * waiting, waitingText and since: the last POST /api/signal (memory only; attach, detach, a send or a message of the
+ * user's while it is idle clear it); null: working, or no signal yet.
  */
-export interface AgentInfo { id: AgentId; label: string; connected: boolean; at: string | null }
+export interface AgentInfo { id: AgentId; label: string; connected: boolean; at: string | null; waiting: AgentWaiting | null; waitingText?: string; since: string | null }
 /** The label an agent gets when attach names none. */
 export const AGENT_LABELS: Record<AgentId, string> = { claude: 'Claude', codex: 'Codex', other: 'the agent' };
 
@@ -200,8 +204,9 @@ export interface Activity {
   from?: 'agent' | 'user'; // who wrote `body` (and question / reply's text)
   body?: string; // markdown
   re?: string; // the id of the entry this one answers
+  counts?: Record<string, number>; // batch: comments per path (absent on entries written before 0.8)
 }
-export interface ActivityResponse { entries: Activity[]; user?: string | null } // GET /api/activity: newest last, at most 200; user: the reviewer's git user.name
+export interface ActivityResponse { entries: Activity[] } // GET /api/activity: newest last, at most 200
 /** POST /api/message -> Activity. from defaults to 'user'; a user's message adds one line to events.log
  * (`message <id>: from the reviewer[, re <id>]. Read it with: grep -F <id> '<activity.jsonl>'`). Each path must be in the review set. */
 export interface MessageBody { text: string; re?: string; paths?: string[]; from?: 'agent' | 'user' }
@@ -237,6 +242,11 @@ export interface PrResponse { id: string; files: number } // POST /api/pr {} -> 
 export interface AskBody { text: string; kind?: 'question' | 'reply' } // POST /api/ask -> {question}
 export interface ReleaseBody { path: string; note?: string } // POST /api/release -> {released, updated}; note: markdown for History, on this release (or the file's last one, or a message about it)
 export interface AgentBody { id: AgentId | null; label?: string } // POST /api/agent -> AgentInfo; id null detaches
+/**
+ * POST /api/signal -> AgentInfo: `trove signal` from the plugin's hooks, and the desktop's terminal (OSC 9, typing).
+ * The last signal wins; 'working' clears waiting. text: the tool name or the notification's message, up to 200 chars.
+ */
+export interface SignalBody { kind: AgentWaiting | 'working'; text?: string }
 export type SourceResponse = SourceInfo; // GET /api/source
 export type SettingsResponse = Settings; // GET /api/settings; POST /api/settings takes Partial<Settings>, returns Settings
 
