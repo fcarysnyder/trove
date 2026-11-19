@@ -42,7 +42,7 @@ export function App() {
   }, []);
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="grid h-screen grid-rows-[auto_auto_minmax(0,1fr)]">
+      <div className="flex h-screen flex-col">
         <TitleStrip />
         <TopBar />
         <Columns />
@@ -101,10 +101,10 @@ function Columns() {
   const handle = 'z-10 w-0 bg-transparent hover:after:bg-foreground/50 data-[separator=active]:after:bg-foreground/50';
   const reset = (name: 'files' | 'changes') => () => (name === 'files' ? files : changes).current?.resize(WIDTH[name]);
   return (
-    <ResizablePanelGroup orientation="horizontal" onLayoutChanged={changed} className={cn('min-h-0', animate && 'animate')}>
+    <ResizablePanelGroup orientation="horizontal" onLayoutChanged={changed} className={cn('min-h-0 flex-1', animate && 'animate')}>
       <ResizablePanel {...side('files')}><div inert={hidden.files} className="h-full border-r">{<FilesColumn />}</div></ResizablePanel>
       <ResizableHandle aria-label="Resize files" disableDoubleClick onDoubleClick={reset('files')} className={handle} />
-      <ResizablePanel id="doc" minSize={360}><DocColumn /></ResizablePanel>
+      <ResizablePanel id="file" minSize={360}><DocColumn /></ResizablePanel>
       <ResizableHandle aria-label="Resize changes" disableDoubleClick onDoubleClick={reset('changes')} className={handle} />
       <ResizablePanel {...side('changes')}><div inert={hidden.changes} className="h-full border-l">{<ChangesColumn />}</div></ResizablePanel>
     </ResizablePanelGroup>
