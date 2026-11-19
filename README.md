@@ -26,6 +26,11 @@ to point at a paragraph, and a queue that remembers where you were.
 Trove works with any agent that can run a shell command. It ships as a Claude Code plugin, a CLI
 and a desktop app, and the same page runs in all three.
 
+It also opens a plain folder or a single file. There it is an editor rather than a review queue:
+every document in the folder is listed, your edits stay unsaved until you Save, and each save and
+each change the agent makes is kept as a numbered version you can restore. Trove never runs git
+there; commits happen wherever you make them.
+
 ## How a review works
 
 1. Start a server on a repository. The page lists the changed documents as a tree, pending first.
@@ -76,11 +81,13 @@ The plugin's bundle is a single file with no dependencies beyond Node 22, so
 `node plugins/trove/dist/trove.mjs serve` works from a plain clone with no install at all.
 
 ```
-trove serve [--root <path>] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--force]
+trove serve [--root <path>] [--folder] [--port 4824] [--exclude <glob>]... [--scope uncommitted|branch] [--base <ref>] [--force]
+                                                     a repository, or a plain folder or file (--folder inside a repository)
 trove attach [--root <repo> | --port N] --agent claude|codex|other   join a running server as the agent
 trove detach [--root <repo> | --port N]
 trove info [--root <repo> | --port N]                the server's status line
-trove done <file> [--root <repo> | --port N]         release a file back to the reviewer
+trove done <file> [--note "<markdown>" | --note -]   release a file back to the reviewer, with what changed
+trove say "<markdown>" | say - [--file <path>]... [--re <id>]   post a message to the page's History
 trove ask "<question>"                               show a question on the page
 trove reply "<summary>"                              answer a question the reviewer asked
 ```
@@ -132,8 +139,23 @@ the agent's side.
 - **In-place editing.** Edit a block, save, and revert one block or every edit of the review.
 - **Comments with anchors.** Comments attach to a quoted passage, not a line number, so they
   survive the agent's edits around them.
+- **Point at HTML.** On an HTML file, Pointer comments on an element (shift-click adds more) and
+  Circle comments on whatever you circle. The `html-prototype` skill has the agent make the change
+  in the page's own classes, tokens and patterns.
+- **A conversation with the agent.** The Agent pane is one conversation, with a thread per file for
+  its comments, the agent's notes and replies. It is kept across restarts, and you can answer any
+  of it from the page.
+- **Knows when the agent needs you.** On the desktop the agent's terminal folds to a status line
+  that opens itself for a permission prompt or a question (from the plugin's Claude Code hooks, or
+  Codex's terminal notifications), and the window title and Dock show it too.
+- **Folders and files.** Open any folder or file: unsaved edits with Save and Don't save, numbered
+  versions to restore, and a prompt before you overwrite a change the agent made meanwhile.
+- **Paths.** Click a path to copy it; right-click for the absolute or relative path, the file name,
+  Show in Finder and, for HTML, Open in browser.
 - **Accept, Accept all, Undo accept, Skip, Reject, Restore.**
 - **Search and filters** in the Files column, by name and by state.
+- **Home** lists pinned and recent repositories, folders and files; a repository's `git · branch`
+  badge opens it on another branch.
 - **Repository, worktree and branch switcher** in the top bar. Switching is a plain `git switch`
   with no stash; a branch checked out in another worktree opens that worktree instead.
 - **Scope.** Review what is uncommitted, or everything the branch changed since its base.
@@ -158,6 +180,8 @@ Highlight API.
 | `S` | skip the open file, or unskip it |
 | `X` | reject the open file (asks first) |
 | `C` / `E` | with text selected: comment / explain |
+| `V` / `O` / `T` | on an HTML file: Pointer, Circle, back to selecting text |
+| `Cmd/Ctrl+S` | in a folder: save the open file's unsaved edits |
 | `Esc` | dismiss the selection toolbar; cancel an edit, a composer or a dialog |
 | `Cmd/Ctrl+Enter` | save an edit, add a comment, save a dialog |
 | `←` `→` on a divider | resize that column |
@@ -174,7 +198,7 @@ Trove is a pnpm workspace. Node 22 and pnpm 10.
 | `packages/ui` | The page: Vite, React, Tailwind and shadcn/ui. |
 | `packages/cli` | The `trove` command, bundled to one file with esbuild. |
 | `apps/desktop` | The Electron app. Runs core in the main process, one server per window. |
-| `plugins/trove` | The Claude Code plugin: the `markdown-editor` and `bring-file` skills and a committed build of the CLI and page. |
+| `plugins/trove` | The Claude Code plugin: the `markdown-editor`, `html-prototype` and `bring-file` skills, hooks that tell the page when the agent needs you, and a committed build of the CLI and page. |
 
 ```sh
 pnpm install
