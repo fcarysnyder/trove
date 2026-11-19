@@ -83,6 +83,7 @@ function Nothing() {
   useEffect(() => { void loadRecents(); }, []);
   if (!loaded) return null;
   if (any) return <p className="grid min-h-full place-items-center text-muted-foreground">Select a file</p>;
+  if (source?.kind === 'folder') return <p className="grid min-h-full place-items-center font-medium text-foreground">No documents</p>;
   const ours = new Set(git?.worktrees.map((w) => w.path));
   const elsewhere = [
     ...(git?.worktrees ?? []).filter((w) => !w.current && w.changes).map((w) => ({
@@ -331,18 +332,20 @@ function DocFooter() {
   const act = (fn: () => unknown) => (e: ReactMouseEvent) => { if (e.detail <= 1) void fn(); };
   const busy = !!editing;
   const next = nextPending();
+  const mark = n.folder ? 'Mark reviewed' : 'Accept'; // a folder's Accept stores a snapshot; it has no Reject
   return (
     <div className="flex min-h-12 shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 border-t px-4">
       <span className="flex min-w-0 flex-[1_1_auto] cursor-default items-center gap-1.5 overflow-hidden text-xs whitespace-nowrap text-muted-foreground select-none">
         <StateIcons file={f} names={n} className="size-3.5" />{s.label}
       </span>
       {f.state === 'working' ? <Button variant="ghost" size="default" disabled={busy} onClick={act(() => post('release'))}>Unlock</Button>
-        : f.state === 'accepted' ? <Button variant="ghost" size="default" disabled={busy} onClick={act(() => post('unaccept'))}>Undo accept</Button>
+        : f.state === 'accepted' ? (f.unreviewed ? <Button variant="ghost" size="default" disabled={busy} onClick={act(() => accept(false))}>{mark}</Button>
+          : <Button variant="ghost" size="default" disabled={busy} onClick={act(() => post('unaccept'))}>{n.folder ? 'Mark unreviewed' : 'Undo accept'}</Button>)
         : f.state === 'rejected' ? <Button variant="ghost" size="default" onClick={act(restore)}>Restore</Button>
         : f.state === 'skipped' ? (
           <>
             <Button variant="ghost" size="default" disabled={busy} onClick={act(() => skip(false))}>Unskip</Button>
-            <Button variant="ghost" size="default" disabled={busy} onClick={act(() => accept(false))}>Accept</Button>
+            <Button variant="ghost" size="default" disabled={busy} onClick={act(() => accept(false))}>{mark}</Button>
           </>
         ) : (
           <>
@@ -356,10 +359,10 @@ function DocFooter() {
                 <TooltipContent>{current.revertable ? 'Back to the text before your first edit' : 'The file changed since your edit'}</TooltipContent>
               </Tooltip>
             )}
-            <RejectButton path={current.path} untracked={f.untracked} disabled={busy} />
+            {!n.folder && <RejectButton path={current.path} untracked={f.untracked} disabled={busy} />}
             <Button variant="ghost" size="default" disabled={busy} onClick={act(() => skip(true))}>Skip</Button>
-            <Button variant="ghost" size="default" disabled={busy} onClick={act(() => accept(false))}>Accept</Button>
-            {next && <Button size="default" disabled={busy} onClick={act(() => accept(true))}>Accept and next</Button>}
+            <Button variant="ghost" size="default" disabled={busy} onClick={act(() => accept(false))}>{mark}</Button>
+            {next && <Button size="default" disabled={busy} onClick={act(() => accept(true))}>{`${mark} and next`}</Button>}
           </>
         )}
     </div>

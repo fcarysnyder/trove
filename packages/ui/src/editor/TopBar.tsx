@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { PROGRESS, stateInfo } from '@/lib/status';
+import { plain, PROGRESS, stateInfo } from '@/lib/status';
 import { dirOf, folderText, nameOf, plural } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { dismissQuestion, reveal, step, togglePanel, visible } from './actions';
@@ -67,9 +67,10 @@ export function TopBar() {
   );
 }
 
-/** One segment per state over every changed file, whatever the tree shows; the tooltip lists every state. */
+/** One segment per state over every changed file, whatever the tree shows; the tooltip lists every state. A folder's plain files are not in it. */
 function Progress() {
-  const files = useStore((s) => s.files);
+  const all = useStore((s) => s.files);
+  const files = all.filter((f) => !plain(f));
   const n = useNames();
   const [hot, setHot] = useState<string | null>(null);
   const c = countStates(files);
@@ -108,7 +109,7 @@ function Progress() {
           </div>
         </TooltipContent>
       </Tooltip>
-      <span className="max-[700px]:hidden">{c.accepted} accepted</span>
+      <span className="max-[700px]:hidden">{c.accepted} {stateInfo('accepted', n).words}</span>
     </span>
   );
 }
@@ -171,7 +172,7 @@ function Connect() {
   const start = (tool: AgentTool) => {
     setOpen(false);
     setStarting(tool);
-    bridge!.open({ path: source.root, agent: tool }).catch((e: unknown) => { setStarting(null); toast(e instanceof Error ? e.message : String(e)); });
+    bridge!.open({ path: source.root, agent: tool, kind: source.kind }).catch((e: unknown) => { setStarting(null); toast(e instanceof Error ? e.message : String(e)); });
   };
   const copy = (text: string) => navigator.clipboard.writeText(text).then(() => toast('Copied'), () => toast('Copy failed'));
   const rows = [

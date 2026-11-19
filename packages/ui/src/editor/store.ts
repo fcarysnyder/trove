@@ -101,4 +101,4 @@ export const useStore = <T,>(pick: (s: State) => T): T => useSyncExternalStore(s
 
 /** The attached agent's label; a server without agentInfo says only claude or other, and one without /api/source was Claude's. */
 const labelOf = (s: SourceInfo | null) => s?.agentInfo?.label ?? AGENT_LABELS[s?.agent ?? 'claude'];
-export const useNames = (): Names => names(useStore((s) => labelOf(s.source)));
+export const useNames = (): Names => names(useStore((s) => labelOf(s.source)), useStore((s) => s.source?.kind === 'folder'));

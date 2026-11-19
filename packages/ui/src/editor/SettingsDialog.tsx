@@ -106,7 +106,13 @@ function Body() {
         </Row>
       </>
     ),
-    Source: (
+    // A folder has no git scope or base: where it is and where its review state lives.
+    Source: source?.kind === 'folder' ? (
+      <>
+        <Fact label="Folder" value={source.root} />
+        <Fact label="Review state" value={source.stateDir} />
+      </>
+    ) : (
       <>
         <Row label="Scope" htmlFor="set-scope">
           <Select value={draft.scope} onValueChange={(v) => edit({ scope: v as GitScope })}>

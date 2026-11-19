@@ -32,7 +32,7 @@ export function onKey(e: KeyboardEvent) {
   if (e.key === '/') { e.preventDefault(); return focusSearch(); }
   const f = entry();
   if (e.key.toLowerCase() === 's' && (f?.state === 'queue' || f?.state === 'skipped')) void skip(f.state === 'queue');
-  if (e.key.toLowerCase() === 'x' && f?.state === 'queue') { e.preventDefault(); set({ rejecting: true }); }
+  if (e.key.toLowerCase() === 'x' && f?.state === 'queue' && s.source?.kind !== 'folder') { e.preventDefault(); set({ rejecting: true }); } // a folder has no Reject
   if (e.key === 'ArrowRight' || e.key === 'j') step(1);
   if (e.key === 'ArrowLeft' || e.key === 'k') step(-1);
 }

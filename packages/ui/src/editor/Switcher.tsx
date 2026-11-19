@@ -3,7 +3,7 @@
 // Branch (switch here, or open the worktree a branch is checked out in), each with its own filter. A
 // server serves one root, so another worktree opens elsewhere.
 import { recentName, type BranchInfo } from '@trove/core/types';
-import { BookMarked, Check, ChevronDown, Copy, FolderTree, Search } from 'lucide-react';
+import { BookMarked, Check, ChevronDown, Copy, FolderOpen, FolderTree, Search } from 'lucide-react';
 import { Tabs } from 'radix-ui';
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { toast } from 'sonner';
@@ -33,6 +33,18 @@ export function Switcher() {
     void loadGit();
     void loadRecents();
   }, [open]);
+  // A folder has no repository, worktree or branch to switch: the segment names it and where it is.
+  if (source?.kind === 'folder') {
+    return (
+      <div title={source.root} className="flex h-full w-72 min-w-0 shrink items-center gap-3 border-r px-4 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground">
+        <FolderOpen />
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate text-[13px] leading-4 font-semibold text-foreground">{source.name}</span>
+          <span className="truncate font-mono text-[11px] leading-4 text-muted-foreground">{tilde(source.root.slice(0, source.root.lastIndexOf('/')) || '/')}</span>
+        </span>
+      </div>
+    );
+  }
   if (!git) return <strong className="self-center truncate px-4 font-semibold text-foreground" title={source?.root}>{source?.name ?? 'Trove'}</strong>;
   const multi = git.worktrees.length > 1;
   const value = tab === 'worktree' && !multi ? 'branch' : tab;

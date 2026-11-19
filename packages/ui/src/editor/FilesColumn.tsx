@@ -13,7 +13,7 @@ import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { countKeys, FILTERS, isPendingOnly, markRange, matches, PENDING_OFF, toggleOff, type FilterKey } from '@/lib/filter';
-import { stateInfo } from '@/lib/status';
+import { plain, stateInfo } from '@/lib/status';
 import { dirOf, nameOf } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { acceptAll, createPr, open, prReady, reveal, setFilters, showInFolder, shown, togglePanel, visible } from './actions';
@@ -58,8 +58,8 @@ export function FilesColumn() {
     <section aria-label="Files" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-1 border-b pr-2 pl-4">
         <span className="flex-1 font-semibold text-foreground">Files</span>
-        {pending > 0 && <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void acceptAll()}>Accept all</Button>}
-        {prReady(files) && (
+        {pending > 0 && <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void acceptAll()}>{n.folder ? 'Mark all reviewed' : 'Accept all'}</Button>}
+        {!n.folder && prReady(files) && (
           <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={!source?.agentInfo?.connected} onClick={() => void createPr(n.agent)}>Create PR</Button>
         )}
         <Filters off={off} />
@@ -77,7 +77,7 @@ export function FilesColumn() {
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <nav aria-label="Files" className="p-2">
-          {loaded && !files.length && <p className="px-1 py-1.5 text-[13px] text-muted-foreground">{nothingText(source)}</p>}
+          {loaded && !files.length && <p className="px-1 py-1.5 text-[13px] text-muted-foreground">{n.folder ? 'No documents' : nothingText(source)}</p>}
           {none ? (
             <p className="flex items-center gap-1 px-1 py-1.5 text-[13px] text-muted-foreground">
               No files match
@@ -105,7 +105,7 @@ function Filters({ off }: { off: FilterKey[] }) {
   const n = useNames();
   const files = useStore((s) => s.files);
   const query = useStore((s) => s.query);
-  const counts = countKeys(files.filter((f) => matches(f.path, query)));
+  const counts = countKeys(files.filter((f) => matches(f.path, query) && !plain(f))); // a folder's plain files are not review states
   const label = (k: FilterKey) => (k === 'committed' ? 'Committed' : stateInfo(k, n).label);
   const row = (k: FilterKey) => (
     <Label key={k} className="rounded-sm px-2 py-1.5 font-normal text-body hover:bg-accent hover:text-foreground">
@@ -181,8 +181,9 @@ function Folders({ list, query }: { list: FileRow[]; query: string }) {
               <button data-tree-row title={f.path} aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
                 className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-card hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
                   f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
-                <StateIcons file={f} names={n} />
-                <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
+                {/* A folder's plain file shows as a plain file: no state icon, not muted as done. */}
+                <StateIcons file={f} names={n} className={plain(f) ? 'invisible' : undefined} />
+                <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && !plain(f) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
                 {f.drafts > 0 && <Count n={f.drafts} />}
               </button>
             </ContextMenuTrigger>

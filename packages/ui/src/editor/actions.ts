@@ -131,7 +131,8 @@ export async function acceptAll() {
   if (!paths.length) return;
   try {
     const { accepted } = await api<{ accepted: number }>('accept-all', { paths });
-    toast(`Accepted ${accepted} ${accepted === 1 ? 'file' : 'files'}`);
+    const files = `${accepted} ${accepted === 1 ? 'file' : 'files'}`;
+    toast(get().source?.kind === 'folder' ? `Marked ${files} reviewed` : `Accepted ${files}`);
   } catch (e) {
     toast(errText(e));
   }
@@ -314,13 +315,13 @@ export async function loadRecents() {
   const probes = await Promise.all(list.map((r) => bridge.probe(r.path).catch(() => null)));
   set({ recents: list.map((r, k) => {
     const git = probes[k]?.git;
-    return { ...r, changes: git ? git.worktrees.find((w) => w.current)?.changes ?? 0 : null };
+    return { ...r, changes: git ? git.worktrees.find((w) => w.current)?.changes ?? 0 : r.kind === 'folder' && probes[k] ? 0 : null };
   }) });
 }
 
-/** A recent repository in its own window, with the scope it was last opened with. */
+/** A recent repository or folder in its own window, with the scope it was last opened with. */
 export async function openRecent(r: Recent) {
-  await window.trove?.open({ path: r.path, scope: r.scope, base: r.base }).catch((e) => toast(errText(e)));
+  await window.trove?.open({ path: r.path, scope: r.scope, base: r.base, kind: r.kind }).catch((e) => toast(errText(e)));
 }
 
 /** Another worktree is another root: a new window on the desktop, else a dialog with the command that serves it. */
@@ -368,6 +369,9 @@ export function flash(el: Element | null | undefined, block: ScrollLogicalPositi
   el.classList.add('flash');
 }
 
+/** The file the address asks for: `?file=` (a window or the CLI opening a file) or `#file=` (the desktop opening one in a window already open). */
+const asked = () => new URLSearchParams(location.hash.slice(1)).get('file') ?? new URLSearchParams(location.search).get('file');
+
 let started = false;
 export async function init() {
   if (started) return; // StrictMode runs effects twice in development
@@ -382,8 +386,13 @@ export async function init() {
   if (settings && !remembered) set({ showNew: settings.showNew });
   await Promise.all([refresh(), loadGit()]);
   const waiting = (f: FileRow) => f.state === 'queue' || f.state === 'working';
-  const first = visible().find(waiting) ?? get().files.find(waiting); // the remembered filters may hide every waiting file
-  if (first) await open(first.path);
+  const first = asked() ?? (visible().find(waiting) ?? get().files.find(waiting))?.path; // the remembered filters may hide every waiting file
+  if (first) await reveal(first);
+  addEventListener('hashchange', () => {
+    const path = asked();
+    history.replaceState(null, '', location.pathname + location.search); // so asking for the same file again is a change
+    if (path) void reveal(path);
+  });
   if (!get().hidden.changes) void loadActivity();
   setInterval(() => { void refresh(); void loadGit(); void loadSource(); if (!get().hidden.changes) void loadActivity(); }, 2000);
 }
