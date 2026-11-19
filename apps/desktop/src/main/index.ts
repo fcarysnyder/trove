@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItemConstructorOptions, type OpenDialogOptions } from 'electron';
 import { execFile } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { attachCommand, call, DEFAULT_DOC_TYPES, inGit, kindOf, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type SourceKind, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
+import { attachCommand, call, DEFAULT_DOC_TYPES, kindOf, probeGit, recentName, serve, type AgentTool, type App, type GitScope, type SourceKind, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
 import type { IPty } from 'node-pty';
 import { checkForUpdate, installUpdate, updateState, watchForUpdates } from './update';
 
@@ -35,9 +35,11 @@ function readRecents(): Recent[] {
   }
 }
 
+/** Pinned recents always stay; the rest are capped. */
 function writeRecents(list: Recent[]): void {
   mkdirSync(app.getPath('userData'), { recursive: true });
-  writeFileSync(recentsFile(), JSON.stringify(list.slice(0, MAX_RECENTS), null, 2));
+  let unpinned = 0;
+  writeFileSync(recentsFile(), JSON.stringify(list.filter((r) => r.pinned || unpinned++ < MAX_RECENTS), null, 2));
   buildMenu();
 }
 
@@ -56,6 +58,9 @@ function probe(path: string) {
   return isDir(abs) ? { path: abs, git: probeGit(abs) } : null;
 }
 
+/** A recent as it was last opened: its file in its folder, else the source with its kind and scope. */
+const openRecent = (r: Recent) => openSource(r.file && existsSync(r.file) ? { path: r.file } : { path: r.path, scope: r.scope, base: r.base, kind: r.kind });
+
 /** Opens with the kind and scope the source was last opened with, else the source's settings. */
 function reopen(path: string): Promise<void> {
   const abs = resolve(path);
@@ -68,10 +73,13 @@ const DOC_EXTS = DEFAULT_DOC_TYPES.flatMap((t) => t.extensions);
 const relPath = (root: string, file: string) => relative(root, file).split(sep).join('/');
 type Target = { dir: string; file: string | null; kind: SourceKind };
 
-/** What a request opens: a file, its folder as a folder with the file selected; a folder, its repository when it is in one, unless `kind` says folder. */
+/** A repository's top-level folder (a worktree's included); a folder inside one is not. */
+const isTop = (dir: string) => probeGit(dir)?.worktree.path === realpathSync(dir);
+
+/** What a request opens: a file, its folder as a folder with the file selected; a folder, as `kind` says, else as a repository when it is one's top level and as a folder otherwise. */
 function targetOf(req: OpenRequest): Target {
   const abs = resolve(req.path);
-  if (isDir(abs)) return { dir: abs, file: null, kind: req.kind ?? (inGit(abs) ? 'git' : 'folder') };
+  if (isDir(abs)) return { dir: abs, file: null, kind: req.kind ?? (isTop(abs) ? 'git' : 'folder') };
   if (!existsSync(abs)) throw new Error(`Nothing at ${abs}`);
   if (!DOC_EXTS.includes(extname(abs).toLowerCase())) throw new Error(`Trove opens ${DOC_EXTS.join(', ')} files and folders`);
   const file = realpathSync(abs);
@@ -134,6 +142,8 @@ async function openNow(req: OpenRequest, t: Target): Promise<void> {
   });
   const info = core.info();
   const last = readRecents().find((r) => r.path === info.root);
+  // The agent asked for, else the one this source was last opened with.
+  const agent = req.agent !== undefined ? req.agent : (last?.agent ?? null);
   writeRecents([
     {
       path: info.root,
@@ -144,7 +154,9 @@ async function openNow(req: OpenRequest, t: Target): Promise<void> {
       openedAt: new Date().toISOString(),
       ...(info.kind === 'git' ? { scope: info.scope } : {}),
       ...(req.base !== undefined ? { base: req.base } : {}),
-      agent: req.agent !== undefined ? req.agent : (last?.agent ?? null),
+      agent,
+      ...(t.file ? { file: t.file } : {}),
+      ...(last?.pinned ? { pinned: true } : {}),
     },
     ...readRecents().filter((r) => r.path !== info.root),
   ]);
@@ -170,8 +182,8 @@ async function openNow(req: OpenRequest, t: Target): Promise<void> {
   // agent printed before the page listened), then the agent. A Terminal app that fails still gets the
   // window, whose Connect popover has the command to paste; the start page shows why.
   let failed: unknown = null;
-  if (req.agent) await launchAgent(req.agent, source).catch((e: unknown) => { failed = e; });
-  const query = new URLSearchParams({ ...(req.agent ? { waiting: req.agent } : {}), ...(t.file ? { file: relPath(info.root, t.file) } : {}) }).toString();
+  if (agent) await launchAgent(agent, source).catch((e: unknown) => { failed = e; });
+  const query = new URLSearchParams({ ...(agent ? { waiting: agent } : {}), ...(t.file ? { file: relPath(info.root, t.file) } : {}) }).toString();
   await win.loadURL(query ? `${url}/?${query}` : url);
   if (failed) throw failed;
   if (onlyStart) startWin?.close();
@@ -438,22 +450,16 @@ function openStart(): void {
   void load(win);
 }
 
-async function pickFolder(parent?: BrowserWindow | null) {
-  const opts = { properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'> };
-  const res = parent ? await dialog.showOpenDialog(parent, opts) : await dialog.showOpenDialog(opts);
-  const path = res.canceled ? undefined : res.filePaths[0];
-  return path ? probe(path) : null;
-}
-
-/** A document of the doc types, or with `folders` a folder too (File > Open…). */
-async function pickPath(parent: BrowserWindow | null, folders = false): Promise<string | null> {
-  const opts = {
-    properties: (folders ? ['openFile', 'openDirectory'] : ['openFile']) as Array<'openFile' | 'openDirectory'>,
-    filters: [{ name: 'Documents', extensions: DOC_EXTS.map((e) => e.slice(1)) }],
-  };
+/** The native open panel, as a sheet on `parent` when there is one. null when cancelled. */
+async function pick(parent: BrowserWindow | null, properties: OpenDialogOptions['properties'], filters?: OpenDialogOptions['filters']): Promise<string | null> {
+  const opts = { properties, filters };
   const res = parent ? await dialog.showOpenDialog(parent, opts) : await dialog.showOpenDialog(opts);
   return res.canceled ? null : res.filePaths[0] ?? null;
 }
+const FOLDER: OpenDialogOptions['properties'] = ['openDirectory', 'createDirectory'];
+const DOCS = [{ name: 'Documents', extensions: DOC_EXTS.map((e) => e.slice(1)) }];
+const pickFolder = (parent: BrowserWindow | null) => pick(parent, FOLDER).then((p) => (p ? probe(p) : null));
+const pickFile = (parent: BrowserWindow | null) => pick(parent, ['openFile'], DOCS);
 
 /** The app menu's update item: what the updater is doing, or a check by hand (packaged apps only). */
 function updateItem(): MenuItemConstructorOptions[] {
@@ -473,10 +479,19 @@ function updateItem(): MenuItemConstructorOptions[] {
 function buildMenu(): void {
   const recents = readRecents();
   const isMac = process.platform === 'darwin';
+  // Where agents start: Trove's own terminal or a terminal app.
+  const current = terminal();
+  const terminalItem: MenuItemConstructorOptions = {
+    label: 'Start Agents In',
+    submenu: terminals().map((t) => ({
+      label: t === 'Trove' ? 'Trove' : t === 'iTerm' ? 'iTerm2' : t, type: 'radio' as const, checked: t === current,
+      click: () => { writeAppSettings({ terminal: t }); buildMenu(); },
+    })),
+  };
   const appMenu: MenuItemConstructorOptions = {
     label: app.name,
     submenu: [
-      { role: 'about' }, ...updateItem(), { type: 'separator' }, { role: 'services' }, { type: 'separator' },
+      { role: 'about' }, ...updateItem(), { type: 'separator' }, terminalItem, { type: 'separator' }, { role: 'services' }, { type: 'separator' },
       { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' },
     ],
   };
@@ -485,23 +500,21 @@ function buildMenu(): void {
     {
       label: 'File',
       submenu: [
-        {
-          label: 'Open…',
-          accelerator: 'CmdOrCtrl+O',
-          click: () => void pickPath(BrowserWindow.getFocusedWindow(), true).then((p) => p && openPath(p)),
-        },
+        { label: 'Open Folder…', accelerator: 'CmdOrCtrl+O', click: () => void pick(BrowserWindow.getFocusedWindow(), FOLDER).then((p) => p && openPath(p)) },
+        { label: 'Open File…', accelerator: 'CmdOrCtrl+Shift+O', click: () => void pickFile(BrowserWindow.getFocusedWindow()).then((p) => p && openPath(p)) },
         {
           label: 'Open Recent',
           submenu: recents.length
             ? [
-                ...recents.map((r) => ({ label: recentName(r), toolTip: r.path, click: () => openOrReport(() => reopen(r.path)) })),
+                ...recents.map((r) => ({ label: r.file ? basename(r.file) : recentName(r), toolTip: r.file ?? r.path, click: () => openOrReport(() => openRecent(r)) })),
                 { type: 'separator' as const },
-                { label: 'Clear Menu', click: () => writeRecents([]) },
+                { label: 'Clear Menu', click: () => writeRecents(recents.filter((r) => r.pinned)) },
               ]
             : [{ label: 'No Recent Repositories', enabled: false }],
         },
         { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => openStart() },
         { type: 'separator' },
+        ...(isMac ? [] : [terminalItem, { type: 'separator' as const }]),
         { role: 'close' },
       ],
     },
@@ -522,7 +535,7 @@ const str = (v: unknown): string => {
 const SCOPES: GitScope[] = ['uncommitted', 'branch'];
 
 ipcMain.handle('trove:pickFolder', (e) => pickFolder(BrowserWindow.fromWebContents(e.sender)));
-ipcMain.handle('trove:pickFile', (e) => pickPath(BrowserWindow.fromWebContents(e.sender)));
+ipcMain.handle('trove:pickFile', (e) => pickFile(BrowserWindow.fromWebContents(e.sender)));
 ipcMain.handle('trove:probe', (_e, path: unknown) => probe(str(path)));
 ipcMain.handle('trove:open', (_e, req: unknown) => {
   const r = (req ?? {}) as Partial<Record<keyof OpenRequest, unknown>>;
@@ -539,8 +552,13 @@ ipcMain.handle('trove:terminals', () => ({ installed: terminals(), current: term
 ipcMain.handle('trove:setTerminal', (_e, t: unknown) => {
   if (!terminals().includes(t as TerminalApp)) throw new Error(`${String(t)} is not installed`);
   writeAppSettings({ terminal: t as TerminalApp });
+  buildMenu();
 });
 ipcMain.handle('trove:recents', () => readRecents());
+ipcMain.handle('trove:pin', (_e, path: unknown, pinned: unknown) => {
+  const p = str(path);
+  writeRecents(readRecents().map((r) => (r.path === p ? { ...r, pinned: pinned === true || undefined } : r)));
+});
 ipcMain.handle('trove:forget', (_e, path: unknown) => {
   const p = str(path);
   writeRecents(readRecents().filter((r) => r.path !== p));

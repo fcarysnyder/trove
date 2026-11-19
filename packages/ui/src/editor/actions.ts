@@ -320,9 +320,9 @@ export async function loadRecents() {
   }) });
 }
 
-/** A recent repository or folder in its own window, with the scope it was last opened with. */
+/** A recent in its own window as it was last opened: its file selected in its folder, else with its kind and scope. */
 export async function openRecent(r: Recent) {
-  await window.trove?.open({ path: r.path, scope: r.scope, base: r.base, kind: r.kind }).catch((e) => toast(errText(e)));
+  await window.trove?.open(r.file ? { path: r.file } : { path: r.path, scope: r.scope, base: r.base, kind: r.kind }).catch((e) => toast(errText(e)));
 }
 
 /** Another worktree is another root: a new window on the desktop, else a dialog with the command that serves it. */
