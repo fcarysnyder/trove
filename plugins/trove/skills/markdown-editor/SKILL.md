@@ -113,6 +113,21 @@ modal.
    run `... ask "<the question, one line>" --port <port>` ("Claude has a question"). Both count in
    the tab title. Once they have read or answered it, run `... ask --clear --port <port>`.
 
+## HTML comments
+
+On an HTML file the page has a toolbar with three tools: Select text (T, the comments above),
+Pointer (V: click an element, shift-click to add or remove more) and Loop (L: draw around part of
+the page). A Pointer or Loop comment's `anchor` also carries:
+
+- `targets`: the elements, in pick order, each `{selector, tag, id?, classes?, testIds?, text?,
+  html}`; several targets are one request about all of them.
+- `shape` (Loop only): `{kind: 'loop', points}`, the outline drawn, in the page's coordinates.
+
+For these, `quote` names the targets, `raw` is the first target's `html`, `prefix` and `suffix`
+are empty. **Before changing any HTML file, follow the `html-prototype` skill**: read how the file
+is built and make the change in its own classes, tokens and patterns; it also says how to find
+each target in source.
+
 ## Create a pull request
 
 Once nothing waits for review, the Files header shows `Create PR`. It sends one line on the events
