@@ -11,11 +11,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { status } from '@/lib/status';
 import { nameOf, plural, tilde } from '@/lib/text';
 import { cn } from '@/lib/utils';
+import { AnnotateBar, AnnotateLayer, commitMark } from './Annotate';
 import { accept, entry, focusComment, loadRecents, nextPending, openRecent, openWorktree, post, reject, restore, revertAll, setShowNew, skip, togglePanel } from './actions';
 import { Count, IconButton, nothingText, PathLabel } from './bits';
 import { StateIcons } from './StateIcon';
 import { get, set, useNames, useStore } from './store';
 import { editBlock, onSelect } from './doc/commands';
+import { elementHit, wireFrame } from './doc/annotate';
 import { blockEl, bodyOf } from './doc/dom';
 import { InlineEditor } from './doc/Editors';
 import { applyLayers, paint, placeBars, textOf, toRange, type Marks } from './doc/layers';
@@ -56,7 +58,10 @@ export function DocColumn() {
           </IconButton>
         )}
       </div>
-      <DocBody />
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <DocBody />
+        <AnnotateBar />
+      </div>
       <DocFooter />
     </section>
   );
@@ -154,14 +159,15 @@ function DocView() {
     if (current.kind === 'html') {
       // ponytail: the whole body is one block, so the heading path does not narrow the search; prefix and suffix break ties.
       const text = frameLoads ? bodyOf(null)?.textContent ?? null : null;
-      found = current.drafts.map((c) => (text == null ? null : findAnchor([{ text, path: c.anchor.path }], c.anchor)));
+      found = current.drafts.map((c) => (text == null ? null : c.anchor.targets?.length ? elementHit(c.anchor) : findAnchor([{ text, path: c.anchor.path }], c.anchor)));
     } else {
       const items = model.parts.map((b, i) => ({ text: bodyOf(i)?.textContent ?? '', path: b.path }));
       found = current.drafts.map((c) => findAnchor(items, c.anchor));
     }
     if (JSON.stringify(found) !== JSON.stringify(get().hits)) set({ hits: found });
     const view = (current.kind === 'html' ? document.querySelector<HTMLIFrameElement>('iframe.doc-frame')?.contentWindow : window) as (Window & typeof globalThis) | null | undefined;
-    const ranges = found.flatMap((h) => (h ? [toRange(bodyOf(h.i), h.start, h.end)] : [])).filter((r): r is Range => !!r);
+    // Element comments have badges, not a text range.
+    const ranges = found.flatMap((h, k) => (h && !current.drafts[k]?.anchor.targets?.length ? [toRange(bodyOf(h.i), h.start, h.end)] : [])).filter((r): r is Range => !!r);
     if (view?.CSS?.highlights) view.CSS.highlights.set('comment', new view.Highlight(...ranges));
   }, [model, current.drafts, frameLoads, editing]);
   // A layout cleanup: the view is keyed by file, and a passive one would run after the next file's lookup and wipe it.
@@ -183,7 +189,7 @@ function DocView() {
     const t = e.target as Element;
     if (!t.ownerDocument.getSelection()?.isCollapsed || t.closest('button')) return;
     const inside = (r: DOMRect) => e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-    const i = get().hits.findIndex((h) => h && [...(toRange(bodyOf(h.i), h.start, h.end)?.getClientRects() ?? [])].some(inside));
+    const i = get().hits.findIndex((h, k) => h && !get().current?.drafts[k]?.anchor.targets?.length && [...(toRange(bodyOf(h.i), h.start, h.end)?.getClientRects() ?? [])].some(inside));
     if (i >= 0) focusComment(i);
   };
 
@@ -223,7 +229,7 @@ function DocView() {
 
   if (current.kind === 'html') {
     return (
-      <>
+      <div className="relative">
         <iframe
           key={current.hash}
           className="doc-frame mx-12 block min-h-[60vh] w-[calc(100%-96px)] rounded-lg border-0"
@@ -241,12 +247,14 @@ function DocView() {
             doc.addEventListener('selectionchange', () => { if (get().pick && doc.getSelection()?.isCollapsed) set({ pick: null }); });
             doc.addEventListener('keydown', onKey);
             doc.addEventListener('dblclick', () => editBlock(null));
+            wireFrame(doc, commitMark);
             e.currentTarget.style.height = `${doc.documentElement.scrollHeight}px`;
             setFrameLoads((k) => k + 1);
           }}
         />
+        <AnnotateLayer loads={frameLoads} />
         {card && <DiffCard card={card} />}
-      </>
+      </div>
     );
   }
 

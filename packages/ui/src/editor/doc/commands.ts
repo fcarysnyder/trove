@@ -6,6 +6,7 @@ import { get, set } from '../store';
 import { toRange } from './layers';
 import { docModel } from './model';
 import { blockEl, bodyOf, frameEl, headingPath, nodeEl } from './dom';
+import { showTargets } from './annotate';
 
 /** Tables and front matter edit in the modal; HTML files whole in the modal; the rest inline. */
 const MODAL: Record<string, string> = { table: 'Edit table', frontmatter: 'Edit front matter' };
@@ -78,6 +79,7 @@ export async function showPassage(path: string, n: number) {
     await open(path);
     await new Promise((r) => requestAnimationFrame(r));
   }
+  if (get().current?.drafts[n]?.anchor.targets?.length) return showTargets(n);
   const hit = get().hits[n];
   const range = hit && toRange(bodyOf(hit.i), hit.start, hit.end);
   if (!range) return;

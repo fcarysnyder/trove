@@ -4,6 +4,7 @@
 import { accept, entry, focusSearch, skip, step, togglePanel } from './actions';
 import { get, set } from './store';
 import { pickAction, toggleNew } from './doc/commands';
+import { canMark, escapeTool, focusCard, getAnn, setTool } from './doc/annotate';
 
 const OWNS_KEYS = 'textarea, input, select, [contenteditable=true], [role=menu], [role=dialog], [role=separator], [role=group], [role=radiogroup], [role=listbox]';
 
@@ -15,6 +16,8 @@ export function onKey(e: KeyboardEvent) {
   const doc = t.ownerDocument ?? document;
   // Enter accepts and moves on only from the page itself or a tree row, never from another control.
   const onPage = t === doc.body || t === doc.documentElement || !!t.closest?.('[data-tree-row]');
+  // With an element mark pending, Enter goes to its note instead.
+  if (e.key === 'Enter' && getAnn().mark) { e.preventDefault(); focusCard(); return; }
   if (e.key === 'Enter' && entry()?.state === 'queue' && !s.editing && onPage) {
     e.preventDefault();
     void accept(true);
@@ -25,6 +28,10 @@ export function onKey(e: KeyboardEvent) {
     if (act) { e.preventDefault(); return pickAction(act); }
     if (e.key === 'Escape') { s.pick.range.startContainer.ownerDocument?.getSelection()?.removeAllRanges(); return set({ pick: null }); }
   }
+  // HTML: V points at elements, L draws a loop, T (or Esc) is back to selecting text.
+  const tool = ({ v: 'pointer', l: 'loop', t: 'text' } as const)[e.key.toLowerCase() as 'v' | 'l' | 't'];
+  if (tool && canMark()) { e.preventDefault(); return setTool(tool); }
+  if (e.key === 'Escape' && (getAnn().mark || getAnn().tool !== 'text')) return escapeTool();
   if (e.key === '[') togglePanel('files');
   else if (e.key === ']') togglePanel('changes');
   else if (e.key.toLowerCase() === 'n') toggleNew();
