@@ -15,7 +15,8 @@ export function onKey(e: KeyboardEvent) {
   const doc = t.ownerDocument ?? document;
   // Enter accepts and moves on only from the page itself or a tree row, never from another control.
   const onPage = t === doc.body || t === doc.documentElement || !!t.closest?.('[data-tree-row]');
-  if (e.key === 'Enter' && entry()?.state === 'queue' && !s.editing && onPage) {
+  const review = s.source?.kind !== 'folder'; // a folder is edited in place: no accept, skip or reject
+  if (e.key === 'Enter' && review && entry()?.state === 'queue' && !s.editing && onPage) {
     e.preventDefault();
     void accept(true);
     return;
@@ -31,8 +32,8 @@ export function onKey(e: KeyboardEvent) {
   if (s.editing) return; // stepping away would drop the open edit
   if (e.key === '/') { e.preventDefault(); return focusSearch(); }
   const f = entry();
-  if (e.key.toLowerCase() === 's' && (f?.state === 'queue' || f?.state === 'skipped')) void skip(f.state === 'queue');
-  if (e.key.toLowerCase() === 'x' && f?.state === 'queue' && s.source?.kind !== 'folder') { e.preventDefault(); set({ rejecting: true }); } // a folder has no Reject
+  if (e.key.toLowerCase() === 's' && review && (f?.state === 'queue' || f?.state === 'skipped')) void skip(f.state === 'queue');
+  if (e.key.toLowerCase() === 'x' && review && f?.state === 'queue') { e.preventDefault(); set({ rejecting: true }); }
   if (e.key === 'ArrowRight' || e.key === 'j') step(1);
   if (e.key === 'ArrowLeft' || e.key === 'k') step(-1);
 }

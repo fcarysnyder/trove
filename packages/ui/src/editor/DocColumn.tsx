@@ -8,12 +8,12 @@ import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { status } from '@/lib/status';
+import { stateInfo, status } from '@/lib/status';
 import { nameOf, plural, tilde } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { accept, entry, focusComment, loadRecents, nextPending, openRecent, openWorktree, post, reject, restore, revertAll, setShowNew, skip, togglePanel } from './actions';
 import { Count, IconButton, nothingText, PathLabel } from './bits';
-import { StateIcons } from './StateIcon';
+import { Icon, StateIcons } from './StateIcon';
 import { get, set, useNames, useStore } from './store';
 import { editBlock, onSelect } from './doc/commands';
 import { blockEl, bodyOf } from './doc/dom';
@@ -30,8 +30,10 @@ export function DocColumn() {
   const question = useStore((s) => s.question);
   const n = useNames();
   const model = current && docModel(current);
+  // A folder has nothing to mark new against but the text before the agent's last update.
+  const canNew = !!model?.canShowNew && (!n.folder || !!current?.since);
   const own = current ? current.drafts.length + current.edits.length : 0;
-  const newTip = model?.canShowNew ? 'Show new (N)' : current?.kind === 'markdown' ? 'No earlier version to compare with' : 'Markdown files only';
+  const newTip = canNew ? 'Show new (N)' : current?.kind === 'markdown' ? 'No earlier version to compare with' : 'Markdown files only';
   return (
     <section aria-label="File" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">
@@ -42,7 +44,7 @@ export function DocColumn() {
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex items-center gap-2">
-              <Switch id="show-new" size="default" checked={showNew} disabled={!model?.canShowNew || !!editing} onCheckedChange={setShowNew} />
+              <Switch id="show-new" size="default" checked={showNew} disabled={!canNew || !!editing} onCheckedChange={setShowNew} />
               <Label htmlFor="show-new" className="text-xs font-normal whitespace-nowrap text-muted-foreground peer-disabled:opacity-40">Show new</Label>
             </span>
           </TooltipTrigger>
@@ -131,7 +133,7 @@ function DocView() {
   const marks = useRef<Marks | null>(null);
   const [frameLoads, setFrameLoads] = useState(0); // the HTML frame's text is measurable once it has loaded
   const [card, setCard] = useState<Card | null>(null);
-  const layered = showNew && !editing && current.kind === 'markdown';
+  const layered = showNew && !editing && current.kind === 'markdown' && (!n.folder || !!current.since);
 
   // Show new: tints, badges and bars, measured on the rendered blocks.
   useLayoutEffect(() => {
@@ -326,43 +328,56 @@ function DocFooter() {
   const n = useNames();
   useStore((s) => s.files);
   const f = entry();
-  if (!current || !f) return <div className="min-h-12 shrink-0 border-t" />;
+  if (!current || !f) return n.folder ? null : <div className="min-h-12 shrink-0 border-t" />;
   const s = status(f, n);
   // The second click of a double-click lands on the next file's buttons; ignore it.
   const act = (fn: () => unknown) => (e: ReactMouseEvent) => { if (e.detail <= 1) void fn(); };
   const busy = !!editing;
   const next = nextPending();
-  const mark = n.folder ? 'Mark reviewed' : 'Accept'; // a folder's Accept stores a snapshot; it has no Reject
+  const row = 'flex min-h-12 shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 border-t px-4';
+  const label = 'flex min-w-0 flex-[1_1_auto] cursor-default items-center gap-1.5 overflow-hidden text-xs whitespace-nowrap text-muted-foreground select-none';
+  const unlock = <Button variant="ghost" size="default" disabled={busy} onClick={act(() => post('release'))}>Unlock</Button>;
+  const revert = f.edited && (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={current.revertable ? -1 : 0} className="inline-flex">
+          <Button variant="ghost" size="default" disabled={busy || !current.revertable} onClick={act(revertAll)}><Undo2 />Revert all edits</Button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{current.revertable ? 'Back to the text before your first edit' : 'The file changed since your edit'}</TooltipContent>
+    </Tooltip>
+  );
+  // A folder is edited in place, with no review: only Unlock or Revert all edits, and no footer without either.
+  if (n.folder) {
+    if (f.state !== 'working' && !f.edited) return null;
+    const info = stateInfo(f.state === 'working' ? 'working' : 'edited', n);
+    return (
+      <div className={row}>
+        <span className={label}><Icon name={info.icon} className="size-3.5" />{info.label}</span>
+        {f.state === 'working' ? unlock : revert}
+      </div>
+    );
+  }
   return (
-    <div className="flex min-h-12 shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 border-t px-4">
-      <span className="flex min-w-0 flex-[1_1_auto] cursor-default items-center gap-1.5 overflow-hidden text-xs whitespace-nowrap text-muted-foreground select-none">
+    <div className={row}>
+      <span className={label}>
         <StateIcons file={f} names={n} className="size-3.5" />{s.label}
       </span>
-      {f.state === 'working' ? <Button variant="ghost" size="default" disabled={busy} onClick={act(() => post('release'))}>Unlock</Button>
-        : f.state === 'accepted' ? (f.unreviewed ? <Button variant="ghost" size="default" disabled={busy} onClick={act(() => accept(false))}>{mark}</Button>
-          : <Button variant="ghost" size="default" disabled={busy} onClick={act(() => post('unaccept'))}>{n.folder ? 'Mark unreviewed' : 'Undo accept'}</Button>)
+      {f.state === 'working' ? unlock
+        : f.state === 'accepted' ? <Button variant="ghost" size="default" disabled={busy} onClick={act(() => post('unaccept'))}>Undo accept</Button>
         : f.state === 'rejected' ? <Button variant="ghost" size="default" onClick={act(restore)}>Restore</Button>
         : f.state === 'skipped' ? (
           <>
             <Button variant="ghost" size="default" disabled={busy} onClick={act(() => skip(false))}>Unskip</Button>
-            <Button variant="ghost" size="default" disabled={busy} onClick={act(() => accept(false))}>{mark}</Button>
+            <Button variant="ghost" size="default" disabled={busy} onClick={act(() => accept(false))}>Accept</Button>
           </>
         ) : (
           <>
-            {f.edited && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span tabIndex={current.revertable ? -1 : 0} className="inline-flex">
-                    <Button variant="ghost" size="default" disabled={busy || !current.revertable} onClick={act(revertAll)}><Undo2 />Revert all edits</Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>{current.revertable ? 'Back to the text before your first edit' : 'The file changed since your edit'}</TooltipContent>
-              </Tooltip>
-            )}
-            {!n.folder && <RejectButton path={current.path} untracked={f.untracked} disabled={busy} />}
+            {revert}
+            <RejectButton path={current.path} untracked={f.untracked} disabled={busy} />
             <Button variant="ghost" size="default" disabled={busy} onClick={act(() => skip(true))}>Skip</Button>
-            <Button variant="ghost" size="default" disabled={busy} onClick={act(() => accept(false))}>{mark}</Button>
-            {next && <Button size="default" disabled={busy} onClick={act(() => accept(true))}>{`${mark} and next`}</Button>}
+            <Button variant="ghost" size="default" disabled={busy} onClick={act(() => accept(false))}>Accept</Button>
+            {next && <Button size="default" disabled={busy} onClick={act(() => accept(true))}>Accept and next</Button>}
           </>
         )}
     </div>

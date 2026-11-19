@@ -1,5 +1,5 @@
 import type { FileRow } from '@trove/core/types';
-import { ChevronRight, ListFilter, PanelLeftClose, Search, X } from 'lucide-react';
+import { ChevronRight, FileCode, FilePen, FileText, ListFilter, Lock, PanelLeftClose, Search, Sparkles, X } from 'lucide-react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -13,7 +13,7 @@ import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { countKeys, FILTERS, isPendingOnly, markRange, matches, PENDING_OFF, toggleOff, type FilterKey } from '@/lib/filter';
-import { plain, stateInfo } from '@/lib/status';
+import { stateInfo, type Names } from '@/lib/status';
 import { dirOf, nameOf } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { acceptAll, createPr, open, prReady, reveal, setFilters, showInFolder, shown, togglePanel, visible } from './actions';
@@ -58,11 +58,12 @@ export function FilesColumn() {
     <section aria-label="Files" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-1 border-b pr-2 pl-4">
         <span className="flex-1 font-semibold text-foreground">Files</span>
-        {pending > 0 && <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void acceptAll()}>{n.folder ? 'Mark all reviewed' : 'Accept all'}</Button>}
+        {/* A folder is edited in place: no review to accept, open a PR for or filter by. */}
+        {!n.folder && pending > 0 && <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void acceptAll()}>Accept all</Button>}
         {!n.folder && prReady(files) && (
           <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={!source?.agentInfo?.connected} onClick={() => void createPr(n.agent)}>Create PR</Button>
         )}
-        <Filters off={off} />
+        {!n.folder && <Filters off={off} />}
         <IconButton side="bottom" label="Hide files" tip="Hide files ([)" onClick={() => togglePanel('files', true)}><PanelLeftClose /></IconButton>
       </div>
       <div className="relative shrink-0 px-2 pt-2">
@@ -92,10 +93,12 @@ export function FilesColumn() {
           )}
         </nav>
       </ScrollArea>
-      <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
-        <Switch id="pending-only" size="default" checked={isPendingOnly(off)} onCheckedChange={(v) => setFilters(v ? PENDING_OFF : [])} />
-        <Label htmlFor="pending-only" className="text-xs font-normal text-muted-foreground">Pending only</Label>
-      </div>
+      {!n.folder && (
+        <div className="flex min-h-12 shrink-0 items-center gap-2 border-t px-4">
+          <Switch id="pending-only" size="default" checked={isPendingOnly(off)} onCheckedChange={(v) => setFilters(v ? PENDING_OFF : [])} />
+          <Label htmlFor="pending-only" className="text-xs font-normal text-muted-foreground">Pending only</Label>
+        </div>
+      )}
     </section>
   );
 }
@@ -105,7 +108,7 @@ function Filters({ off }: { off: FilterKey[] }) {
   const n = useNames();
   const files = useStore((s) => s.files);
   const query = useStore((s) => s.query);
-  const counts = countKeys(files.filter((f) => matches(f.path, query) && !plain(f))); // a folder's plain files are not review states
+  const counts = countKeys(files.filter((f) => matches(f.path, query)));
   const label = (k: FilterKey) => (k === 'committed' ? 'Committed' : stateInfo(k, n).label);
   const row = (k: FilterKey) => (
     <Label key={k} className="rounded-sm px-2 py-1.5 font-normal text-body hover:bg-accent hover:text-foreground">
@@ -159,6 +162,22 @@ function Name({ path, query }: { path: string; query: string }) {
   return <>{name.slice(0, r[0])}<mark className="rounded-[2px] bg-foreground/15 text-foreground">{name.slice(r[0], r[1])}</mark>{name.slice(r[1])}</>;
 }
 
+/** A folder's row has no review state: the file's type. */
+const FileIcon = ({ file }: { file: FileRow }) => {
+  const I = file.kind === 'html' ? FileCode : FileText;
+  return <I className="size-4 shrink-0 text-muted-foreground" aria-hidden />;
+};
+
+/** What still means something in a folder: the agent working on it (locked), its update since your last send, your edit. */
+function Marks({ file, names }: { file: FileRow; names: Names }) {
+  const marks = ([[file.state === 'working', Lock, 'working', ''], [file.updated, Sparkles, 'updated', 'text-agent'], [file.edited, FilePen, 'edited', '']] as const)
+    .filter(([on]) => on);
+  return marks.map(([, I, s, tone]) => {
+    const label = stateInfo(s, names).label;
+    return <I key={s} role="img" aria-label={label} className={cn('size-3.5 shrink-0 text-muted-foreground', tone)}><title>{label}</title></I>;
+  });
+}
+
 /** Files grouped under their folder, each folder a disclosure the user can close; all open while searching. */
 function Folders({ list, query }: { list: FileRow[]; query: string }) {
   const closed = useStore((s) => s.closedDirs);
@@ -181,9 +200,9 @@ function Folders({ list, query }: { list: FileRow[]; query: string }) {
               <button data-tree-row title={f.path} aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
                 className={cn('flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left outline-none hover:bg-card hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
                   f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
-                {/* A folder's plain file shows as a plain file: no state icon, not muted as done. */}
-                <StateIcons file={f} names={n} className={plain(f) ? 'invisible' : undefined} />
-                <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && !plain(f) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
+                {n.folder ? <FileIcon file={f} /> : <StateIcons file={f} names={n} />}
+                <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
+                {n.folder && <Marks file={f} names={n} />}
                 {f.drafts > 0 && <Count n={f.drafts} />}
               </button>
             </ContextMenuTrigger>

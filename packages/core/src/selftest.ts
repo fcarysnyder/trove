@@ -4,7 +4,7 @@
 // runs it (`trove --selftest`) with no devDependencies; vitest calls it too.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
@@ -615,20 +615,18 @@ async function agentCase(temps: string[]) {
   await app.close();
 }
 
-// A plain folder: every doc in it listed as a plain file, Accept as a snapshot that Show new marks against, the
-// review loop as in a repository, no Reject. Inside a repository, opened as a folder: .gitignore holds, git is only read.
+// A plain folder: every doc in it, edited in place with no review state. Comments, Send, the agent's update, edits and
+// reverts work as in a repository; accept, skip, reject and pr are refused. Inside a repository, opened as a folder:
+// .gitignore holds and git is only read.
 async function folderCase(temps: string[]) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'trove-folder-')));
   temps.push(root);
   const seed: Record<string, string> = { 'a.md': '# A\n\nOne.\n', 'docs/b.md': '# B\n', 'docs/c.html': '<p>C</p>\n', '.hidden/x.md': '# x\n',
     'node_modules/y/z.md': '# z\n', 'gen/g.md': '# g\n', 'notes.txt': 'notes\n', 'pic.png': 'x' };
-  // Written well before the folder is first opened, so none of them changed since.
-  const past = new Date(Date.now() - 60_000);
   const plant = (dir: string, files: Record<string, string>) => {
     for (const [p, text] of Object.entries(files)) {
       mkdirSync(dirname(join(dir, p)), { recursive: true });
       writeFileSync(join(dir, p), text);
-      utimesSync(join(dir, p), past, past);
     }
   };
   plant(root, seed);
@@ -639,57 +637,51 @@ async function folderCase(temps: string[]) {
   assert.equal(dirname(app.info().stateDir), join(homedir(), '.trove', 'folders'), 'state outside the folder');
   const get = async (path: string, p = port) => (await call(p, 'GET', path)).body;
   const post = (path: string, body: unknown) => call(port, 'POST', path, body);
-  const rows = async (p = port) => Object.fromEntries((await get('/api/files', p)).files.map((f: any) => [f.path, f.unreviewed ? `${f.state}, unreviewed` : f.state]));
+  const rows = async (p = port) => Object.fromEntries((await get('/api/files', p)).files.map((f: any) => [f.path, [f.state, f.updated, f.edited, f.drafts].join(' ')]));
   const info = await get('/api/source');
   assert.deepEqual([info.kind, info.branch, info.base, info.scope, info.repo, info.worktree],
     ['folder', null, null, 'uncommitted', { root, name: basename(root) }, { path: root, name: basename(root), branch: null, main: true }]);
-  assert.deepEqual(await rows(), { 'a.md': 'accepted, unreviewed', 'docs/b.md': 'accepted, unreviewed', 'docs/c.html': 'accepted, unreviewed' },
-    'every doc of the enabled types, recursively, as plain files: no dot-folders, node_modules, excluded paths or other types');
+  assert.deepEqual(await rows(), { 'a.md': 'queue false false 0', 'docs/b.md': 'queue false false 0', 'docs/c.html': 'queue false false 0' },
+    'every doc of the enabled types, recursively: no dot-folders, node_modules, excluded paths or other types');
   assert.equal((await call(port, 'GET', '/api/git')).status, 404);
   assert.equal((await post('/api/switch', { branch: 'main' })).status, 404);
-  assert.equal((await get('/api/file?path=a.md')).base, null, 'never reviewed: nothing to mark new against');
-  writeFileSync(join(root, 'new.md'), '# New\n');
-  assert.equal((await rows())['new.md'], 'queue, unreviewed', 'a file that appears after the folder was opened waits for review');
+  assert.equal((await get('/api/file?path=a.md')).base, null, 'nothing to mark new against before an update');
 
-  // Accept stores a snapshot: accepted while the text matches it, and Show new marks against it.
+  // No review state: every review action is refused and changes nothing.
   const a = await get('/api/file?path=a.md');
-  assert.equal((await post('/api/accept', { path: 'a.md', hash: 'stale' })).status, 409);
-  assert.equal((await post('/api/accept', { path: 'a.md', hash: a.hash })).status, 200);
-  assert.equal((await rows())['a.md'], 'accepted');
-  writeFileSync(join(root, 'a.md'), '# A\n\nOne, changed.\n');
-  assert.equal((await rows())['a.md'], 'queue');
-  assert.equal((await get('/api/file?path=a.md')).base, seed['a.md'], 'Show new: against the snapshot');
-  writeFileSync(join(root, 'a.md'), seed['a.md']);
-  assert.equal((await rows())['a.md'], 'accepted', 'back to the reviewed text');
-  assert.equal((await post('/api/unaccept', { path: 'a.md' })).status, 200);
-  assert.equal((await rows())['a.md'], 'queue, unreviewed', 'undo drops the snapshot; written since the folder opened, so it waits');
+  const refused = [['accept', { path: 'a.md', hash: a.hash }], ['unaccept', { path: 'a.md' }], ['accept-all', { paths: ['a.md'] }],
+    ['skip', { path: 'a.md', on: true }], ['reject', { path: 'a.md', hash: a.hash }], ['pr', {}]] as const;
+  for (const [route, body] of refused) assert.equal((await post(`/api/${route}`, body)).status, 409, route);
+  assert.deepEqual([(await post('/api/accept', { path: 'a.md', hash: a.hash })).body.error, readFileSync(join(root, 'a.md'), 'utf8')],
+    [`No accept in a folder: ${basename(root)} is edited in place`, seed['a.md']]);
 
-  // No Reject and no Create PR: there is no HEAD to go back to and nothing to commit.
-  const rejected = await post('/api/reject', { path: 'a.md', hash: sha(seed['a.md']) });
-  assert.deepEqual([rejected.status, readFileSync(join(root, 'a.md'), 'utf8')], [409, seed['a.md']]);
-  assert.equal((await post('/api/pr', {})).status, 409);
-
-  // The review loop: a comment makes a plain file wait, Send locks it, the agent's done brings it back updated.
+  // The loop: a comment, Send locks the file, the agent's done brings it back updated; Show new marks against the text at send.
   const anchor = { quote: 'B', prefix: '', suffix: '', path: [], raw: '' };
   await post('/api/drafts', { path: 'docs/b.md', drafts: [{ kind: 'change', note: 'n', anchor }] });
-  assert.equal((await rows())['docs/b.md'], 'queue, unreviewed');
+  assert.equal((await rows())['docs/b.md'], 'queue false false 1');
   assert.deepEqual((await post('/api/send', {})).body.locked, ['docs/b.md']);
-  assert.equal((await rows())['docs/b.md'], 'working, unreviewed');
+  assert.equal((await rows())['docs/b.md'], 'working false false 0');
   writeFileSync(join(root, 'docs/b.md'), '# B, by the agent\n');
   assert.deepEqual((await post('/api/release', { path: join(root, 'docs/b.md') })).body, { released: true, updated: true });
-  assert.deepEqual([(await get('/api/file?path=docs%2Fb.md')).since, (await rows())['docs/b.md']], [seed['docs/b.md'], 'queue, unreviewed']);
+  assert.deepEqual([(await get('/api/file?path=docs%2Fb.md')).since, (await rows())['docs/b.md']], [seed['docs/b.md'], 'queue true false 0']);
+  // Updated means since your last send of it: the next send clears it, and an unchanged release leaves it clear.
+  await post('/api/drafts', { path: 'docs/b.md', drafts: [{ kind: 'change', note: 'again', anchor }] });
+  await post('/api/send', {});
+  assert.deepEqual((await post('/api/release', { path: 'docs/b.md' })).body, { released: true, updated: false });
+  assert.equal((await rows())['docs/b.md'], 'queue false false 0');
+
+  // Edits save in place, and revert.
   const saved = await post('/api/save', { path: 'docs/c.html', hash: sha(seed['docs/c.html']), raw: '<p>C2</p>\n' });
-  assert.deepEqual([saved.status, (await rows())['docs/c.html']], [200, 'queue, unreviewed'], 'a save is an edit, never an accept');
-  assert.deepEqual((await post('/api/accept-all', { paths: ['a.md', 'docs/b.md', 'docs/c.html', 'new.md'] })).body, { accepted: 4 });
-  await app.close();
-  ({ app, port } = await listen(opts));
-  assert.deepEqual(await rows(), { 'a.md': 'accepted', 'docs/b.md': 'accepted', 'docs/c.html': 'accepted', 'new.md': 'accepted' }, 'snapshots survive a restart');
-  assert.equal((await get('/api/file?path=docs%2Fb.md')).base, '# B, by the agent\n');
+  assert.deepEqual([saved.status, readFileSync(join(root, 'docs/c.html'), 'utf8'), (await rows())['docs/c.html']], [200, '<p>C2</p>\n', 'queue false true 0']);
+  assert.equal((await post('/api/revert', { path: 'docs/c.html' })).status, 200);
+  assert.deepEqual([readFileSync(join(root, 'docs/c.html'), 'utf8'), (await rows())['docs/c.html']], [seed['docs/c.html'], 'queue false false 0']);
+  writeFileSync(join(root, 'new.md'), '# New\n');
+  assert.equal((await rows())['new.md'], 'queue false false 0', 'a new file lists on the next request');
   await app.close();
 
   // A file as the root: its folder, with the file's type turned on there.
   ({ app, port } = await listen({ root: join(root, 'notes.txt') }));
-  assert.deepEqual([app.info().root, (await rows())['notes.txt'], app.settings().types.txt], [root, 'accepted, unreviewed', true]);
+  assert.deepEqual([app.info().root, (await rows())['notes.txt'], app.settings().types.txt], [root, 'queue false false 0', true]);
   await app.close();
 
   // Inside a repository, as a folder: tracked and untracked docs, not ignored ones; git is read, never written.
@@ -699,13 +691,16 @@ async function folderCase(temps: string[]) {
   sh('add', '.');
   sh('commit', '-qm', 'a');
   plant(repo, { 'docs/new.md': '# new\n' });
-  const status = sh('status', '--porcelain');
   const docs = await listen({ root: join(repo, 'docs'), folder: true });
   temps.push(docs.app.info().stateDir);
   assert.deepEqual(Object.keys(await rows(docs.port)), ['a.md', 'new.md'], '.gitignore holds');
-  for (const path of ['a.md', 'new.md']) assert.equal((await call(docs.port, 'POST', '/api/accept', { path, hash: (await get(`/api/file?path=${path}`, docs.port)).hash })).status, 200);
-  assert.equal((await call(docs.port, 'POST', '/api/reject', { path: 'a.md', hash: sha('# A\n') })).status, 409);
-  assert.deepEqual([sh('status', '--porcelain'), existsSync(join(repo, '.git', 'trove'))], [status, false], 'no git writes, nothing in the git dir');
+  const edited = await call(docs.port, 'POST', '/api/save', { path: 'a.md', hash: sha('# A\n'), index: 0, raw: '# A, edited' });
+  assert.equal(edited.status, 200);
+  await call(docs.port, 'POST', '/api/drafts', { path: 'new.md', drafts: [{ kind: 'change', note: 'n', anchor }] });
+  assert.equal((await call(docs.port, 'POST', '/api/send', {})).status, 200);
+  assert.equal((await call(docs.port, 'POST', '/api/accept', { path: 'a.md', hash: edited.body.hash })).status, 409);
+  assert.deepEqual([sh('diff', '--cached', '--name-only'), sh('status', '--porcelain'), existsSync(join(repo, '.git', 'trove'))],
+    ['', ' M docs/a.md\n?? docs/new.md\n', false], 'nothing staged, nothing in the git dir: only the edit itself');
   await docs.app.close();
   const out = await listen({ root: join(repo, 'docs/out'), folder: true });
   temps.push(out.app.info().stateDir);

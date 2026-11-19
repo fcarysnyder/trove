@@ -67,9 +67,6 @@ export interface FileEntry {
   committed?: boolean; // the staged copy got committed while the review was open
   skipped?: boolean; // the user will come back to it; the editor's mark only, no git effect
   rejected?: boolean; // taken out of the change set (back to HEAD, or deleted); listed from its backup until restored
-  // Folder sources: never marked reviewed (no snapshot). Listed as accepted, a plain file in the tree, until it
-  // changes after the folder was first opened or this review touches it (the agent, an edit, a comment, a skip).
-  unreviewed?: boolean;
 }
 
 export interface FileRow extends FileEntry {
@@ -143,7 +140,8 @@ export interface WorktreeRef { path: string; name: string; branch: string | null
 
 /**
  * git: a working tree; the index is the approval state. folder: a plain folder, or one opened as a folder inside a
- * repository; Trove runs no git command that writes, Accept stores a snapshot in the state dir, there is no Reject.
+ * repository: files are edited in place, with no review state and no git command that writes. Comments, Send, edits,
+ * locks and the agent's updates work as in a repository; accept, unaccept, accept-all, skip, reject and pr answer 409.
  */
 export type SourceKind = 'git' | 'folder';
 
@@ -191,7 +189,7 @@ export interface FileResponse { // GET /api/file?path=
   kind: DocKind;
   text: string;
   hash: string;
-  base: string | null; // what Show new marks against (staged copy, else HEAD; a folder: the snapshot Accept stored, else null)
+  base: string | null; // what Show new marks against (staged copy, else HEAD; null for a folder, where Show new marks against `since`)
   since: string | null; // the text before the agent's last update, if any
   locked: boolean;
   drafts: Draft[];

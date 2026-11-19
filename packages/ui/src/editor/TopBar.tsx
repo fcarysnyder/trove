@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { plain, PROGRESS, stateInfo } from '@/lib/status';
+import { PROGRESS, stateInfo } from '@/lib/status';
 import { dirOf, folderText, nameOf, plural } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { dismissQuestion, reveal, step, togglePanel, visible } from './actions';
@@ -49,7 +49,8 @@ export function TopBar() {
         <Switcher />
       </div>
       <div className="flex items-center gap-2">
-        <Progress />
+        {/* A folder has no review to make progress on. */}
+        {source?.kind !== 'folder' && <Progress />}
         <span className="text-xs text-muted-foreground tabular-nums">{pos || '–'} / {list.length}</span>
         <IconButton label="Previous file" tip="Previous file (←, k)" onClick={() => step(-1)}><ChevronLeft /></IconButton>
         <IconButton label="Next file" tip="Next file (→, j)" onClick={() => step(1)}><ChevronRight /></IconButton>
@@ -67,10 +68,9 @@ export function TopBar() {
   );
 }
 
-/** One segment per state over every changed file, whatever the tree shows; the tooltip lists every state. A folder's plain files are not in it. */
+/** One segment per state over every changed file, whatever the tree shows; the tooltip lists every state. */
 function Progress() {
-  const all = useStore((s) => s.files);
-  const files = all.filter((f) => !plain(f));
+  const files = useStore((s) => s.files);
   const n = useNames();
   const [hot, setHot] = useState<string | null>(null);
   const c = countStates(files);
@@ -109,7 +109,7 @@ function Progress() {
           </div>
         </TooltipContent>
       </Tooltip>
-      <span className="max-[700px]:hidden">{c.accepted} {stateInfo('accepted', n).words}</span>
+      <span className="max-[700px]:hidden">{c.accepted} accepted</span>
     </span>
   );
 }

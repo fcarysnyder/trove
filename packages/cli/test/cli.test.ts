@@ -58,7 +58,7 @@ test('serve opens a file outside any repository in its folder, and the agent com
   let stateDir = '';
   try {
     const port = Number(line.match(/127\.0\.0\.1:(\d+)\//)?.[1]);
-    expect(line).toMatch(new RegExp(`^reviewing 0 files in docs at http://127\\.0\\.0\\.1:${port}/\\?file=a\\.md; notices in `));
+    expect(line).toMatch(new RegExp(`^editing 1 files in docs at http://127\\.0\\.0\\.1:${port}/\\?file=a\\.md; notices in `));
     const source = await (await fetch(`http://127.0.0.1:${port}/api/source`)).json();
     stateDir = source.stateDir;
     expect([source.kind, source.root]).toEqual(['folder', join(root, 'docs')]);

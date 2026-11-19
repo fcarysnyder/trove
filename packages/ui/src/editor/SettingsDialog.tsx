@@ -106,11 +106,11 @@ function Body() {
         </Row>
       </>
     ),
-    // A folder has no git scope or base: where it is and where its review state lives.
+    // A folder has no git scope or base: where it is and where Trove keeps its drafts and edits.
     Source: source?.kind === 'folder' ? (
       <>
         <Fact label="Folder" value={source.root} />
-        <Fact label="Review state" value={source.stateDir} />
+        <Fact label="Trove state" value={source.stateDir} />
       </>
     ) : (
       <>

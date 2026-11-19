@@ -1,8 +1,8 @@
 // Where the queue comes from: a git working tree, where the index is the approval state and Accept is
-// `git add`, or a plain folder, where Accept stores a snapshot. Nothing ever commits.
+// `git add`, or a plain folder, edited in place with no review state. Nothing ever commits.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { enabledTypes, included, kindOf, loadSettings } from './settings.js';
@@ -234,23 +234,14 @@ function walk(top: string, s: Settings, git: boolean): string[] {
 }
 
 /**
- * A plain folder as a source: every file of the enabled types in it, recursively. No git command that writes runs
- * here, even inside a repository; commits happen elsewhere. Accept stores the file's text as a snapshot, and the file
- * stays accepted while its text matches; Show new marks against that snapshot. A file never accepted is `unreviewed`:
- * a plain file while it is as it was when the folder was first opened, pending once it changes after that.
+ * A plain folder as a source: every file of the enabled types in it, recursively, edited in place. No review state
+ * and no git command that writes, even inside a repository; commits happen elsewhere. Show new has only what the
+ * server keeps from a send (the text before the agent's last update) to mark against.
  */
 export function openFolder(root: string) {
   const top = realpathSync(folderOf(root));
   const stateDir = folderStateDir(top);
-  const snaps = join(stateDir, 'snapshots');
-  mkdirSync(snaps, { recursive: true });
-  // reviewed.json: when the folder was first opened, and each accepted file's hash, size and mtime.
-  const file = join(stateDir, 'reviewed.json');
-  type Snap = { hash: string; size: number; mtimeMs: number };
-  let index: { since: number; files: Record<string, Snap> } = { since: Date.now(), files: {} };
-  try { index = JSON.parse(readFileSync(file, 'utf8')); } catch { writeFileSync(file, JSON.stringify(index)); }
-  const save = () => writeFileSync(file, JSON.stringify(index));
-  const snapPath = (rel: string) => join(snaps, sha(rel));
+  mkdirSync(stateDir, { recursive: true });
   const self: RepoRef = { root: top, name: basename(top) };
   const git = inGit(top);
 
@@ -261,38 +252,9 @@ export function openFolder(root: string) {
     place: () => ({ repo: self, worktree: { path: top, name: self.name, branch: null, main: true } as WorktreeRef }),
     branch: () => null,
     resolveBase: (_s: Settings): string | null => null,
-    list(s: Settings): FileEntry[] {
-      return walk(top, s, git).flatMap((path): FileEntry[] => {
-        const kind = kindOf(path, s)!;
-        let st;
-        try { st = statSync(join(top, path)); } catch { return []; } // gone since the walk
-        const snap = index.files[path];
-        // Same size and mtime is taken as unchanged; anything else is hashed.
-        if (snap) return [{ path, kind, untracked: false, staged: (snap.size === st.size && snap.mtimeMs === st.mtimeMs) || sha(readFileSync(join(top, path), 'utf8')) === snap.hash }];
-        return [{ path, kind, untracked: st.birthtimeMs > index.since, staged: st.mtimeMs <= index.since, unreviewed: true }];
-      });
-    },
-    accept(...rels: string[]) {
-      for (const rel of rels) {
-        const text = readFileSync(join(top, rel), 'utf8');
-        const st = statSync(join(top, rel));
-        writeFileSync(snapPath(rel), text);
-        index.files[rel] = { hash: sha(text), size: st.size, mtimeMs: st.mtimeMs };
-      }
-      if (rels.length) save();
-    },
-    /** Forget the snapshot: the file is unreviewed again. */
-    unaccept(rel: string) {
-      if (!index.files[rel]) return;
-      delete index.files[rel];
-      rmSync(snapPath(rel), { force: true });
-      save();
-    },
-    /** Save and Send leave the snapshot alone: the changed text no longer matches it. */
+    list: (s: Settings): FileEntry[] => walk(top, s, git).map((path) => ({ path, kind: kindOf(path, s)!, untracked: false, staged: false })),
+    /** Save and Send: nothing is staged here. */
     unstage: (_rel: string) => {},
-    baseOf(rel: string): string | null {
-      if (!index.files[rel]) return null;
-      try { return readFileSync(snapPath(rel), 'utf8'); } catch { return null; }
-    },
+    baseOf: (_rel: string, _text: string, _s: Settings): string | null => null,
   };
 }

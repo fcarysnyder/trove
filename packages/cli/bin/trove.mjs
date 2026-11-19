@@ -43,8 +43,10 @@ async function firstLine(/** @type {number} */ port, /** @type {string | null} *
   const git = folder ? null : await call(port, 'GET', '/api/git');
   if ([source, files, git ?? source].some((r) => r.status !== 200) || !source.body?.eventsLog) throw new Error(`port ${port} is not a Trove server`);
   const queued = files.body.files.filter((/** @type {{staged: boolean}} */ f) => !f.staged).length;
-  const where = git ? `on ${git.body.branch ?? git.body.head}${git.body.worktree && !git.body.worktree.main ? ` (${git.body.worktree.name})` : ''}` : `in ${source.body.name}`;
-  return `reviewing ${queued} files ${where} at http://127.0.0.1:${port}${file ? `/?file=${encodeURIComponent(file)}` : ''}; notices in ${source.body.eventsLog}; after each file run: ${invoked()} done <file> --port ${port}`;
+  // A folder has no review: its files are edited in place.
+  const what = git ? `reviewing ${queued} files on ${git.body.branch ?? git.body.head}${git.body.worktree && !git.body.worktree.main ? ` (${git.body.worktree.name})` : ''}`
+    : `editing ${files.body.files.length} files in ${source.body.name}`;
+  return `${what} at http://127.0.0.1:${port}${file ? `/?file=${encodeURIComponent(file)}` : ''}; notices in ${source.body.eventsLog}; after each file run: ${invoked()} done <file> --port ${port}`;
 }
 
 async function main() {

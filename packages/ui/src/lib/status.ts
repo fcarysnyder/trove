@@ -6,7 +6,7 @@ export type IconName = 'circle-check' | 'sparkles' | 'file-pen' | 'message-squar
 
 /**
  * The attached agent's label (AgentInfo.label), as said mid-sentence (agent), to start one (Agent), and as a sender (who);
- * `folder`: the source is a folder, where Accept marks a file reviewed.
+ * `folder`: the source is a folder, edited in place with no review state.
  */
 export const names = (label: string, folder = false) => {
   const Agent = label.charAt(0).toUpperCase() + label.slice(1);
@@ -19,7 +19,7 @@ export const PROGRESS: ReviewState[] = ['accepted', 'updated', 'edited', 'drafts
 
 export function stateInfo(s: ReviewState, n: Names): { label: string; icon: IconName; words: string } {
   switch (s) {
-    case 'accepted': return n.folder ? { label: 'Reviewed', icon: 'circle-check', words: 'reviewed' } : { label: 'Accepted (staged)', icon: 'circle-check', words: 'accepted' };
+    case 'accepted': return { label: 'Accepted (staged)', icon: 'circle-check', words: 'accepted' };
     case 'updated': return { label: `Updated by ${n.agent}`, icon: 'sparkles', words: `updated by ${n.agent}` };
     case 'edited': return { label: 'Edited', icon: 'file-pen', words: 'edited' };
     case 'drafts': return { label: 'Has comments', icon: 'message-square', words: 'with comments' };
@@ -30,13 +30,9 @@ export function stateInfo(s: ReviewState, n: Names): { label: string; icon: Icon
   }
 }
 
-/** A folder's file nobody reviewed and this review has not touched: a plain file in the tree, left out of the counts. */
-export const plain = (f: Pick<FileRow, 'state' | 'unreviewed'>) => !!f.unreviewed && f.state === 'accepted';
-
 /** One file's status; a pending untracked file reads as newly added. `tone` is its colour class key. */
-export function status(f: Pick<FileRow, 'state' | 'updated' | 'edited' | 'drafts' | 'untracked' | 'unreviewed'>, n: Names) {
+export function status(f: Pick<FileRow, 'state' | 'updated' | 'edited' | 'drafts' | 'untracked'>, n: Names) {
   const s = stateOf(f);
-  if (plain(f)) return { state: s, label: 'Not reviewed', icon: 'circle-dashed' as IconName, tone: '' };
   if (s === 'pending' && f.untracked) return { state: s, label: 'Newly added', icon: 'file-plus' as IconName, tone: '' };
   const { label, icon } = stateInfo(s, n);
   return { state: s, label, icon, tone: s === 'pending' || s === 'working' ? '' : s };

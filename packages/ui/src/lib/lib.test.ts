@@ -28,12 +28,6 @@ describe('status', () => {
     expect(status(row({ updated: true }), names('the agent')).label).toBe('Updated by the agent');
     expect([names('Codex').who, names('the agent').who]).toEqual(['Codex', 'Your agent']);
   });
-  it('reads a folder as reviewed or not, and a plain file waits once the review touches it', () => {
-    const folder = names('Claude', true);
-    expect(status(row({ state: 'accepted' }), folder).label).toBe('Reviewed');
-    expect(status(row({ state: 'accepted', unreviewed: true }), folder)).toMatchObject({ label: 'Not reviewed', tone: '' });
-    expect(status(row({ unreviewed: true, drafts: 1 }), folder).label).toBe('Has comments');
-  });
 });
 
 describe('stepping', () => {

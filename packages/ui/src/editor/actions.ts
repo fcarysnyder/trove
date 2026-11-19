@@ -11,8 +11,8 @@ import { get, set, type State } from './store';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** Whether the search and filters leave a file in the tree. */
-export const shown = (s: State = get()) => (f: FileRow) => passes(f, s.filterOff, s.query);
+/** Whether the search and filters leave a file in the tree. A folder has no review states to filter: the search only. */
+export const shown = (s: State = get()) => (f: FileRow) => passes(f, s.source?.kind === 'folder' ? [] : s.filterOff, s.query);
 /** The tree's folders, the n / N position and stepping follow this list: committed and rejected files have their own sections; the search and filters narrow it. */
 export const visible = (s: State = get()) => s.files.filter((f) => inFolders(f) && shown(s)(f));
 export const entry = (s: State = get()) => s.files.find((f) => f.path === s.current?.path);
@@ -131,8 +131,7 @@ export async function acceptAll() {
   if (!paths.length) return;
   try {
     const { accepted } = await api<{ accepted: number }>('accept-all', { paths });
-    const files = `${accepted} ${accepted === 1 ? 'file' : 'files'}`;
-    toast(get().source?.kind === 'folder' ? `Marked ${files} reviewed` : `Accepted ${files}`);
+    toast(`Accepted ${accepted} ${accepted === 1 ? 'file' : 'files'}`);
   } catch (e) {
     toast(errText(e));
   }

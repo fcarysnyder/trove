@@ -152,13 +152,9 @@ export function createApp(o: AppOptions): App {
     const out = source.kind === 'git' ? source.list(current, seen, new Set(rejected.keys())) : source.list(current);
     // A rejected path the source reports again has new content (say, regenerated): it is live again.
     let dropped = false;
-    let touched: Set<string> | undefined;
     for (const f of out) {
       if (rejected.delete(f.path)) dropped = true;
       if (skipped.has(f.path)) f.skipped = true;
-      // A folder's never-reviewed file is plain until this review touches it; then it waits like any change.
-      if (f.unreviewed && f.staged && (updated.has(f.path) || working.has(f.path) || skipped.has(f.path)
-        || (touched ??= new Set([...Object.keys(drafts()), ...Object.keys(edits())])).has(f.path))) f.staged = false;
     }
     // The rest stay listed from their backup, so the page can show them and Restore them.
     for (const path of rejected.keys()) if (included(path, current)) out.push({ path, kind: kindOf(path, current)!, untracked: false, staged: false, rejected: true });
@@ -239,8 +235,8 @@ export function createApp(o: AppOptions): App {
     };
   };
 
-  // A folder source runs no git that writes and has no HEAD to go back to.
-  const NOT_GIT = (what?: string): Result => (what ? [409, { error: `${what} needs git: ${basename(top)} is open as a folder` }]
+  // A folder is edited in place: no review state, no git that writes, no HEAD to go back to.
+  const NOT_GIT = (what?: string): Result => (what ? [409, { error: `No ${what} in a folder: ${basename(top)} is edited in place` }]
     : [404, { error: `${basename(top)} is open as a folder, without git` }]);
 
   const routes: Record<string, (q: URLSearchParams, body: any, req?: IncomingMessage) => Result> = {
@@ -292,6 +288,7 @@ export function createApp(o: AppOptions): App {
     },
     // Accepts only the text the user last saw: a file that changed since is refused.
     'POST /api/accept': (_, { path, hash }) => {
+      if (source.kind !== 'git') return NOT_GIT('accept');
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       if (working.has(rel)) return BUSY();
@@ -307,6 +304,7 @@ export function createApp(o: AppOptions): App {
     },
     // Skip: come back to it later. Only the editor's mark; git is untouched.
     'POST /api/skip': (_, { path, on }) => {
+      if (source.kind !== 'git') return NOT_GIT('skip');
       const rel = listed(path);
       if (!rel || typeof on !== 'boolean') return [400, { error: 'path and on required' }];
       if (working.has(rel)) return BUSY();
@@ -320,7 +318,7 @@ export function createApp(o: AppOptions): App {
     // copy and the file's drafts are saved first, so Restore can put them back. Refused on a version
     // the user did not see. Its edits are dropped.
     'POST /api/reject': (_, { path, hash }) => {
-      if (source.kind !== 'git') return NOT_GIT('Reject');
+      if (source.kind !== 'git') return NOT_GIT('reject');
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       if (working.has(rel)) return BUSY();
@@ -343,7 +341,7 @@ export function createApp(o: AppOptions): App {
       const gone = rel && rejected.get(rel);
       if (!rel || !gone) return [404, { error: 'not rejected' }];
       mkdirSync(dirname(join(top, rel)), { recursive: true });
-      if (gone.staged !== null) {
+      if (gone.staged !== null && source.kind === 'git') {
         write(rel, gone.staged);
         source.accept(rel);
       }
@@ -356,6 +354,7 @@ export function createApp(o: AppOptions): App {
     // Accept all: the listed, free (not working, not rejected) paths given, in one git add. No hash check:
     // the user chose to accept files as they are now, seen or not.
     'POST /api/accept-all': (_, { paths }) => {
+      if (source.kind !== 'git') return NOT_GIT('accept');
       if (!Array.isArray(paths)) return [400, { error: 'paths required' }];
       const rels = [...new Set(paths.map(listed).filter((r): r is string => !!r && !working.has(r) && !rejected.has(r)))];
       source.accept(...rels);
@@ -364,6 +363,7 @@ export function createApp(o: AppOptions): App {
       return [200, { accepted: rels.length }];
     },
     'POST /api/unaccept': (_, { path }) => {
+      if (source.kind !== 'git') return NOT_GIT('accept');
       const rel = listed(path);
       if (!rel) return [404, { error: 'not in the review set' }];
       if (working.has(rel)) return BUSY();
@@ -457,6 +457,7 @@ export function createApp(o: AppOptions): App {
       const changed = [...new Set(items.filter((c) => c.kind === 'change').map((c) => c.path as string))];
       for (const rel of changed) {
         source.unstage(rel);
+        if (source.kind === 'folder') updated.delete(rel); // a folder's Updated means since your last send of it
         const h = hashOf(rel);
         working.set(rel, { hash: h, last: h, at: 0, text: read(rel) });
       }
@@ -475,7 +476,7 @@ export function createApp(o: AppOptions): App {
     // Create PR: once nothing waits for review, ask the agent to commit what is staged and open a pull
     // request. Trove itself never commits; this is one line in the events log, like a batch's notice.
     'POST /api/pr': () => {
-      if (source.kind !== 'git') return NOT_GIT('Create PR');
+      if (source.kind !== 'git') return NOT_GIT('pull request');
       const rows = list();
       if (rows.some((f) => working.has(f.path) || (!f.staged && !f.rejected && !f.skipped))) return [409, { error: 'Files are still waiting for review' }];
       const staged = rows.filter((f) => f.staged && !f.committed).length;
