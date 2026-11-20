@@ -162,8 +162,14 @@ function Section({ label, list, query, open, onOpenChange }: { label: string; li
 function Name({ path, query }: { path: string; query: string }) {
   const name = nameOf(path);
   const r = markRange(path, query);
-  if (!r) return name;
-  return <>{name.slice(0, r[0])}<mark className="rounded-[2px] bg-foreground/15 text-foreground">{name.slice(r[0], r[1])}</mark>{name.slice(r[1])}</>;
+  // Truncated in the middle: the end (the last few characters and the extension) always shows.
+  const cut = Math.max(0, name.length - (name.length - (name.lastIndexOf('.') + 1 || name.length) + 6));
+  const part = (from: number, to: number) => {
+    if (!r || r[1] <= from || r[0] >= to) return name.slice(from, to);
+    const a = Math.max(r[0], from), b = Math.min(r[1], to);
+    return <>{name.slice(from, a)}<mark className="rounded-[2px] bg-foreground/15 text-foreground">{name.slice(a, b)}</mark>{name.slice(b, to)}</>;
+  };
+  return <><span className="truncate">{part(0, cut)}</span><span className="shrink-0 whitespace-pre">{part(cut, name.length)}</span></>;
 }
 
 /** A folder's row has no review state: the file's type. */
@@ -239,7 +245,7 @@ function Items({ items, query }: { items: (FileRow | Dir)[]; query: string }) {
         className={cn('flex w-full items-center gap-1.5 rounded-sm px-1 py-1 text-left outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
           f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
         {folder ? <FileIcon file={f} /> : <StateIcons file={f} names={n} />}
-        <span className={cn('flex-1 truncate', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
+        <span className={cn('flex min-w-0 flex-1', ['accepted', 'skipped', 'rejected'].includes(f.state) && f.path !== current && 'text-muted-foreground')}><Name path={f.path} query={query} /></span>
         {folder && <Marks file={f} names={n} />}
         {folder && unsaved[f.path] && <span role="img" aria-label="Unsaved edits" title="Unsaved edits" className="size-1.5 shrink-0 rounded-full bg-dirty" />}
         {f.drafts > 0 && <Count n={f.drafts} />}
