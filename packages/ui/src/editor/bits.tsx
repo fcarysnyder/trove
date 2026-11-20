@@ -1,6 +1,6 @@
-// Small shared pieces: a count badge, an icon button with a tooltip, a folder + name label.
+// Small shared pieces: how long since, a count badge, an icon button with a tooltip, a folder + name label.
 import type { SourceInfo } from '@trove/core/types';
-import { type ComponentProps, type ReactNode } from 'react';
+import { useEffect, useState, type ComponentProps, type ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -9,6 +9,20 @@ import { dirOf, folderText, nameOf } from '@/lib/text';
 
 /** An underlined tab trigger (radix Tabs): the Agent pane's and Home's. */
 export const TAB = '-mb-px flex items-center gap-1.5 border-b-2 border-transparent font-semibold text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground data-[state=active]:border-foreground data-[state=active]:text-foreground';
+
+/** How long since `iso`, ticking each second ("12s", "3m 04s", "1h 02m"); '' without one. */
+export function useElapsed(iso: string | null | undefined) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!iso) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [iso]);
+  if (!iso) return '';
+  const s = Math.max(0, Math.floor((now - Date.parse(iso)) / 1000));
+  const two = (n: number) => String(n).padStart(2, '0');
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${two(s % 60)}s` : `${Math.floor(s / 3600)}h ${two(Math.floor(s / 60) % 60)}m`;
+}
 
 export const Count = ({ n, className }: { n: number; className?: string }) => (
   <Badge variant="secondary" className={cn('h-4 min-w-4 rounded-full px-1 text-[11px] leading-4 tabular-nums', className)}>{n}</Badge>

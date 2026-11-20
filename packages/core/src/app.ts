@@ -623,9 +623,15 @@ export function createApp(o: AppOptions): App {
     },
         'GET /api/activity': () => (follow(), [200, { entries: activity }]),
     // `trove signal` from the agent's hooks, and the desktop's terminal: what the agent waits on the user for. The last one wins.
-    'POST /api/signal': (_, { kind, text }) => {
+    // reply: the answer the agent's turn ended with (Claude Code's Stop hook), shown in Chat unless the agent already said it.
+    'POST /api/signal': (_, { kind, text, reply }) => {
       if (!['permission', 'question', 'idle', 'working'].includes(kind)) return [400, { error: 'kind is permission, question, idle or working' }];
-      if (text !== undefined && typeof text !== 'string') return [400, { error: 'text is a string' }];
+      if ((text !== undefined && typeof text !== 'string') || (reply !== undefined && typeof reply !== 'string')) return [400, { error: 'text and reply are strings' }];
+      const body = kind === 'idle' ? reply?.trim().slice(0, 20000) : undefined;
+      if (body) {
+        const since = activity.findLastIndex((e) => e.from === 'user');
+        if (!activity.slice(since + 1).some((e) => e.from === 'agent' && e.body === body)) note('message', '', { from: 'agent', body });
+      }
       if (kind === 'working') unwait();
       else signal = { waiting: kind, ...(text?.trim() ? { text: text.trim().slice(0, 200) } : {}), since: new Date().toISOString() };
       return [200, agentInfo()];

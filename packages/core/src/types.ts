@@ -156,8 +156,9 @@ const MODE_FLAGS: Record<AgentTool, Record<AgentMode, string>> = {
   claude: { ask: '--permission-mode manual', auto: '--permission-mode auto', bypass: '--dangerously-skip-permissions' },
   codex: { ask: '-a untrusted', auto: '-a on-failure -s workspace-write', bypass: '--dangerously-bypass-approvals-and-sandbox' },
 };
-export const attachCommand = (tool: AgentTool, root: string, port: number | string, exec = false, mode: AgentMode = 'bypass') =>
-  `cd '${root.replaceAll("'", "'\\''")}' && ${exec ? 'exec ' : ''}${tool} ${MODE_FLAGS[tool][mode]} "${attachPrompt(port)}"`;
+/** `flags`: more of the tool's own flags, after the mode's (the desktop's `--session-id` / `--resume`). */
+export const attachCommand = (tool: AgentTool, root: string, port: number | string, exec = false, mode: AgentMode = 'bypass', flags = '') =>
+  `cd '${root.replaceAll("'", "'\\''")}' && ${exec ? 'exec ' : ''}${tool} ${MODE_FLAGS[tool][mode]}${flags ? ` ${flags}` : ''} "${attachPrompt(port)}"`;
 
 /** A repository's main working tree: the first entry of `git worktree list`. */
 export interface RepoRef { root: string; name: string }
@@ -268,8 +269,9 @@ export interface AgentBody { id: AgentId | null; label?: string } // POST /api/a
 /**
  * POST /api/signal -> AgentInfo: `trove signal` from the plugin's hooks, and the desktop's terminal (OSC 9, typing).
  * The last signal wins; 'working' clears waiting. text: the tool name or the notification's message, up to 200 chars.
+ * reply (idle): what the turn ended with; Chat shows it as the agent's message unless the agent already said it.
  */
-export interface SignalBody { kind: AgentWaiting | 'working'; text?: string }
+export interface SignalBody { kind: AgentWaiting | 'working'; text?: string; reply?: string } // reply: the turn's answer (idle), for Chat
 export type SourceResponse = SourceInfo; // GET /api/source
 export type SettingsResponse = Settings; // GET /api/settings; POST /api/settings takes Partial<Settings>, returns Settings
 
