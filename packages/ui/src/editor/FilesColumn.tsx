@@ -79,7 +79,8 @@ export function FilesColumn() {
           )}
         </InputGroup>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
+      {/* Radix lays the viewport's content out as a table, which grows to the longest name; as a block, names truncate. */}
+      <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
         <nav aria-label="Files" className="p-2">
           {loaded && !files.length && <p className="px-1 py-1.5 text-[13px] text-muted-foreground">{folder ? 'No documents' : nothingText(source)}</p>}
           {none ? (
