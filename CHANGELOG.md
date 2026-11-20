@@ -9,6 +9,22 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+### Added
+
+- Claude's answers reach Chat. When a turn ends, the plugin's Stop hook sends the turn's last message, so a question asked in Chat gets its answer there, not only in the terminal.
+- While the agent works, Chat and the terminal header show how long it has been at it. Typing a prompt in the terminal starts the clock.
+
+### Changed
+
+- Home is new. Trove's mark builds itself when Home opens: the orange T drops in block by block and a cube of glass blocks lights up around it, then it settles beside the title. Drag the mark to spin it; it springs back. The recents are one table, with the tabs, a count and Open in its header bar and pinned rows first. Home is always dark. The intro plays at most every ten minutes and never with Reduce Motion on.
+- The agent's terminal takes the Agent column's place instead of covering the document: ⌘J or the agent button switches between it and Chat, and dragging the column's edge sets its width. The agent button shows only the agent's name; what it is doing is in its tooltip and the terminal's header.
+- The Files tree nests folders like `tree`, each one opening and closing on its own.
+- Starting Claude Code again after Stop resumes the same session instead of starting a new one.
+
+### Fixed
+
+- The agent and the plugin's hooks find Trove's server for a folder inside a repository: the desktop starts the agent with `TROVE_PORT`.
+
 ## [0.8.0] - 2026-11-19
 
 Trove is no longer only for git repositories. A plain folder or a single

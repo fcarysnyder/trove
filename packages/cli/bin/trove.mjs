@@ -13,7 +13,7 @@
 // Without --port these find the server running on --root's repository, else on its folder or the nearest one above
 // (default: the current directory). --folder serves a folder inside a repository as a folder: no git writes.
 //   trove --selftest
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { text as stdin } from 'node:stream/consumers';
 import { fileURLToPath } from 'node:url';
@@ -52,6 +52,30 @@ async function firstLine(/** @type {number} */ port, /** @type {string | null} *
   return `${what} at http://127.0.0.1:${port}${file ? `/?file=${encodeURIComponent(file)}` : ''}; notices in ${source.body.eventsLog}; after each file run: ${invoked()} done <file> --port ${port}`;
 }
 
+/**
+ * What Claude Code's turn ended with, from a Stop hook's input: its last message, else the transcript's last text after
+ * the prompt (none when the turn only ran tools). Chat shows it, since the answer is otherwise only in the terminal.
+ */
+function lastReply(/** @type {any} */ input) {
+  if (typeof input.last_assistant_message === 'string') return input.last_assistant_message;
+  if (typeof input.transcript_path !== 'string') return undefined;
+  /** @type {string[]} */
+  let lines;
+  try { lines = readFileSync(input.transcript_path, 'utf8').trimEnd().split('\n'); } catch { return undefined; } // ponytail: whole file per turn; tail-read if transcripts get huge
+  for (let i = lines.length - 1; i >= 0; i--) {
+    /** @type {any} */
+    let e;
+    try { e = JSON.parse(lines[i]); } catch { continue; }
+    const c = e.message?.content;
+    if (e.type === 'user' && !e.isMeta && (typeof c === 'string' || c?.some?.((/** @type {any} */ b) => b.type === 'text'))) return undefined;
+    if (e.type === 'assistant' && Array.isArray(c)) {
+      const t = c.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+      if (t) return t;
+    }
+  }
+  return undefined;
+}
+
 // A Claude Code Notification's type -> what the page shows; other types are not signals.
 const NOTIFIED = { permission_prompt: 'permission', elicitation_dialog: 'question', idle_prompt: 'idle' };
 
@@ -72,10 +96,12 @@ async function signal(/** @type {string | undefined} */ kind, /** @type {{root: 
   const what = kind === 'notification' ? NOTIFIED[/** @type {keyof typeof NOTIFIED} */ (input.notification_type)] : kind;
   if (!['permission', 'question', 'idle', 'working'].includes(what ?? '')) return;
   const root = values.root !== '.' ? values.root : process.env.CLAUDE_PROJECT_DIR || input.cwd || '.';
-  const port = values.port ? Number(values.port) : (await running(root))?.port;
+  // TROVE_PORT: the desktop starts its agent with it, so a folder inside a repository (not the repository) is found.
+  const port = values.port ? Number(values.port) : Number(process.env.TROVE_PORT) || (await running(root))?.port;
   if (!port) return;
   const text = typeof input.tool_name === 'string' ? input.tool_name : typeof input.message === 'string' ? input.message : undefined;
-  await call(port, 'POST', '/api/signal', { kind: what, ...(text ? { text } : {}) });
+  const reply = kind === 'idle' ? lastReply(input) : undefined; // the Stop hook: the turn's answer
+  await call(port, 'POST', '/api/signal', { kind: what, ...(text ? { text } : {}), ...(reply ? { reply } : {}) });
 }
 
 async function main() {

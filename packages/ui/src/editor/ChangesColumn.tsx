@@ -1,8 +1,7 @@
 import type { AgentTool, Anchor, BlockEdit, CommentKind, Draft, FileRow } from '@trove/core/types';
-import { ChevronDown, CircleAlert, MessageCircleQuestion, MessageSquare, PanelRightClose, Pencil, Square, ChevronsRight, SquareTerminal, Trash, Undo2 } from 'lucide-react';
+import { ChevronDown, CircleAlert, MessageCircleQuestion, MessageSquare, PanelRightClose, Pencil, Square, SquareTerminal, Trash, Undo2 } from 'lucide-react';
 import { Tabs } from 'radix-ui';
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -16,7 +15,7 @@ import { load, save } from '@/lib/storage';
 import { nameOf, plural, reducedMotion, sendKey } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { loadAll, open, revertEdit, saveDrafts, send, sendable, setScope, togglePanel } from './actions';
-import { Count, IconButton, PathLabel, TAB } from './bits';
+import { Count, IconButton, PathLabel, TAB, useElapsed } from './bits';
 import { get, set, useNames, useStore } from './store';
 import { showBlock, showPassage } from './doc/commands';
 import { History, useUnread } from './Activity';
@@ -77,7 +76,9 @@ export function ChangesColumn() {
 
   const [tab, setTab] = useState(() => load('agent-tab', 'history'));
   const session = useSession();
-  const column = useRef<HTMLElement>(null);
+  const drawer = useStore((s) => s.drawer);
+  // The terminal shows in this column, so showing it shows the column.
+  useEffect(() => { if (drawer) togglePanel('changes', false); }, [drawer]);
   useEffect(() => {
     const show = () => { togglePanel('changes', false); setTab('history'); save('agent-tab', 'history'); };
     window.addEventListener('trove:chat', show);
@@ -105,7 +106,7 @@ export function ChangesColumn() {
   }
 
   return (
-    <section ref={column} aria-label="Agent" className="flex h-full min-w-0 flex-col">
+    <section aria-label="Agent" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">
         <span className="font-semibold text-foreground">Agent</span>
         <Notice />
@@ -125,7 +126,7 @@ export function ChangesColumn() {
         <IconButton side="bottom" label="Hide agent" tip="Hide agent (])" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
       </div>
       {/* The comments and edits still to send, and what went back and forth with the agent. */}
-      <Tabs.Root value={tab} onValueChange={(t) => { setTab(t); save('agent-tab', t); }} className="flex min-h-0 flex-1 flex-col">
+      <Tabs.Root value={tab} onValueChange={(t) => { setTab(t); save('agent-tab', t); }} hidden={!!session && drawer} className="min-h-0 flex-1 flex-col [&:not([hidden])]:flex">
         <div className="flex h-9 shrink-0 items-center gap-1 border-b pr-2 pl-4">
           <Tabs.List aria-label="Agent" className="flex h-full gap-4">
             <Tabs.Trigger value="history" className={TAB}>Chat{!!unread && <Count n={unread} className="bg-agent text-black" />}</Tabs.Trigger>
@@ -135,11 +136,11 @@ export function ChangesColumn() {
         <Tabs.Content value="changes" className="min-h-0 flex-1"><ScrollArea className="h-full">{body}</ScrollArea></Tabs.Content>
         <Tabs.Content value="history" className="min-h-0 flex-1"><History path={scope === 'file' ? current?.path : undefined} /></Tabs.Content>
       </Tabs.Root>
+      {session && <AgentTerminal session={session} />}
       <div className="flex min-h-12 shrink-0 items-center gap-2 border-t pr-4 pl-2.5">
         <AgentStatus session={session} />
         <SendButton />
       </div>
-      {session && <AgentDrawer session={session} column={column} />}
     </section>
   );
 }
@@ -187,10 +188,12 @@ function AgentStatus({ session }: { session: Session | null }) {
   };
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs">
+      {/* A toggle: the column shows the terminal or Chat and Changes. What the agent is doing is in its title. */}
       <button type="button" disabled={!session} onClick={() => set({ drawer: !drawer })} aria-pressed={session ? drawer : undefined}
-        className={cn('flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:hover:bg-muted', needs && 'text-ring')}>
+        title={`${name} ${state}${outside ? ` in ${outside}` : ''}`}
+        className={cn('flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:hover:bg-muted aria-pressed:bg-muted', needs && 'text-ring')}>
         <Dot needs={needs} live={connected || running} starting={!connected && running} />
-        <span className="min-w-0 truncate">{name} <span className={needs ? '' : 'text-muted-foreground'}>{state}{outside ? ` in ${outside}` : ''}</span></span>
+        <span className="min-w-0 truncate">{name}</span>
         {session && <><SquareTerminal className="size-3.5 shrink-0 text-muted-foreground" aria-hidden /><Kbd className="shrink-0">⌘J</Kbd></>}
       </button>
       {outside && <Button variant="outline" size="xs" onClick={() => void bridge!.showTerminal()}>Show {outside}</Button>}
@@ -209,33 +212,18 @@ function AgentStatus({ session }: { session: Session | null }) {
 }
 
 /**
- * The agent's terminal (desktop) as a drawer over the Agent column, from its right edge, at least wide enough for the
- * terminal to read (it reaches over the document). It stays mounted, so the session keeps running and its screen
- * survives closing. A permission prompt or question opens it; answering one in the terminal closes it again when it
- * was opened for that.
+ * The agent's terminal (desktop), in place of Chat and Changes while the toggle is on (⌘J): as wide as the column,
+ * which you drag. It stays mounted, so the session and its screen survive switching back. A permission prompt or
+ * question switches to it; answering one there switches back when it was switched for that.
  */
-function AgentDrawer({ session, column }: { session: Session; column: React.RefObject<HTMLElement | null> }) {
+function AgentTerminal({ session }: { session: Session }) {
   const open = useStore((s) => s.drawer);
   const needs = useNeedsYou();
   const info = useStore((s) => s.source?.agentInfo);
   const { name, state, running, connected, detail } = useAgentState(session);
-  const [box, setBox] = useState<{ top: number; right: number; height: number; width: number } | null>(null);
-  const auto = useRef(false); // opened for a prompt: it closes once answered
+  const took = useElapsed(state === 'working' ? info?.since : null);
+  const auto = useRef(false); // switched for a prompt: it switches back once answered
   const answered = useRef<string | null>(null);
-  useLayoutEffect(() => {
-    const el = column.current;
-    if (!el) return;
-    const place = () => {
-      const r = el.getBoundingClientRect();
-      // Beside the column, over the document: Chat stays in view.
-      setBox({ top: r.top, right: window.innerWidth - r.left, height: r.height, width: Math.min(720, r.left - 8) });
-    };
-    place();
-    const ro = new ResizeObserver(place);
-    ro.observe(el);
-    window.addEventListener('resize', place);
-    return () => { ro.disconnect(); window.removeEventListener('resize', place); };
-  }, [column]);
   useEffect(() => {
     if (!needs || !session.running || get().drawer) return;
     auto.current = true;
@@ -249,29 +237,23 @@ function AgentDrawer({ session, column }: { session: Session; column: React.RefO
     void api('signal', { kind: 'working' }).catch(() => {});
     if (auto.current) { auto.current = false; set({ drawer: false }); }
   };
-  if (!box) return null;
-  return createPortal(
-    <div role="dialog" aria-label={`${name} terminal`} aria-hidden={!open} inert={!open}
-      style={{ top: box.top, right: box.right, height: box.height, width: box.width }}
-      className={cn('fixed z-40 flex flex-col border-x bg-terminal shadow-2xl transition-[opacity,translate,visibility] duration-200 ease-out motion-reduce:transition-none', !open && 'invisible translate-x-6 opacity-0')}>
-      <div className={cn('flex h-11 shrink-0 items-center gap-1.5 border-b pr-2 pl-4 text-xs', needs && 'bg-ring/10')}>
+  return (
+    <div role="region" aria-label={`${name} terminal`} hidden={!open} className="min-h-0 flex-1 flex-col bg-terminal [&:not([hidden])]:flex">
+      <div className={cn('flex h-9 shrink-0 items-center gap-1.5 border-b pr-2 pl-4 text-xs', needs && 'bg-ring/10')}>
         <Dot needs={needs} live={connected || running} starting={!connected && running} />
         <span className={cn('min-w-0 truncate', needs ? 'font-semibold text-ring' : 'text-foreground')}>{name} <span className={needs ? '' : 'text-muted-foreground'}>{state}</span></span>
+        {took && <span className="shrink-0 text-muted-foreground tabular-nums">{took}</span>}
         {detail && <span className="min-w-0 truncate text-muted-foreground">{detail}</span>}
-        <span className="ml-auto flex shrink-0 items-center gap-1">
-          {running && (
-            <Button variant="outline" size="xs" className="text-destructive hover:text-destructive" onClick={() => void window.trove!.pty.kill()}>
-              <Square className="fill-current" />Stop {name}
-            </Button>
-          )}
-          <IconButton side="bottom" label="Hide terminal" tip={`Hide terminal (⌘J): ${name} keeps running`} onClick={() => { auto.current = false; set({ drawer: false }); }}><ChevronsRight /></IconButton>
-        </span>
+        {running && (
+          <Button variant="outline" size="xs" className="ml-auto shrink-0 text-destructive hover:text-destructive" onClick={() => void window.trove!.pty.kill()}>
+            <Square className="fill-current" />Stop
+          </Button>
+        )}
       </div>
       <div className="min-h-0 flex-1">
         <Suspense fallback={null}><Terminal header={null} onInput={typed} /></Suspense>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
 }
 

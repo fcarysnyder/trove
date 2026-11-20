@@ -629,6 +629,14 @@ async function agentCase(temps: string[]) {
   await call(port, 'POST', '/api/message', { text: 'Also this.' });
   assert.equal((await source()).agentInfo.waiting, 'question', 'but not a question');
   assert.equal((await signal({ kind: 'working' })).waiting, null);
+  // The Stop hook's reply: Chat shows the turn's answer once, and not when the agent already said it.
+  const said = async () => (await call(port, 'GET', '/api/activity')).body.entries.filter((e: any) => e.from === 'agent').map((e: any) => e.body);
+  assert.equal((await call(port, 'POST', '/api/signal', { kind: 'idle', reply: 7 })).status, 400);
+  await signal({ kind: 'idle', reply: ' Rendering needs a frame. ' });
+  await signal({ kind: 'idle', reply: 'Rendering needs a frame.' });
+  assert.deepEqual(await said(), ['Rendering needs a frame.'], 'the reply is a message, once');
+  await signal({ kind: 'permission', reply: 'Not an answer.' });
+  assert.deepEqual(await said(), ['Rendering needs a frame.'], 'only idle carries a reply');
   await app.close();
   ({ app, port } = await listen({ root, agent: 'claude' }));
   assert.deepEqual([(await source()).agentInfo.label, (await source()).agentInfo.connected], ['Claude', true], 'the serving agent is attached');
