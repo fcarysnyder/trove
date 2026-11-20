@@ -101,7 +101,7 @@ export default function Cube({ intro, onIntroDone }: { intro: boolean; onIntroDo
     for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) {
       const isT = x === 0 && (y === 1 || z === 0), p = new THREE.Vector3(x * S, y * S, z * S);
       if (isT) {
-        const m = new THREE.Mesh(tBox, metal); m.position.copy(p);
+        const m = new THREE.Mesh(tBox, metal.clone()); m.position.copy(p); // its own copy, to fade in on its own
         // Drop order: stem bottom, stem middle, centre, then the arms.
         m.userData = { rest: p.clone(), k: y === 1 ? (z === 0 ? 2 : z === 1 ? 3 : 4) : y === 0 ? 1 : 0 };
         const h = new THREE.Sprite(haloMat); h.scale.setScalar(P.halo.size); h.renderOrder = -1; m.add(h);
@@ -123,7 +123,10 @@ export default function Cube({ intro, onIntroDone }: { intro: boolean; onIntroDo
       const t = now - t0;
       tops.forEach((m, n) => {
         const s = 300 + n * 260, u = Math.min(1, Math.max(0, (t - s) / 420));
-        m.visible = t >= s; m.position.y = m.userData.rest.y + (1 - easeBack(u)) * 7;
+        // A short drop, fading in, so no block is seen cut off by the canvas's edge.
+        const mat = m.material as THREE.MeshPhysicalMaterial, fade = Math.min(1, u / 0.4);
+        mat.transparent = fade < 1; mat.opacity = fade;
+        m.visible = t >= s; m.position.y = m.userData.rest.y + (1 - easeBack(u)) * 1.6;
       });
       const gt = Math.max(0, t - 1700), lit = Math.min(1, gt / 700);
       glass.forEach(({ m, d }) => { const u = Math.min(1, Math.max(0, (gt - d * 110) / 450)); m.scale.setScalar(Math.max(0.001, easeBack(u))); });
@@ -167,7 +170,7 @@ export default function Cube({ intro, onIntroDone }: { intro: boolean; onIntroDo
       }
       // Flicker: three slow, uneven waves, like embers; off when motion is reduced.
       const t = now / 1000, f = still ? 1 : 1 + P.flicker * 0.18 * (0.5 * Math.sin(t * 1.3) + 0.3 * Math.sin(t * 3.1 + 1.7) + 0.2 * Math.sin(t * 7.7 + 4.1));
-      metal.emissiveIntensity = (0.1 + (P.metal.glow - 0.1) * lit) * f;
+      tops.forEach((m) => ((m.material as THREE.MeshPhysicalMaterial).emissiveIntensity = (0.1 + (P.metal.glow - 0.1) * lit) * f));
       haloMat.opacity = P.halo.opacity * lit * f; bigHaloMat.opacity = P.halo.bigOpacity * lit * f; U.uLit.value = lit * f;
       g.updateMatrixWorld(); tops.forEach((m, i) => m.getWorldPosition(lamps[i]));
       r.render(scene, cam);
@@ -178,7 +181,7 @@ export default function Cube({ intro, onIntroDone }: { intro: boolean; onIntroDo
     return () => {
       cancelAnimationFrame(raf); ro.disconnect();
       el.removeEventListener('pointerdown', down); el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up);
-      [tBox, gBox].forEach((x) => x.dispose()); [metal, glassMat, haloMat, bigHaloMat].forEach((m) => m.dispose());
+      [tBox, gBox].forEach((x) => x.dispose()); [metal, glassMat, haloMat, bigHaloMat, ...tops.map((m) => m.material as THREE.Material)].forEach((m) => m.dispose());
       brush.dispose(); pmrem.dispose(); scene.environment?.dispose(); r.dispose(); r.domElement.remove();
     };
   }, [intro]);

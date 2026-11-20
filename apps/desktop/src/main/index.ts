@@ -461,14 +461,21 @@ function openStart(): void {
     startWin.focus();
     return;
   }
+  // Home is a fixed size; it shows once its first frame is drawn, so it never opens blank.
   const win = new BrowserWindow({
-    width: 1170,
-    height: 792,
+    width: 820,
+    height: 720,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    show: false,
+    backgroundColor: '#111111',
     title: 'Trove',
     ...frame,
     webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   startWin = win;
+  win.once('ready-to-show', () => win.show());
   win.on('closed', () => {
     if (startWin === win) startWin = null;
   });

@@ -22,7 +22,9 @@ import { IconButton, TAB, TitleStrip } from '@/editor/bits';
 import { Tabs } from 'radix-ui';
 import { toast } from 'sonner';
 
-const Cube = lazy(() => import('./Cube'));
+// The cube's code starts loading with the page, not when Home first renders.
+const cubeChunk = import('./Cube');
+const Cube = lazy(() => cubeChunk);
 
 // The intro plays when Home opens, at most every ten minutes (once per module load, so StrictMode's double render agrees).
 const INTRO = (() => {
@@ -40,7 +42,8 @@ export function Start() {
   return (
     <TooltipProvider delayDuration={300}>
       <div className="fixed inset-x-0 top-0 z-10 [&>div]:border-b-0"><TitleStrip /></div>
-      <main className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-6 pt-20 pb-16">
+      {/* A fixed-size window: the page never scrolls (the table's rows do) and the mark's glow is clipped to it. */}
+      <main className="mx-auto flex h-dvh w-full max-w-2xl flex-col gap-8 overflow-x-clip px-6 pt-20 pb-6 [&>*:last-child]:min-h-0 [&>*:last-child]:flex-1">
         {window.trove ? <Screens /> : <NoBridge />}
       </main>
       <Toaster position="bottom-right" />
@@ -73,10 +76,10 @@ function Screens() {
   const [screen, setScreen] = useState<'home' | 'open' | null>(null);
   const reload = async () => {
     const list = await bridge.recents().catch(() => []);
-    const res = await Promise.all(list.map((r) => bridge.probe(r.path).catch(() => null)));
-    setProbes(new Map(list.map((r, k) => [r.path, res[k]])));
     setRecents(list);
     setScreen((s) => s ?? (list.length ? 'home' : 'open'));
+    // Each recent's branch fills in as git answers; Home doesn't wait for them.
+    list.forEach((r) => void bridge.probe(r.path).catch(() => null).then((p) => setProbes((m) => new Map(m).set(r.path, p))));
   };
   useEffect(() => { void reload(); }, []);
   if (!recents || !screen) return null;
@@ -119,22 +122,22 @@ function Home({ recents, probes, reload, onOpen }: { recents: Recent[]; probes: 
     </section>
   );
   return (
-    <div data-phase={phase} className="group/home relative">
+    <div data-phase={phase} className="group/home relative flex flex-col">
       {/* One fixed size, scaled down into the header: resizing the canvas mid-move would blank it. */}
       <div aria-hidden className={cn('absolute z-10 size-[440px] origin-top-left transition-[left,top,scale] duration-700 ease-[cubic-bezier(.7,0,.2,1)] motion-reduce:transition-none',
-        phase === 'intro' ? 'top-6 left-[calc(50%-220px)]' : '-top-8 left-[calc(100%-216px)] scale-[.51]')}>
+        phase === 'intro' ? 'top-16 left-[calc(50%-132px)] scale-[.6]' : 'top-7 left-[calc(100%-124px)] scale-[.24]')}>
         {/* The T's light on the room: a soft wash that moves with the cube. */}
         <div className="pointer-events-none absolute -inset-[110%] rounded-full bg-[radial-gradient(closest-side,rgba(246,142,54,.09),rgba(246,142,54,.03)_45%,transparent)]" />
         <Suspense fallback={null}><Cube intro={INTRO} onIntroDone={() => setPhase('ui')} /></Suspense>
       </div>
-      <header {...drop(0)} className={cn(drop(0).className, 'flex h-40 flex-col justify-center pr-48 pl-4')}>
+      <header {...drop(0)} className={cn(drop(0).className, 'flex h-40 shrink-0 flex-col justify-center pr-48 pl-4')}>
         <h1 className="text-[44px] leading-none font-semibold tracking-tight text-foreground">Trove</h1>
         <p className="mt-3 text-base text-muted-foreground">Read, mark up and hand off docs to your agent</p>
       </header>
-      <div {...drop(1)} className={cn(drop(1).className, 'relative mt-6 overflow-hidden rounded-lg border bg-card/60')}>
+      <div {...drop(1)} className={cn(drop(1).className, 'relative mt-6 flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card/60')}>
         <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent_25%,rgba(255,160,90,.55)_72%,rgba(255,160,90,.55)_82%,transparent)]" />
         <span aria-hidden className="pointer-events-none absolute top-0 right-0 left-2/5 h-12 bg-[radial-gradient(55%_100%_at_68%_0,rgba(246,142,54,.07),transparent)]" />
-        <Tabs.Root value={show} onValueChange={(v) => { setShow(v as Show); save('start-show', v); }}>
+        <Tabs.Root className="shrink-0" value={show} onValueChange={(v) => { setShow(v as Show); save('start-show', v); }}>
           <div className="relative flex h-12 items-center gap-4 border-b bg-secondary/40 pr-2.5 pl-4">
             <Tabs.List aria-label="Show" className="flex h-full gap-4">
               {(['all', 'folders', 'files'] as const).map((v) => <Tabs.Trigger key={v} value={v} className={TAB}>{v[0]!.toUpperCase() + v.slice(1)}</Tabs.Trigger>)}
@@ -144,7 +147,9 @@ function Home({ recents, probes, reload, onOpen }: { recents: Recent[]; probes: 
             <Button size="sm" onClick={onOpen}>Open</Button>
           </div>
         </Tabs.Root>
-        {shown.length ? <>{rows('Pinned', pinned)}{rows('Recent', rest)}</> : <p className="px-4 py-3 text-sm text-muted-foreground">Nothing here yet</p>}
+        <div className="min-h-0 overflow-y-auto">
+          {shown.length ? <>{rows('Pinned', pinned)}{rows('Recent', rest)}</> : <p className="px-4 py-3 text-sm text-muted-foreground">Nothing here yet</p>}
+        </div>
       </div>
     </div>
   );
