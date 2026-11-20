@@ -104,8 +104,9 @@ export function show(file: FileResponse) {
 export const showInFolder = (path: string) => api('reveal', { path }).catch((e: Error) => toast.error(e.message));
 
 export async function reveal(path: string) {
-  const dir = path.split('/').slice(0, -1).join('/');
-  set((s) => ({ closedDirs: s.closedDirs.filter((d) => d !== dir) }));
+  // Every folder above it opens, the root ('') included.
+  const above = (d: string) => d === '' || path.startsWith(`${d}/`);
+  set((s) => ({ closedDirs: s.closedDirs.filter((d) => !above(d)) }));
   await open(path);
   requestAnimationFrame(() => document.querySelector('[data-tree-row][aria-current]')?.scrollIntoView({ block: 'nearest' }));
 }

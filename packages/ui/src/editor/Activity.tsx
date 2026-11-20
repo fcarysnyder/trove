@@ -19,6 +19,7 @@ import { load, save } from '@/lib/storage';
 import { nameOf, plural, sendKey } from '@/lib/text';
 import { cn } from '@/lib/utils';
 import { flash, reveal, sendMessage } from './actions';
+import { useElapsed } from './bits';
 import { PathMenu } from './PathMenu';
 import { get, set, useNames, useStore, type ChatRef } from './store';
 
@@ -287,10 +288,12 @@ function useWorking(path?: string) {
 
 function Working({ tool }: { tool: string }) {
   const n = useNames();
+  const took = useElapsed(useStore((s) => s.source?.agentInfo?.since));
   return (
-    <li className="flex items-center gap-2 text-[13px]" aria-live="polite">
+    <li className="flex items-center gap-2 text-[13px]">
       <Spinner className="size-3.5 text-muted-foreground" />
       <Shimmer as="span">{`${n.Agent} is working`}</Shimmer>
+      {took && <span className="text-muted-foreground tabular-nums">{took}</span>}
       {tool && <span className="min-w-0 truncate text-muted-foreground">{tool}</span>}
     </li>
   );
