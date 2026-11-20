@@ -9,6 +9,10 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+### Changed
+
+- Home is new. Trove's mark builds itself when Home opens: the orange T drops in block by block and a cube of glass blocks lights up around it, then it settles beside the title. Drag the mark to spin it; it springs back. The recents are one table, with the tabs, a count and Open in its header bar and pinned rows first. Home is always dark. The intro plays at most every ten minutes and never with Reduce Motion on.
+
 ## [0.8.0] - 2026-11-19
 
 Trove is no longer only for git repositories. A plain folder or a single
