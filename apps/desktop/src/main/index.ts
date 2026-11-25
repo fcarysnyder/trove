@@ -64,11 +64,37 @@ function probe(path: string) {
 /** A recent as it was last opened: its file in its folder, else the source with its kind and scope. */
 const openRecent = (r: Recent) => openSource(r.file && existsSync(r.file) ? { path: r.file } : { path: r.path, scope: r.scope, base: r.base, kind: r.kind });
 
-/** Opens with the kind and scope the source was last opened with, else the source's settings. */
-function reopen(path: string): Promise<void> {
+/** A folder inside a repository asks how to open; any other opens with the kind and scope it was last opened with. */
+async function reopen(path: string): Promise<void> {
   const abs = resolve(path);
   const last = readRecents().find((r) => r.path === abs);
+  const git = isTop(abs) ? null : probeGit(abs);
+  // A folder inside a repository asks every time, as Home's Open does; the repository's own folder opens as it.
+  if (git) {
+    const tilde = (p: string) => p.replace(homedir(), '~');
+    const as = await askKind(abs, git, tilde);
+    if (as === null) return void (BrowserWindow.getAllWindows().length || openStart()); // cancelled from Finder: still a window
+    const root = as === 'git' ? git.worktree.path : abs;
+    const was = readRecents().find((r) => r.path === root && r.kind === as);
+    return openSource({ path: root, kind: as, scope: was?.scope, base: was?.base });
+  }
   return openSource({ path: abs, scope: last?.scope, base: last?.base, kind: last?.kind });
+}
+
+/** The native form of Home's question: stay with this folder, or open the repository it is in. */
+async function askKind(abs: string, git: NonNullable<ReturnType<typeof probeGit>>, tilde: (p: string) => string): Promise<SourceKind | null> {
+  const opts = {
+    type: 'question' as const,
+    message: 'This folder is in a git repository',
+    detail: `${basename(abs)} is inside ${git.repo.name}. Open the repository to work with its branch, or stay with this folder.\n\n`
+      + `Folder: ${tilde(abs)}\nRepository: ${tilde(git.worktree.path)}${git.branch ? `\nBranch: ${git.branch}` : ''}`,
+    buttons: ['Stay with folder', 'Open repository', 'Cancel'],
+    defaultId: 0,
+    cancelId: 2,
+  };
+  const parent = BrowserWindow.getFocusedWindow();
+  const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+  return response === 0 ? 'folder' : response === 1 ? 'git' : null;
 }
 
 /** The doc types' extensions: what Finder, File > Open and a drop open as a document. */

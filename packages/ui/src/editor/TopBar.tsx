@@ -51,11 +51,13 @@ export function TopBar() {
         <Switcher />
       </div>
       <div className="flex items-center gap-2">
-        {/* A folder has no review to make progress on. */}
-        {!folder && <Progress />}
-        <span className="text-xs text-muted-foreground tabular-nums">{pos || '–'} / {list.length}</span>
-        <IconButton label="Previous file" tip="Previous file (←, k)" onClick={() => step(-1)}><ChevronLeft /></IconButton>
-        <IconButton label="Next file" tip="Next file (→, j)" onClick={() => step(1)}><ChevronRight /></IconButton>
+        {/* A folder is browsed in its tree, not reviewed in order: no progress, count or stepping. */}
+        {!folder && <>
+          <Progress />
+          <span className="text-xs text-muted-foreground tabular-nums">{pos || '–'} / {list.length}</span>
+          <IconButton label="Previous file" tip="Previous file (←, k)" onClick={() => step(-1)}><ChevronLeft /></IconButton>
+          <IconButton label="Next file" tip="Next file (→, j)" onClick={() => step(1)}><ChevronRight /></IconButton>
+        </>}
       </div>
       <div className="flex items-center justify-self-end gap-2">
         {offline && (

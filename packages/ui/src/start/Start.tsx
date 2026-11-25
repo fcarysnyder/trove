@@ -6,9 +6,10 @@
 import type { GitProbe, Recent, UpdateState } from '@trove/core/types';
 import { recentName } from '@trove/core/types';
 import { ArrowLeft, ChevronRight, FileCode, FileText, Folder, FolderOpen, GitBranch, Pin, X } from 'lucide-react';
-import { lazy, Suspense, useEffect, useState, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, lazy, Suspense, useEffect, useState, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Kbd } from '@/components/ui/kbd';
@@ -19,7 +20,7 @@ import { dirOf, nameOf, tilde } from '@/lib/text';
 import { applyTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 import { IconButton, TAB, TitleStrip } from '@/editor/bits';
-import { Tabs } from 'radix-ui';
+import { RadioGroup, Tabs } from 'radix-ui';
 import { toast } from 'sonner';
 
 // The cube's code starts loading with the page, not when Home first renders.
@@ -285,16 +286,70 @@ const CloneArt = () => (
   </svg>
 );
 
+/** A folder's name in the repository dialog, set like code so it reads as the name on disk. */
+const Name = ({ children }: { children: ReactNode }) => <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[0.9em] text-foreground">{children}</code>;
+
+/** One of the repository dialog's two ways to open, picked like a radio. */
+function Choice({ value, icon, title, name, rows }: { value: string; icon: ReactNode; title: string; name: string; rows: [string, string][] }) {
+  return (
+    <RadioGroup.Item value={value}
+      className="group grid grid-cols-[16px_minmax(0,1fr)_16px] gap-x-3 rounded-lg border bg-card/40 px-4 py-3.5 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring data-[state=checked]:border-primary/70 data-[state=checked]:bg-primary/5 [&>svg]:mt-0.5 [&>svg]:size-4 [&>svg]:text-muted-foreground">
+      {icon}
+      <span className="min-w-0">
+        <span className="flex items-center gap-2 text-sm font-medium text-foreground">{title}<Name>{name}</Name></span>
+        <span className="mt-2 grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
+          {rows.map(([k, v]) => <Fragment key={k}><span className="text-muted-foreground">{k}</span><span className="font-mono break-all text-foreground">{v}</span></Fragment>)}
+        </span>
+      </span>
+      <span aria-hidden className="mt-0.5 grid size-4 place-items-center rounded-full border group-data-[state=checked]:border-primary">
+        <span className="size-2 rounded-full bg-primary opacity-0 group-data-[state=checked]:opacity-100" />
+      </span>
+    </RadioGroup.Item>
+  );
+}
+
 function OpenScreen({ onBack }: { onBack: () => void }) {
   const bridge = window.trove!;
   const [cloning, setCloning] = useState(false);
   // A repository's top-level folder opens as the repository; main decides, as it does for ⌘O and a drop.
-  const folder = () => bridge.pickFolder().then((res) => res && bridge.open({ path: res.path })).catch(fail);
+  // Inside a repository (not its top), ask: this folder as its own root, or the whole repository with git.
+  const [inside, setInside] = useState<{ path: string; git: GitProbe } | null>(null);
+  const [asGit, setAsGit] = useState(false);
+  const folder = () => bridge.pickFolder().then((res) => {
+    if (!res) return;
+    // A folder inside a repository asks every time; the repository's own folder opens as the repository.
+    if (res.git && res.git.worktree.path !== res.path) { setAsGit(false); setInside({ path: res.path, git: res.git }); }
+    else return bridge.open({ path: res.path });
+  }).catch(fail);
+  const choose = () => {
+    const pick = inside!;
+    setInside(null);
+    void bridge.open(asGit ? { path: pick.git.worktree.path, kind: 'git' } : { path: pick.path, kind: 'folder' }).catch(fail);
+  };
   const file = () => bridge.pickFile().then((path) => (path ? bridge.open({ path }) : undefined)).catch(fail);
   return (
     <>
       <div className="-mb-4"><Button variant="ghost" size="sm" className="-ml-2.5" onClick={onBack}><ArrowLeft />Back</Button></div>
       <Title>Open</Title>
+      <Dialog open={!!inside} onOpenChange={(o) => { if (!o) setInside(null); }}>
+        {inside && <DialogContent className="gap-5 p-6 sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>This folder is in a git repository</DialogTitle>
+            <DialogDescription className="leading-relaxed text-pretty">
+              <Name>{nameOf(inside.path)}</Name> is inside <Name>{inside.git.repo.name}</Name>. Open the repository to work with its branch, or stay with this folder.
+            </DialogDescription>
+          </DialogHeader>
+          <RadioGroup.Root aria-label="Open" value={asGit ? 'git' : 'folder'} onValueChange={(v) => setAsGit(v === 'git')} className="flex flex-col gap-2.5">
+            <Choice value="folder" icon={<Folder />} title="Stay with folder" name={nameOf(inside.path)} rows={[['Path', tilde(inside.path)]]} />
+            <Choice value="git" icon={<GitBranch />} title="Open repository" name={inside.git.repo.name}
+              rows={[['Path', tilde(inside.git.worktree.path)], ...(inside.git.branch ? [['↳ Branch', inside.git.branch] as [string, string]] : [])]} />
+          </RadioGroup.Root>
+          <DialogFooter className="sm:justify-between">
+            <Button variant="ghost" className="-ml-2.5" onClick={() => { setInside(null); void folder(); }}><ArrowLeft />Choose another folder</Button>
+            <Button autoFocus onClick={choose}>{asGit ? 'Open repository' : 'Stay with folder'}</Button>
+          </DialogFooter>
+        </DialogContent>}
+      </Dialog>
       <div className="grid grid-cols-1 gap-3 min-[560px]:grid-cols-3">
         <Card art={<FolderArt />} icon={<FolderOpen />} title="Folder" end={<Kbd>⌘O</Kbd>} onClick={() => void folder()} />
         <Card art={<FileArt />} icon={<FileText />} title="File" end={<Kbd>⇧⌘O</Kbd>} onClick={() => void file()} />
