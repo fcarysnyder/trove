@@ -2022,7 +2022,7 @@ function createApp(o) {
   }));
   if (serving) saveState();
   const REJECTED = [409, { error: "Rejected: restore it first" }];
-  const KEEP = 200;
+  const KEEP = 600;
   const activity = [];
   const persist = (e) => appendFileSync(files.activity, `${JSON.stringify(e)}
 `);
@@ -2038,7 +2038,8 @@ function createApp(o) {
     for (const c of items) n[c.path] = (n[c.path] ?? 0) + 1;
     return n;
   };
-  const sentEntry = (b) => ({ id: b.id, at: b.sentAt, kind: "batch", text: b.id, comments: b.items.length, paths: Object.keys(counts(b.items)), counts: counts(b.items) });
+  const explains = (items) => items.filter((c) => c.kind === "explain").length;
+  const sentEntry = (b) => ({ id: b.id, at: b.sentAt, kind: "batch", text: b.id, comments: b.items.length, explains: explains(b.items), paths: Object.keys(counts(b.items)), counts: counts(b.items) });
   const byId = /* @__PURE__ */ new Map();
   for (const e of jsonl(files.activity)) if (e?.id) byId.set(e.id, e);
   for (const b of jsonl(files.batches)) if (b?.id && !byId.has(b.id)) byId.set(b.id, sentEntry(b));
@@ -2390,6 +2391,7 @@ function createApp(o) {
       }
       source.unstage(rel);
       write(rel, next);
+      note("edit", rel, { from: "user", paths: [rel] });
       if (versions) return versions.add(rel, "user", next), setUnsaved(rel, null), [200, { hash: sha(next) }];
       const e = edits();
       const rec = e[rel] ??= { before: text, blocks: [] };
@@ -2466,7 +2468,7 @@ function createApp(o) {
       const sentAt = (/* @__PURE__ */ new Date()).toISOString();
       appendFileSync(files.batches, `${JSON.stringify({ id, sentAt, items })}
 `);
-      note("batch", id, { id, at: sentAt, comments: items.length, paths: [...sentPaths], counts: counts(items) });
+      note("batch", id, { id, at: sentAt, comments: items.length, explains: explains(items), paths: [...sentPaths], counts: counts(items) });
       resumed();
       saveDrafts(keep);
       const notice = `batch ${id}: ${items.length} ${items.length === 1 ? "comment" : "comments"} on ${sentPaths.size} ${sentPaths.size === 1 ? "file" : "files"}. Read it with: grep -F ${id} '${files.batches}'`;
@@ -2559,18 +2561,25 @@ function createApp(o) {
     },
     "GET /api/activity": () => (follow(), [200, { entries: activity }]),
     // `trove signal` from the agent's hooks, and the desktop's terminal: what the agent waits on the user for. The last one wins.
-    // reply: the answer the agent's turn ended with (Claude Code's Stop hook), shown in Chat unless the agent already said it.
-    "POST /api/signal": (_2, { kind, text, reply }) => {
+    // end: the agent's turn is over (Claude Code's Stop hook), reply its last message.
+    "POST /api/signal": (_2, { kind, text, reply, end }) => {
       if (!["permission", "question", "idle", "working"].includes(kind)) return [400, { error: "kind is permission, question, idle or working" }];
       if (text !== void 0 && typeof text !== "string" || reply !== void 0 && typeof reply !== "string") return [400, { error: "text and reply are strings" }];
-      const body = kind === "idle" ? reply?.trim().slice(0, 2e4) : void 0;
-      if (body) {
-        const since = activity.findLastIndex((e) => e.from === "user");
-        if (!activity.slice(since + 1).some((e) => e.from === "agent" && e.body === body)) note("message", "", { from: "agent", body });
+      if (end === true) {
+        const body = reply?.trim().slice(0, 2e4);
+        note("end", "", { from: "agent", ...body ? { body } : {} });
       }
       if (kind === "working") unwait();
       else signal2 = { waiting: kind, ...text?.trim() ? { text: text.trim().slice(0, 200) } : {}, since: (/* @__PURE__ */ new Date()).toISOString() };
       return [200, agentInfo()];
+    },
+    // Claude Code's hooks: a prompt submitted, a tool call finished. Activity groups them into turns.
+    "POST /api/turn": (_2, { event, text, tool, added, removed }) => {
+      const count = (n) => n === void 0 || Number.isInteger(n) && n >= 0;
+      if (event !== "prompt" && event !== "step" || typeof text !== "string" || tool !== void 0 && typeof tool !== "string" || !count(added) || !count(removed))
+        return [400, { error: "event is prompt or step, text a string, added and removed counts" }];
+      const e = note(event, text.trim().slice(0, 500), { ...tool ? { tool: tool.slice(0, 60) } : {}, ...added !== void 0 ? { added } : {}, ...removed !== void 0 ? { removed } : {} });
+      return [200, e];
     },
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
     // The file in the system's file manager. Never a shell: the path is one argument.
@@ -2930,9 +2939,9 @@ async function gitCase(temps) {
   writeFileSync4(join5(ui, "index.html"), "<!doctype html><title>Trove</title>");
   writeFileSync4(join5(ui, "assets", "app.js"), "export {};\n");
   writeFileSync4(join5(tmpdir(), "trove-outside.txt"), "secret");
-  const lines = [];
+  const lines2 = [];
   const opts = { root, exclude: ["gen/**"] };
-  const { app, port } = await listen({ ...opts, quietMs: 300, log: (l3) => lines.push(l3), uiDir: ui });
+  const { app, port } = await listen({ ...opts, quietMs: 300, log: (l3) => lines2.push(l3), uiDir: ui });
   const stateDir = app.info().stateDir;
   const files = { drafts: join5(stateDir, "drafts.json"), edits: join5(stateDir, "edits.json"), batches: join5(stateDir, "batches.jsonl") };
   assert.equal(readFileSync4(join5(gitDir, "trove", "events.log"), "utf8"), "old\n", "doc-review/ became trove/");
@@ -3091,9 +3100,9 @@ async function gitCase(temps) {
   assert.deepEqual([sent.body.comments, sent.body.files, sent.body.locked], [2, 2, ["a.md"]]);
   assert.deepEqual(await states(), { "a.md": "working", "b.md": "queue", "c.html": "queue", "r \xE9 \xF1.md": "accepted" }, "explain-only files do not lock");
   assert.equal(staged(), "", "sending unstages");
-  assert.deepEqual(lines, [`batch ${sent.body.id}: 2 comments on 2 files. Read it with: grep -F ${sent.body.id} '${files.batches}'`]);
+  assert.deepEqual(lines2, [`batch ${sent.body.id}: 2 comments on 2 files. Read it with: grep -F ${sent.body.id} '${files.batches}'`]);
   assert.equal(readFileSync4(join5(stateDir, "events.log"), "utf8"), `old
-${lines[0]}
+${lines2[0]}
 `, "the notice goes to the events log");
   assert.equal(JSON.parse(readFileSync4(files.batches, "utf8")).items.length, 2);
   assert.deepEqual(JSON.parse(readFileSync4(files.drafts, "utf8")), {});
@@ -3197,8 +3206,8 @@ ${lines[0]}
   const head = sh("rev-parse", "HEAD");
   const pr = await post("/api/pr", {});
   assert.equal(pr.status, 200);
-  assert.equal(lines.at(-1), `pr ${pr.body.id}: the review is done; commit the ${pr.body.files} staged files and open a pull request.`);
-  assert.equal(readFileSync4(join5(stateDir, "events.log"), "utf8").trim().split("\n").at(-1), lines.at(-1), "the request goes to the events log");
+  assert.equal(lines2.at(-1), `pr ${pr.body.id}: the review is done; commit the ${pr.body.files} staged files and open a pull request.`);
+  assert.equal(readFileSync4(join5(stateDir, "events.log"), "utf8").trim().split("\n").at(-1), lines2.at(-1), "the request goes to the events log");
   assert.equal(sh("rev-parse", "HEAD"), head, "Trove never commits");
   await app.close();
   rmSync4(join5(tmpdir(), "trove-outside.txt"), { force: true });
@@ -3387,13 +3396,18 @@ async function agentCase(temps) {
   await call(port, "POST", "/api/message", { text: "Also this." });
   assert.equal((await source()).agentInfo.waiting, "question", "but not a question");
   assert.equal((await signal2({ kind: "working" })).waiting, null);
-  const said = async () => (await call(port, "GET", "/api/activity")).body.entries.filter((e) => e.from === "agent").map((e) => e.body);
   assert.equal((await call(port, "POST", "/api/signal", { kind: "idle", reply: 7 })).status, 400);
-  await signal2({ kind: "idle", reply: " Rendering needs a frame. " });
-  await signal2({ kind: "idle", reply: "Rendering needs a frame." });
-  assert.deepEqual(await said(), ["Rendering needs a frame."], "the reply is a message, once");
-  await signal2({ kind: "permission", reply: "Not an answer." });
-  assert.deepEqual(await said(), ["Rendering needs a frame."], "only idle carries a reply");
+  assert.equal((await call(port, "POST", "/api/turn", { event: "nap", text: "x" })).status, 400);
+  assert.equal((await call(port, "POST", "/api/turn", { event: "step", text: "a.md", added: -1 })).status, 400);
+  await call(port, "POST", "/api/turn", { event: "prompt", text: " Shorten it " });
+  await call(port, "POST", "/api/turn", { event: "step", text: "a.md", tool: "Edit", added: 2, removed: 5 });
+  await signal2({ kind: "idle", reply: " Shortened. ", end: true });
+  await signal2({ kind: "idle", reply: "Not a turn end." });
+  const turn = (await call(port, "GET", "/api/activity")).body.entries.filter((e) => ["prompt", "step", "end"].includes(e.kind));
+  assert.deepEqual(
+    turn.map((e) => [e.kind, e.text, e.tool, e.added, e.removed, e.body]),
+    [["prompt", "Shorten it", void 0, void 0, void 0, void 0], ["step", "a.md", "Edit", 2, 5, void 0], ["end", "", void 0, void 0, void 0, "Shortened."]]
+  );
   await app.close();
   ({ app, port } = await listen({ root, agent: "claude" }));
   assert.deepEqual([(await source()).agentInfo.label, (await source()).agentInfo.connected], ["Claude", true], "the serving agent is attached");
@@ -3624,16 +3638,16 @@ async function firstLine(port, file = null) {
 function lastReply(input) {
   if (typeof input.last_assistant_message === "string") return input.last_assistant_message;
   if (typeof input.transcript_path !== "string") return void 0;
-  let lines;
+  let lines2;
   try {
-    lines = readFileSync5(input.transcript_path, "utf8").trimEnd().split("\n");
+    lines2 = readFileSync5(input.transcript_path, "utf8").trimEnd().split("\n");
   } catch {
     return void 0;
   }
-  for (let i = lines.length - 1; i >= 0; i--) {
+  for (let i = lines2.length - 1; i >= 0; i--) {
     let e;
     try {
-      e = JSON.parse(lines[i]);
+      e = JSON.parse(lines2[i]);
     } catch {
       continue;
     }
@@ -3645,6 +3659,19 @@ function lastReply(input) {
     }
   }
   return void 0;
+}
+var QUIET = /* @__PURE__ */ new Set(["TodoWrite", "ToolSearch", "Monitor", "TaskOutput"]);
+var lines = (t) => typeof t === "string" && t ? t.split("\n").length : 0;
+function stepOf(input) {
+  const tool = input.tool_name, i = input.tool_input ?? {};
+  if (typeof tool !== "string" || QUIET.has(tool)) return null;
+  if (tool === "Bash" && /trove\.mjs|\btrove (attach|info|done|say|signal)\b/.test(String(i.command))) return null;
+  const file = i.file_path ?? i.notebook_path;
+  const inside = typeof file === "string" && typeof input.cwd === "string" ? relative2(input.cwd, file) : "";
+  const text = String((typeof file === "string" ? inside && !inside.startsWith("..") ? inside : basename5(file) : null) ?? i.command ?? i.pattern ?? i.url ?? i.query ?? i.description ?? "").split("\n")[0];
+  const edits = tool === "MultiEdit" && Array.isArray(i.edits) ? i.edits : tool === "Edit" ? [i] : null;
+  const diff = edits ? { added: edits.reduce((n, e) => n + lines(e.new_string), 0), removed: edits.reduce((n, e) => n + lines(e.old_string), 0) } : tool === "Write" ? { added: lines(i.content) } : {};
+  return { event: "step", tool, text, ...diff };
 }
 var NOTIFIED = { permission_prompt: "permission", elicitation_dialog: "question", idle_prompt: "idle" };
 async function signal(kind, values) {
@@ -3661,13 +3688,23 @@ async function signal(kind, values) {
     /** @type {keyof typeof NOTIFIED} */
     input.notification_type
   ] : kind;
-  if (!["permission", "question", "idle", "working"].includes(what ?? "")) return;
-  const root = values.root !== "." ? values.root : process.env.CLAUDE_PROJECT_DIR || input.cwd || ".";
-  const port = values.port ? Number(values.port) : Number(process.env.TROVE_PORT) || (await running(root))?.port;
+  if (!["permission", "question", "idle", "working", "prompt", "step"].includes(what ?? "")) return;
+  const port = Number(values.port) || Number(process.env.TROVE_PORT);
   if (!port) return;
+  if (what === "step") {
+    const step = stepOf(input);
+    if (step) await call(port, "POST", "/api/turn", step);
+    return;
+  }
+  if (what === "prompt") {
+    if (typeof input.prompt === "string" && input.prompt.trim()) await call(port, "POST", "/api/turn", { event: "prompt", text: input.prompt });
+    await call(port, "POST", "/api/signal", { kind: "working" });
+    return;
+  }
   const text = typeof input.tool_name === "string" ? input.tool_name : typeof input.message === "string" ? input.message : void 0;
-  const reply = kind === "idle" ? lastReply(input) : void 0;
-  await call(port, "POST", "/api/signal", { kind: what, ...text ? { text } : {}, ...reply ? { reply } : {} });
+  const end = kind === "idle";
+  const reply = end ? lastReply(input) : void 0;
+  await call(port, "POST", "/api/signal", { kind: what, ...text ? { text } : {}, ...end ? { end } : {}, ...reply ? { reply } : {} });
 }
 async function main() {
   const [command, ...args] = process.argv.slice(2);

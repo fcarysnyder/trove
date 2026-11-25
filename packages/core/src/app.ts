@@ -161,7 +161,7 @@ export function createApp(o: AppOptions): App {
   const REJECTED: Result = [409, { error: 'Rejected: restore it first' }];
   // What the agent drawer lists, newest last, kept in activity.jsonl so History survives a restart. An
   // entry written again (a release that gets the agent's note later) is a second line with the same id.
-  const KEEP = 200;
+  const KEEP = 600; // turns log a line per tool call
   const activity: Activity[] = [];
   const persist = (e: Activity) => appendFileSync(files.activity, `${JSON.stringify(e)}\n`);
   const note = (kind: Activity['kind'], text: string, more: Partial<Activity> = {}) => {
@@ -176,8 +176,9 @@ export function createApp(o: AppOptions): App {
     for (const c of items) n[c.path as string] = (n[c.path as string] ?? 0) + 1;
     return n;
   };
-  const sentEntry = (b: { id: string; sentAt: string; items: { path: string | null }[] }): Activity =>
-    ({ id: b.id, at: b.sentAt, kind: 'batch', text: b.id, comments: b.items.length, paths: Object.keys(counts(b.items)), counts: counts(b.items) });
+  const explains = (items: { kind?: string }[]) => items.filter((c) => c.kind === 'explain').length;
+  const sentEntry = (b: { id: string; sentAt: string; items: { path: string | null; kind?: string }[] }): Activity =>
+    ({ id: b.id, at: b.sentAt, kind: 'batch', text: b.id, comments: b.items.length, explains: explains(b.items), paths: Object.keys(counts(b.items)), counts: counts(b.items) });
   // ponytail: both logs are read whole at start; trim activity.jsonl if it ever gets slow.
   // A later line with an entry's id replaces it (a re-written entry keeps its time, so its place); then the
   // batches log's sends that activity.jsonl lacks, which is all of them in an older state dir.
@@ -454,6 +455,7 @@ export function createApp(o: AppOptions): App {
       // Save never approves: an accepted file goes back to pending, and only Accept accepts.
       source.unstage(rel);
       write(rel, next);
+      note('edit', rel, { from: 'user', paths: [rel] });
       // A folder keeps versions instead of edit records: its Save is the whole file, and the version list is its undo.
       if (versions) return (versions.add(rel, 'user', next), setUnsaved(rel, null), [200, { hash: sha(next) }]);
       // One entry per block: a second Save of the same block keeps its original `before`.
@@ -532,7 +534,7 @@ export function createApp(o: AppOptions): App {
       const sentPaths = new Set(items.map((c) => c.path));
       const sentAt = new Date().toISOString();
       appendFileSync(files.batches, `${JSON.stringify({ id, sentAt, items })}\n`);
-      note('batch', id, { id, at: sentAt, comments: items.length, paths: [...sentPaths] as string[], counts: counts(items) });
+      note('batch', id, { id, at: sentAt, comments: items.length, explains: explains(items), paths: [...sentPaths] as string[], counts: counts(items) });
       resumed();
       saveDrafts(keep);
       // A notice, not the batch itself: a long line is cut short on its way to the agent.
@@ -623,18 +625,25 @@ export function createApp(o: AppOptions): App {
     },
         'GET /api/activity': () => (follow(), [200, { entries: activity }]),
     // `trove signal` from the agent's hooks, and the desktop's terminal: what the agent waits on the user for. The last one wins.
-    // reply: the answer the agent's turn ended with (Claude Code's Stop hook), shown in Chat unless the agent already said it.
-    'POST /api/signal': (_, { kind, text, reply }) => {
+    // end: the agent's turn is over (Claude Code's Stop hook), reply its last message.
+    'POST /api/signal': (_, { kind, text, reply, end }) => {
       if (!['permission', 'question', 'idle', 'working'].includes(kind)) return [400, { error: 'kind is permission, question, idle or working' }];
       if ((text !== undefined && typeof text !== 'string') || (reply !== undefined && typeof reply !== 'string')) return [400, { error: 'text and reply are strings' }];
-      const body = kind === 'idle' ? reply?.trim().slice(0, 20000) : undefined;
-      if (body) {
-        const since = activity.findLastIndex((e) => e.from === 'user');
-        if (!activity.slice(since + 1).some((e) => e.from === 'agent' && e.body === body)) note('message', '', { from: 'agent', body });
+      if (end === true) {
+        const body = reply?.trim().slice(0, 20000);
+        note('end', '', { from: 'agent', ...(body ? { body } : {}) });
       }
       if (kind === 'working') unwait();
       else signal = { waiting: kind, ...(text?.trim() ? { text: text.trim().slice(0, 200) } : {}), since: new Date().toISOString() };
       return [200, agentInfo()];
+    },
+    // Claude Code's hooks: a prompt submitted, a tool call finished. Activity groups them into turns.
+    'POST /api/turn': (_, { event, text, tool, added, removed }) => {
+      const count = (n: unknown) => n === undefined || (Number.isInteger(n) && (n as number) >= 0);
+      if ((event !== 'prompt' && event !== 'step') || typeof text !== 'string' || (tool !== undefined && typeof tool !== 'string') || !count(added) || !count(removed))
+        return [400, { error: 'event is prompt or step, text a string, added and removed counts' }];
+      const e = note(event, text.trim().slice(0, 500), { ...(tool ? { tool: tool.slice(0, 60) } : {}), ...(added !== undefined ? { added } : {}), ...(removed !== undefined ? { removed } : {}) });
+      return [200, e];
     },
     // `trove attach` / `trove detach`: who is on the other end of the loop. id null clears it.
     // The file in the system's file manager. Never a shell: the path is one argument.

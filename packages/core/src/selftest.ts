@@ -629,14 +629,17 @@ async function agentCase(temps: string[]) {
   await call(port, 'POST', '/api/message', { text: 'Also this.' });
   assert.equal((await source()).agentInfo.waiting, 'question', 'but not a question');
   assert.equal((await signal({ kind: 'working' })).waiting, null);
-  // The Stop hook's reply: Chat shows the turn's answer once, and not when the agent already said it.
-  const said = async () => (await call(port, 'GET', '/api/activity')).body.entries.filter((e: any) => e.from === 'agent').map((e: any) => e.body);
+  // A turn as the hooks report it: its prompt, a tool call, and the Stop hook's last message.
   assert.equal((await call(port, 'POST', '/api/signal', { kind: 'idle', reply: 7 })).status, 400);
-  await signal({ kind: 'idle', reply: ' Rendering needs a frame. ' });
-  await signal({ kind: 'idle', reply: 'Rendering needs a frame.' });
-  assert.deepEqual(await said(), ['Rendering needs a frame.'], 'the reply is a message, once');
-  await signal({ kind: 'permission', reply: 'Not an answer.' });
-  assert.deepEqual(await said(), ['Rendering needs a frame.'], 'only idle carries a reply');
+  assert.equal((await call(port, 'POST', '/api/turn', { event: 'nap', text: 'x' })).status, 400);
+  assert.equal((await call(port, 'POST', '/api/turn', { event: 'step', text: 'a.md', added: -1 })).status, 400);
+  await call(port, 'POST', '/api/turn', { event: 'prompt', text: ' Shorten it ' });
+  await call(port, 'POST', '/api/turn', { event: 'step', text: 'a.md', tool: 'Edit', added: 2, removed: 5 });
+  await signal({ kind: 'idle', reply: ' Shortened. ', end: true });
+  await signal({ kind: 'idle', reply: 'Not a turn end.' });
+  const turn = (await call(port, 'GET', '/api/activity')).body.entries.filter((e: any) => ['prompt', 'step', 'end'].includes(e.kind));
+  assert.deepEqual(turn.map((e: any) => [e.kind, e.text, e.tool, e.added, e.removed, e.body]),
+    [['prompt', 'Shorten it', undefined, undefined, undefined, undefined], ['step', 'a.md', 'Edit', 2, 5, undefined], ['end', '', undefined, undefined, undefined, 'Shortened.']]);
   await app.close();
   ({ app, port } = await listen({ root, agent: 'claude' }));
   assert.deepEqual([(await source()).agentInfo.label, (await source()).agentInfo.connected], ['Claude', true], 'the serving agent is attached');

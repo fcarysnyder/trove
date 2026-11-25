@@ -1,6 +1,6 @@
 import type { FileRow } from '@trove/core/types';
 import { ChevronRight, FileCode, FilePen, FileText, ListFilter, Lock, PanelLeftClose, Search, Sparkles, X } from 'lucide-react';
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, type ReactNode, type Ref } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -169,7 +169,7 @@ function Name({ path, query }: { path: string; query: string }) {
     const a = Math.max(r[0], from), b = Math.min(r[1], to);
     return <>{name.slice(from, a)}<mark className="rounded-[2px] bg-foreground/15 text-foreground">{name.slice(a, b)}</mark>{name.slice(b, to)}</>;
   };
-  return <><span className="truncate">{part(0, cut)}</span><span className="shrink-0 whitespace-pre">{part(cut, name.length)}</span></>;
+  return <><span data-name className="truncate">{part(0, cut)}</span><span className="shrink-0 whitespace-pre">{part(cut, name.length)}</span></>;
 }
 
 /** A folder's row has no review state: the file's type. */
@@ -217,18 +217,30 @@ function Folders({ list, query, head = false }: { list: FileRow[]; query: string
   return tree.items.length ? <Folder d={tree} name={nameOf(root ?? '') || '/'} query={query} /> : null;
 }
 
+/** A tree row's full name in a tooltip, only while its `[data-name]` part is cut off. `menu` wraps the trigger in the row's right-click menu. */
+function NameTip({ name, menu, children }: { name: string; menu: (trigger: ReactNode) => ReactNode; children: ReactElement }) {
+  const row = useRef<HTMLElement>(null);
+  const [open, setOpen] = useState(false);
+  const toggle = (on: boolean) => { const t = row.current?.querySelector('[data-name]'); setOpen(on && !!t && t.scrollWidth > t.clientWidth); };
+  return (
+    <Tooltip open={open} onOpenChange={toggle}>
+      {menu(<TooltipTrigger asChild ref={row as Ref<HTMLButtonElement>}>{children}</TooltipTrigger>)}
+      <TooltipContent side="right" className="max-w-96 break-all">{name}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 function Folder({ d, name, query }: { d: Dir; name: string; query: string }) {
   const closed = useStore((s) => s.closedDirs.includes(d.dir));
-  const root = useStore((s) => s.source?.root);
   return (
     <Collapsible open={!!query || !closed}
       onOpenChange={(o) => set((s) => ({ closedDirs: o ? s.closedDirs.filter((x) => x !== d.dir) : [...s.closedDirs, d.dir] }))}>
-      <DirMenu dir={d.dir} first={firstFile(d)}>
-        <CollapsibleTrigger title={d.dir || root} className="group flex w-full items-center gap-1.5 rounded-sm px-1 py-1 text-left text-body outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+      <NameTip name={name} menu={(t) => <DirMenu dir={d.dir} first={firstFile(d)}>{t}</DirMenu>}>
+        <CollapsibleTrigger className="group flex w-full items-center gap-1.5 rounded-sm px-1 py-1 text-left text-body outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
           <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 group-aria-expanded:rotate-90 motion-reduce:transition-none" aria-hidden />
-          <span className="min-w-0 truncate">{name}</span>
+          <span data-name className="min-w-0 truncate">{name}</span>
         </CollapsibleTrigger>
-      </DirMenu>
+      </NameTip>
       <CollapsibleContent className="ml-[11px] border-l pl-1"><Items items={d.items} query={query} /></CollapsibleContent>
     </Collapsible>
   );
@@ -240,8 +252,8 @@ function Items({ items, query }: { items: (FileRow | Dir)[]; query: string }) {
   const folder = useFolder();
   const unsaved = useStore((s) => s.unsaved);
   return items.map((f) => isDir(f) ? <Folder key={`d:${f.dir}`} d={f} name={nameOf(f.dir)} query={query} /> : (
-    <PathMenu key={f.path} path={f.path}>
-      <button data-tree-row title={f.path} aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
+    <NameTip key={f.path} name={nameOf(f.path)} menu={(t) => <PathMenu path={f.path}>{t}</PathMenu>}>
+      <button data-tree-row aria-current={f.path === current || undefined} onClick={() => void open(f.path)}
         className={cn('flex w-full items-center gap-1.5 rounded-sm px-1 py-1 text-left outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
           f.path === current ? 'bg-accent text-foreground hover:bg-accent' : 'text-body')}>
         {folder ? <FileIcon file={f} /> : <StateIcons file={f} names={n} />}
@@ -250,6 +262,6 @@ function Items({ items, query }: { items: (FileRow | Dir)[]; query: string }) {
         {folder && unsaved[f.path] && <span role="img" aria-label="Unsaved edits" title="Unsaved edits" className="size-1.5 shrink-0 rounded-full bg-dirty" />}
         {f.drafts > 0 && <Count n={f.drafts} />}
       </button>
-    </PathMenu>
+    </NameTip>
   ));
 }

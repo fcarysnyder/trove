@@ -138,6 +138,7 @@ export default function Cube({ intro, onIntroDone }: { intro: boolean; onIntroDo
     const sens = 0.014 - 0.009 * P.weight, follow = 0.6 - 0.45 * P.weight, decay = 0.86 + 0.12 * P.weight;
     const vel = { x: 0, y: 0 }, pend = { x: 0, y: 0 }, Y = new THREE.Vector3(), X = new THREE.Vector3();
     let drag = false, last: [number, number] = [0, 0], still8 = 0;
+    let hover = false, heat = 0, prev = performance.now(); // heat: 0 resting, 1 fully stoked by the pointer
     let snap: { axis: THREE.Vector3; angle: number; p: number; v: number; last?: number } | null = null;
     const spin = (dx: number, dy: number) => {
       Y.set(0, 1, 0).applyQuaternion(cam.quaternion); X.set(1, 0, 0).applyQuaternion(cam.quaternion);
@@ -146,7 +147,9 @@ export default function Cube({ intro, onIntroDone }: { intro: boolean; onIntroDo
     const down = (e: PointerEvent) => { if (!ready) return; drag = true; snap = null; last = [e.clientX, e.clientY]; el.setPointerCapture(e.pointerId); el.style.cursor = 'grabbing'; };
     const move = (e: PointerEvent) => { if (!drag) return; pend.x += e.clientX - last[0]; pend.y += e.clientY - last[1]; last = [e.clientX, e.clientY]; };
     const up = () => { drag = false; el.style.cursor = ''; };
+    const enter = () => { hover = true; }, leave = () => { hover = false; };
     el.addEventListener('pointerdown', down); el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+    el.addEventListener('pointerenter', enter); el.addEventListener('pointerleave', leave);
 
     const loop = (now: number) => {
       const lit = ready ? 1 : introFrame(now);
@@ -169,9 +172,13 @@ export default function Cube({ intro, onIntroDone }: { intro: boolean; onIntroDo
         if (Math.abs(1 - snap.p) < 0.001 && Math.abs(snap.v) < 0.01) { g.quaternion.identity(); snap = null; vel.x = vel.y = 0; }
       }
       // Flicker: three slow, uneven waves, like embers; off when motion is reduced.
+      // Hover (or a drag) stokes it: quick to heat, slower to cool, like metal.
+      const dt = Math.min(0.05, (now - prev) / 1000); prev = now;
+      const stoked = ready && (hover || drag);
+      heat += ((stoked ? 1 : 0) - heat) * (1 - Math.exp(-dt / (stoked ? 0.12 : 0.35)));
       const t = now / 1000, f = still ? 1 : 1 + P.flicker * 0.18 * (0.5 * Math.sin(t * 1.3) + 0.3 * Math.sin(t * 3.1 + 1.7) + 0.2 * Math.sin(t * 7.7 + 4.1));
-      tops.forEach((m) => ((m.material as THREE.MeshPhysicalMaterial).emissiveIntensity = (0.1 + (P.metal.glow - 0.1) * lit) * f));
-      haloMat.opacity = P.halo.opacity * lit * f; bigHaloMat.opacity = P.halo.bigOpacity * lit * f; U.uLit.value = lit * f;
+      tops.forEach((m) => ((m.material as THREE.MeshPhysicalMaterial).emissiveIntensity = (0.1 + (P.metal.glow - 0.1) * lit) * f * (1 + 1.5 * heat)));
+      haloMat.opacity = Math.min(1, P.halo.opacity * lit * f * (1 + 2.5 * heat)); bigHaloMat.opacity = Math.min(1, P.halo.bigOpacity * lit * f * (1 + 3 * heat)); U.uLit.value = lit * f * (1 + 1.2 * heat);
       g.updateMatrixWorld(); tops.forEach((m, i) => m.getWorldPosition(lamps[i]));
       r.render(scene, cam);
       raf = requestAnimationFrame(loop);
@@ -181,6 +188,7 @@ export default function Cube({ intro, onIntroDone }: { intro: boolean; onIntroDo
     return () => {
       cancelAnimationFrame(raf); ro.disconnect();
       el.removeEventListener('pointerdown', down); el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up);
+      el.removeEventListener('pointerenter', enter); el.removeEventListener('pointerleave', leave);
       [tBox, gBox].forEach((x) => x.dispose()); [metal, glassMat, haloMat, bigHaloMat, ...tops.map((m) => m.material as THREE.Material)].forEach((m) => m.dispose());
       brush.dispose(); pmrem.dispose(); scene.environment?.dispose(); r.dispose(); r.domElement.remove();
     };

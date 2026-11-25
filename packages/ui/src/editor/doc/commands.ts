@@ -2,10 +2,11 @@
 import { makeAnchor } from '@trove/core/anchor';
 import { copy } from '@/lib/copy';
 import { flash, open, setShowNew } from '../actions';
-import { get, set, type ChatRef } from '../store';
+import { toast } from 'sonner';
+import { get, set } from '../store';
 import { toRange } from './layers';
 import { docModel } from './model';
-import { blockEl, bodyOf, frameEl, headingPath, nodeEl } from './dom';
+import { blockEl, bodyOf, frameEl, headingPath, nodeEl, showsSource } from './dom';
 import { showTargets } from './annotate';
 
 /** Tables and front matter edit in the modal; HTML files whole in the modal; the rest inline. */
@@ -63,11 +64,11 @@ export function onSelect(doc: Document, target: EventTarget | null) {
   });
 }
 
-export function pickAction(act: 'change' | 'explain' | 'edit' | 'copy' | 'chat') {
+export function pickAction(act: 'change' | 'explain' | 'edit' | 'copy' | 'agent') {
   const { pick, current } = get();
   if (!pick) return;
   set({ pick: null });
-  if (act === 'chat') return current && addToChat({ path: current.path, quote: pick.anchor.quote });
+  if (act === 'agent') return current && void addToAgent(current.path, pick.anchor.quote);
   if (act === 'change' || act === 'explain') {
     set({ composer: { kind: act, anchor: pick.anchor, range: pick.range } });
   } else if (act === 'edit') editBlock(pick.block);
@@ -97,13 +98,16 @@ export async function showBlock(path: string, index: number | null) {
     await open(path);
     await new Promise((r) => requestAnimationFrame(r));
   }
-  flash(index == null ? frameEl() ?? document.querySelector('.md') : blockEl(index));
+  flash(index == null ? (showsSource() ? null : frameEl()) ?? document.querySelector('.md') : blockEl(index));
 }
 
-/** Add a passage to History's message box (the conversation's or the open thread's): History shows and its box takes focus. */
-export function addToChat(ref: ChatRef) {
-  set((s) => ({ chat: [...s.chat.filter((c) => c.quote !== ref.quote || c.path !== ref.path), ref] }));
+/** Quote a passage at the terminal's prompt, unsent, so you finish the thought there. */
+export async function addToAgent(path: string, quote: string) {
+  const pty = window.trove?.pty;
+  if (!pty || (await pty.state().catch(() => null))?.exitCode !== null) return void toast('Start an agent first');
   window.getSelection()?.removeAllRanges();
   frameEl()?.contentWindow?.getSelection()?.removeAllRanges();
-  window.dispatchEvent(new Event('trove:chat'));
+  const lines = quote.split('\n').map((l) => `> ${l}`).join('\n');
+  pty.write(`\x1b[200~${path}:\n${lines}\n\n\x1b[201~`); // a bracketed paste: newlines stay in the prompt, nothing submits
+  set({ drawer: true });
 }

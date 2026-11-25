@@ -33,6 +33,8 @@ const INTRO = (() => {
   return play;
 })();
 
+let introSeen = !INTRO; // Back from Open returns to a settled Home
+
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const fail = (e: unknown) => void toast(errText(e));
 
@@ -43,9 +45,11 @@ export function Start() {
     <TooltipProvider delayDuration={300}>
       <div className="fixed inset-x-0 top-0 z-10 [&>div]:border-b-0"><TitleStrip /></div>
       {/* A fixed-size window: the page never scrolls (the table's rows do) and the mark's glow is clipped to it. */}
-      <main className="mx-auto flex h-dvh w-full max-w-2xl flex-col gap-8 overflow-x-clip px-6 pt-20 pb-6 [&>*:last-child]:min-h-0 [&>*:last-child]:flex-1">
-        {window.trove ? <Screens /> : <NoBridge />}
-      </main>
+      <div className="h-dvh overflow-clip">
+        <main className="mx-auto flex h-full w-full max-w-2xl flex-col gap-8 px-6 pt-20 pb-6">
+          {window.trove ? <Screens /> : <NoBridge />}
+        </main>
+      </div>
       <Toaster position="bottom-right" />
     </TooltipProvider>
   );
@@ -110,7 +114,9 @@ const drop = (n: number) => ({
  */
 function Home({ recents, probes, reload, onOpen }: { recents: Recent[]; probes: Probes; reload: () => Promise<void>; onOpen: () => void }) {
   const [show, setShow] = useState(() => load<Show>('start-show', 'all'));
-  const [phase, setPhase] = useState<'intro' | 'ui'>(INTRO ? 'intro' : 'ui');
+  const [intro] = useState(() => !introSeen);
+  useEffect(() => { introSeen = true; }, []);
+  const [phase, setPhase] = useState<'intro' | 'ui'>(intro ? 'intro' : 'ui');
   const shown = recents.filter((r) => show === 'all' || (show === 'files') === !!r.file);
   const pinned = shown.filter((r) => r.pinned);
   const rest = shown.filter((r) => !r.pinned);
@@ -122,13 +128,14 @@ function Home({ recents, probes, reload, onOpen }: { recents: Recent[]; probes: 
     </section>
   );
   return (
-    <div data-phase={phase} className="group/home relative flex flex-col">
+    <div data-phase={phase} className="group/home relative flex min-h-0 flex-1 flex-col">
       {/* One fixed size, scaled down into the header: resizing the canvas mid-move would blank it. */}
-      <div aria-hidden className={cn('absolute z-10 size-[440px] origin-top-left transition-[left,top,scale] duration-700 ease-[cubic-bezier(.7,0,.2,1)] motion-reduce:transition-none',
+      <div aria-hidden data-mark className={cn('group/mark absolute z-10 size-[440px] origin-top-left transition-[left,top,scale] duration-700 ease-[cubic-bezier(.7,0,.2,1)] motion-reduce:transition-none',
         phase === 'intro' ? 'top-16 left-[calc(50%-132px)] scale-[.6]' : 'top-7 left-[calc(100%-124px)] scale-[.24]')}>
         {/* The T's light on the room: a soft wash that moves with the cube. */}
         <div className="pointer-events-none absolute -inset-[110%] rounded-full bg-[radial-gradient(closest-side,rgba(246,142,54,.09),rgba(246,142,54,.03)_45%,transparent)]" />
-        <Suspense fallback={null}><Cube intro={INTRO} onIntroDone={() => setPhase('ui')} /></Suspense>
+        <div className="pointer-events-none absolute -inset-[110%] rounded-full bg-[radial-gradient(closest-side,rgba(246,142,54,.16),rgba(246,142,54,.05)_45%,transparent)] opacity-0 transition-opacity duration-300 group-hover/mark:opacity-100" />
+        <Suspense fallback={null}><Cube intro={intro} onIntroDone={() => setPhase('ui')} /></Suspense>
       </div>
       <header {...drop(0)} className={cn(drop(0).className, 'flex h-40 shrink-0 flex-col justify-center pr-48 pl-4')}>
         <h1 className="text-[44px] leading-none font-semibold tracking-tight text-foreground">Trove</h1>
@@ -137,14 +144,17 @@ function Home({ recents, probes, reload, onOpen }: { recents: Recent[]; probes: 
       <div {...drop(1)} className={cn(drop(1).className, 'relative mt-6 flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card/60')}>
         <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent_25%,rgba(255,160,90,.55)_72%,rgba(255,160,90,.55)_82%,transparent)]" />
         <span aria-hidden className="pointer-events-none absolute top-0 right-0 left-2/5 h-12 bg-[radial-gradient(55%_100%_at_68%_0,rgba(246,142,54,.07),transparent)]" />
+        <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-10 h-px bg-[linear-gradient(90deg,transparent_12%,rgba(255,186,125,.95)_70%,rgba(255,186,125,.95)_84%,transparent)] opacity-0 transition-opacity duration-300 group-has-[[data-mark]:hover]/home:opacity-100 motion-reduce:transition-none" />
+        <span aria-hidden className="pointer-events-none absolute top-0 right-0 left-1/4 z-10 h-12 bg-[radial-gradient(60%_100%_at_72%_0,rgba(246,142,54,.17),transparent)] opacity-0 transition-opacity duration-300 group-has-[[data-mark]:hover]/home:opacity-100 motion-reduce:transition-none" />
         <Tabs.Root className="shrink-0" value={show} onValueChange={(v) => { setShow(v as Show); save('start-show', v); }}>
           <div className="relative flex h-12 items-center gap-4 border-b bg-secondary/40 pr-2.5 pl-4">
             <Tabs.List aria-label="Show" className="flex h-full gap-4">
               {(['all', 'folders', 'files'] as const).map((v) => <Tabs.Trigger key={v} value={v} className={TAB}>{v[0]!.toUpperCase() + v.slice(1)}</Tabs.Trigger>)}
             </Tabs.List>
-            <span className="ml-auto text-xs text-muted-foreground tabular-nums">{shown.length} recent</span>
-            <UpdateButton />
-            <Button size="sm" onClick={onOpen}>Open</Button>
+            <div className="ml-auto flex items-center gap-2">
+              <UpdateButton />
+              <Button size="sm" onClick={onOpen}>Open</Button>
+            </div>
           </div>
         </Tabs.Root>
         <div className="min-h-0 overflow-y-auto">
@@ -328,7 +338,7 @@ function Clone() {
       <Input autoFocus aria-label="Repository URL" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/owner/repo or owner/repo"
         autoComplete="off" spellCheck={false} />
       {(repos === null || repos.length > 0) && (
-        <ul aria-label="Your repositories" className="max-h-56 overflow-auto rounded-md border">
+        <ul aria-label="Your repositories" className="max-h-36 overflow-auto rounded-md border">
           {repos === null ? [0, 1, 2].map((k) => (
             <li key={k} className="flex flex-col gap-2 border-t px-3 py-3 first:border-t-0">
               <span className="h-3 w-1/3 animate-pulse rounded bg-muted" /><span className="h-2.5 w-2/3 animate-pulse rounded bg-muted" />

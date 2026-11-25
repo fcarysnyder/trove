@@ -2,13 +2,14 @@ import { findAnchor, type AnchorHit } from '@trove/core/anchor';
 import type { DiffOp } from '@trove/core/anchor';
 import { GitBranch, MessageSquare, PanelLeft, PanelRight, Pencil, Undo2 } from 'lucide-react';
 import { recentName, type Version, type VersionBy } from '@trove/core/types';
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { Fragment, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Kbd } from '@/components/ui/kbd';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Spinner } from '@/components/ui/spinner';
 import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -22,7 +23,7 @@ import { Icon, StateIcons } from './StateIcon';
 import { get, set, useFolder, useNames, useStore } from './store';
 import { editBlock, onSelect } from './doc/commands';
 import { elementHit, wireFrame } from './doc/annotate';
-import { blockEl, bodyOf } from './doc/dom';
+import { blockEl, bodyOf, showsSource, SOURCE_LIMIT } from './doc/dom';
 import { InlineEditor } from './doc/Editors';
 import { applyLayers, paint, placeBars, textOf, toRange, type Marks } from './doc/layers';
 import { docModel } from './doc/model';
@@ -36,7 +37,7 @@ export function DocColumn() {
   const showNew = useStore((s) => s.showNew);
   const editing = useStore((s) => s.editing);
   const question = useStore((s) => s.question);
-  const htmlView = useStore((s) => s.htmlView);
+  const inSource = useStore(showsSource);
   const needs = useNeedsYou();
   const n = useNames();
   const folder = useFolder();
@@ -66,16 +67,22 @@ export function DocColumn() {
           {current?.version != null && <VersionBadge key={current.path} path={current.path} version={current.version} />}
         </span>
         {current?.kind === 'html' && (
-          <ToggleGroup type="single" size="sm" variant="outline" spacing={0} value={htmlView} onValueChange={(v) => v && set({ htmlView: v as 'preview' | 'source' })}>
-            <ToggleGroupItem value="preview">Preview</ToggleGroupItem>
-            <ToggleGroupItem value="source">Source</ToggleGroupItem>
+          <ToggleGroup type="single" size="sm" variant="outline" spacing={0} value={inSource ? 'source' : 'preview'}
+            onValueChange={(v) => { if (v && (v === 'preview' || current.text.length <= SOURCE_LIMIT)) set({ htmlView: v as 'preview' | 'source' }); }}>
+            <ToggleGroupItem value="preview" className={VIEW_TAB}>Preview</ToggleGroupItem>
+            {current.text.length <= SOURCE_LIMIT ? <ToggleGroupItem value="source" className={VIEW_TAB}>Source</ToggleGroupItem> : (
+              <Tooltip>
+                <TooltipTrigger asChild><ToggleGroupItem value="source" aria-disabled className="cursor-not-allowed text-muted-foreground/50 hover:bg-transparent hover:text-muted-foreground/50">Source</ToggleGroupItem></TooltipTrigger>
+                <TooltipContent>{(current.text.length / 1e6).toFixed(1)} MB is too large for Source</TooltipContent>
+              </Tooltip>
+            )}
           </ToggleGroup>
         )}
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex items-center gap-2">
+              <Label htmlFor="show-new" className={cn('text-xs font-normal whitespace-nowrap text-muted-foreground', (!canNew || !!editing) && 'opacity-40')}>Show new</Label>
               <Switch id="show-new" size="default" checked={showNew} disabled={!canNew || !!editing} onCheckedChange={setShowNew} />
-              <Label htmlFor="show-new" className="text-xs font-normal whitespace-nowrap text-muted-foreground peer-disabled:opacity-40">Show new</Label>
             </span>
           </TooltipTrigger>
           <TooltipContent>{newTip}</TooltipContent>
@@ -95,7 +102,7 @@ export function DocColumn() {
       </div>
       <div className="relative flex min-h-0 flex-1 flex-col">
         <DocBody />
-        {htmlView === 'preview' && <AnnotateBar />}
+        {!inSource && <AnnotateBar />}
       </div>
       <DocFooter />
       <ConflictDialog />
@@ -162,6 +169,8 @@ function Nothing() {
 
 interface Card { target: Element; label: string; ops: DiffOp[]; kind: string; mineN?: Set<number>; y: number }
 
+const VIEW_TAB = 'data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary/90 data-[state=on]:hover:text-primary-foreground';
+
 function DocView() {
   const current = useStore((s) => s.current)!;
   const showNew = useStore((s) => s.showNew);
@@ -177,9 +186,16 @@ function DocView() {
   const view = useStore((s) => s.view);
   const buf = useStore((s) => s.unsaved[current.path]);
   // An HTML file's Source view goes down the plain text path: one text block, measured in the page, not the frame.
-  const source = useStore((s) => current.kind === 'html' && s.htmlView === 'source');
+  // Deferred, so the tab answers at once and a big file's text renders behind the spinner.
+  const wanted = useStore(showsSource);
+  const source = useDeferredValue(wanted);
   const parts = useMemo(() => (source ? [{ type: 'text' as const, raw: current.text, path: [] }] : model.parts), [source, model]);
   const frame = current.kind === 'html' && !source;
+  // Once shown, the page stays loaded behind Source, so coming back is instant.
+  const [framed, setFramed] = useState(frame);
+  if (frame && !framed) setFramed(true);
+  const [loaded, setLoaded] = useState<string | null>(null); // the hash the frame has finished loading
+  const busy = wanted !== source || (frame && loaded !== current.hash);
   const bodyAt = (i: number) => (source ? blockEl(i)?.querySelector<HTMLElement>(':scope > .block-body') ?? null : bodyOf(i));
   // A version or Compare always shows its marks; a folder otherwise has only the text before the agent's last update.
   const layered = (showNew || !!view) && !editing && current.kind === 'markdown' && (!folder || !!current.since || !!current.base);
@@ -275,12 +291,11 @@ function DocView() {
   }
   const goneBar = (i: number) => gone.has(i) && <div className="gone" data-text={gone.get(i)} />;
 
-  if (frame) {
-    return (
-      <div className="relative">
+  const preview = framed && (
+      <div className="relative" hidden={!frame}>
         <iframe
           key={current.hash}
-          className="doc-frame mx-12 block min-h-[60vh] w-[calc(100%-96px)] rounded-lg border-0"
+          className={cn('doc-frame mx-12 block min-h-[60vh] w-[calc(100%-96px)] rounded-lg border-0', loaded !== current.hash && 'invisible')}
           sandbox="allow-same-origin allow-scripts"
           title="Rendered file"
           {...(buf || view ? { srcDoc: withBase(current.text, current.path) } : { src: rawUrl(current.path) })}
@@ -297,16 +312,20 @@ function DocView() {
             doc.addEventListener('dblclick', () => editBlock(null));
             wireFrame(doc, commitMark);
             e.currentTarget.style.height = `${doc.documentElement.scrollHeight}px`;
+            setLoaded(current.hash);
             setFrameLoads((k) => k + 1);
           }}
         />
         <AnnotateLayer loads={frameLoads} />
-        {card && <DiffCard card={card} />}
+        {frame && card && <DiffCard card={card} />}
       </div>
-    );
-  }
+  );
 
   return (
+    <div className="relative">
+      {busy && <div role="status" aria-label="Loading" className="absolute inset-x-0 top-24 z-10 grid place-items-center"><Spinner className="size-5 text-muted-foreground" /></div>}
+      {preview}
+      {!frame && (
     <div ref={md} className={cn('md', editing && 'doc-editing')} onClick={commentAt} onMouseMove={onMove} onMouseLeave={() => setCard(null)}
       onDoubleClick={(e) => { const b = (e.target as Element).closest<HTMLElement>('.block'); if (b && !(e.target as Element).closest('textarea, button')) editBlock(Number(b.dataset.i)); }}>
       {parts.map((b, i) => (
@@ -335,6 +354,8 @@ function DocView() {
       ))}
       {goneBar(parts.length)}
       {card && <DiffCard card={card} />}
+    </div>
+      )}
     </div>
   );
 }

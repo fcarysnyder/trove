@@ -9,7 +9,7 @@
 //   trove done <file> [--note "<markdown>" | --note -] [--root <repo> | --port N]
 //   trove say "<markdown>" | say - [--file <path>]... [--re <entry id>] [--root <repo> | --port N]   (-: the text from stdin)
 //   trove ask "<question>" | reply "<summary>" | ask --clear [--root <repo> | --port N]
-//   trove signal permission|question|idle|working|notification [--root <path> | --port N]   (the plugin's hooks; stdin: the hook's JSON)
+//   trove signal permission|question|idle|working|notification|prompt|step [--port N]   (the plugin's hooks; stdin: the hook's JSON)
 // Without --port these find the server running on --root's repository, else on its folder or the nearest one above
 // (default: the current directory). --folder serves a folder inside a repository as a folder: no git writes.
 //   trove --selftest
@@ -76,12 +76,30 @@ function lastReply(/** @type {any} */ input) {
   return undefined;
 }
 
+const QUIET = new Set(['TodoWrite', 'ToolSearch', 'Monitor', 'TaskOutput']); // the agent's bookkeeping, not work to show
+const lines = (/** @type {unknown} */ t) => (typeof t === 'string' && t ? t.split('\n').length : 0);
+
+/** A PostToolUse hook's input as one Activity step: the tool, what it acted on, and an edit's lines; null for bookkeeping. */
+function stepOf(/** @type {any} */ input) {
+  const tool = input.tool_name, i = input.tool_input ?? {};
+  if (typeof tool !== 'string' || QUIET.has(tool)) return null;
+  if (tool === 'Bash' && /trove\.mjs|\btrove (attach|info|done|say|signal)\b/.test(String(i.command))) return null;
+  const file = i.file_path ?? i.notebook_path;
+  const inside = typeof file === 'string' && typeof input.cwd === 'string' ? relative(input.cwd, file) : '';
+  const text = String((typeof file === 'string' ? (inside && !inside.startsWith('..') ? inside : basename(file)) : null) ?? i.command ?? i.pattern ?? i.url ?? i.query ?? i.description ?? '').split('\n')[0];
+  const edits = tool === 'MultiEdit' && Array.isArray(i.edits) ? i.edits : tool === 'Edit' ? [i] : null;
+  const diff = edits ? { added: edits.reduce((/** @type {number} */ n, /** @type {any} */ e) => n + lines(e.new_string), 0), removed: edits.reduce((/** @type {number} */ n, /** @type {any} */ e) => n + lines(e.old_string), 0) }
+    : tool === 'Write' ? { added: lines(i.content) } : {};
+  return { event: 'step', tool, text, ...diff };
+}
+
 // A Claude Code Notification's type -> what the page shows; other types are not signals.
 const NOTIFIED = { permission_prompt: 'permission', elicitation_dialog: 'question', idle_prompt: 'idle' };
 
 /**
- * `signal <kind>`, run by the plugin's hooks in every Claude Code session, Trove or not: tells the server for the
- * session's project (CLAUDE_PROJECT_DIR, else the hook's cwd, else --root) what the agent waits for. Always exits 0
+ * `signal <kind>`, run by the plugin's hooks in every Claude Code session, Trove or not: tells the desktop's server
+ * (TROVE_PORT, set only on the agent it starts in its terminal, or --port) what that agent is doing. Any other
+ * session in the same project, like Claude Desktop's, is not Trove's agent and is ignored. Always exits 0
  * and prints nothing: a hook's output would reach the session, and most sessions have no Trove server.
  */
 async function signal(/** @type {string | undefined} */ kind, /** @type {{root: string, port?: string}} */ values) {
@@ -94,14 +112,19 @@ async function signal(/** @type {string | undefined} */ kind, /** @type {{root: 
     try { input = JSON.parse(String(text)) ?? {}; } catch {}
   }
   const what = kind === 'notification' ? NOTIFIED[/** @type {keyof typeof NOTIFIED} */ (input.notification_type)] : kind;
-  if (!['permission', 'question', 'idle', 'working'].includes(what ?? '')) return;
-  const root = values.root !== '.' ? values.root : process.env.CLAUDE_PROJECT_DIR || input.cwd || '.';
-  // TROVE_PORT: the desktop starts its agent with it, so a folder inside a repository (not the repository) is found.
-  const port = values.port ? Number(values.port) : Number(process.env.TROVE_PORT) || (await running(root))?.port;
+  if (!['permission', 'question', 'idle', 'working', 'prompt', 'step'].includes(what ?? '')) return;
+  const port = Number(values.port) || Number(process.env.TROVE_PORT);
   if (!port) return;
+  if (what === 'step') { const step = stepOf(input); if (step) await call(port, 'POST', '/api/turn', step); return; }
+  if (what === 'prompt') {
+    if (typeof input.prompt === 'string' && input.prompt.trim()) await call(port, 'POST', '/api/turn', { event: 'prompt', text: input.prompt });
+    await call(port, 'POST', '/api/signal', { kind: 'working' });
+    return;
+  }
   const text = typeof input.tool_name === 'string' ? input.tool_name : typeof input.message === 'string' ? input.message : undefined;
-  const reply = kind === 'idle' ? lastReply(input) : undefined; // the Stop hook: the turn's answer
-  await call(port, 'POST', '/api/signal', { kind: what, ...(text ? { text } : {}), ...(reply ? { reply } : {}) });
+  const end = kind === 'idle'; // the Stop hook: the turn is over, with its answer
+  const reply = end ? lastReply(input) : undefined;
+  await call(port, 'POST', '/api/signal', { kind: what, ...(text ? { text } : {}), ...(end ? { end } : {}), ...(reply ? { reply } : {}) });
 }
 
 async function main() {

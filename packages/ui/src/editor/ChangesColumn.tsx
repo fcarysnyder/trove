@@ -1,7 +1,8 @@
 import type { AgentTool, Anchor, BlockEdit, CommentKind, Draft, FileRow } from '@trove/core/types';
-import { ChevronDown, CircleAlert, MessageCircleQuestion, MessageSquare, PanelRightClose, Pencil, Square, SquareTerminal, Trash, Undo2 } from 'lucide-react';
+import { ChevronDown, CircleAlert, MessageCircleQuestion, MessageSquare, Minus, PanelRightClose, Pencil, Square, SquareTerminal, Trash, Undo2 } from 'lucide-react';
 import { Tabs } from 'radix-ui';
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -14,11 +15,12 @@ import { api } from '@/lib/api';
 import { load, save } from '@/lib/storage';
 import { nameOf, plural, reducedMotion, sendKey } from '@/lib/text';
 import { cn } from '@/lib/utils';
-import { loadAll, open, revertEdit, saveDrafts, send, sendable, setScope, togglePanel } from './actions';
+import { loadActivity, loadAll, open, revertEdit, saveDrafts, send, sendable, setScope, togglePanel } from './actions';
 import { Count, IconButton, PathLabel, TAB, useElapsed } from './bits';
 import { get, set, useNames, useStore } from './store';
 import { showBlock, showPassage } from './doc/commands';
-import { History, useUnread } from './Activity';
+import { ActivityFeed, modeLabel, ModeMenu, useMode, useUnread } from './Activity';
+import { turnsOf } from './turns';
 import { Notice } from './TopBar';
 import { PathMenu } from './PathMenu';
 
@@ -76,14 +78,27 @@ export function ChangesColumn() {
 
   const [tab, setTab] = useState(() => load('agent-tab', 'history'));
   const session = useSession();
-  const drawer = useStore((s) => s.drawer);
-  // The terminal shows in this column, so showing it shows the column.
-  useEffect(() => { if (drawer) togglePanel('changes', false); }, [drawer]);
-  useEffect(() => {
-    const show = () => { togglePanel('changes', false); setTab('history'); save('agent-tab', 'history'); };
-    window.addEventListener('trove:chat', show);
-    return () => window.removeEventListener('trove:chat', show);
-  }, []);
+  const column = useRef<HTMLElement>(null);
+  // Send all's handoff: the staged rows stack into one, then the new turn lands in Activity.
+  const handoff = async () => {
+    const before = turnsOf(get().activity).filter((x) => x.type === 'turn').at(-1)?.id ?? '';
+    const had = sendable()[0];
+    const rows = tab === 'changes' && !matchMedia('(prefers-reduced-motion: reduce)').matches ? [...(column.current?.querySelectorAll<HTMLElement>('[data-stack]') ?? [])] : [];
+    const top = rows[0]?.getBoundingClientRect().top ?? 0;
+    // Each row becomes a solid card for the move, the first on top, so the stack reads as paper, not overlapping text.
+    const card = { background: 'var(--card)', borderRadius: '8px', boxShadow: '0 0 0 1px var(--border)' };
+    rows.forEach((el, i) => { el.style.position = 'relative'; el.style.zIndex = String(rows.length - i); });
+    const stack = rows.map((el, i) => el.animate(
+      [{ ...card, transform: 'none', opacity: 1 }, { ...card, transform: `translateY(${top - el.getBoundingClientRect().top + Math.min(i, 3) * 3}px) scale(${1 - Math.min(i, 3) * 0.025})`, opacity: i > 2 ? 0 : 1 }],
+      { duration: 190, delay: Math.max(0, rows.length - 1 - i) * 18, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' }));
+    await Promise.all(stack.map((a) => a.finished.catch(() => {})));
+    set({ landing: before });
+    await send({});
+    await loadActivity();
+    stack.forEach((a) => a.cancel());
+    rows.forEach((el) => { el.style.position = ''; el.style.zIndex = ''; });
+    if (sendable()[0] < had) { setTab('history'); save('agent-tab', 'history'); } else set({ landing: null });
+  };
   const unread = useUnread(tab === 'history');
   let body: ReactNode;
   if (!current) body = <p className="px-4 py-3 text-muted-foreground">No file open</p>;
@@ -106,11 +121,11 @@ export function ChangesColumn() {
   }
 
   return (
-    <section aria-label="Agent" className="flex h-full min-w-0 flex-col">
+    <section ref={column} aria-label="Agent" className="flex h-full min-w-0 flex-col">
       <div className="flex min-h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">
         <span className="font-semibold text-foreground">Agent</span>
         <Notice />
-        <DropdownMenu>
+        {tab === 'changes' && <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="sm" className="ml-auto gap-1 text-muted-foreground" aria-label={`Showing ${scope === 'file' ? 'this file' : 'all files'}`}>
               {scope === 'file' ? 'This file' : 'All files'}<ChevronDown />
@@ -122,24 +137,24 @@ export function ChangesColumn() {
               <DropdownMenuRadioItem value="all">All files</DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
-        </DropdownMenu>
-        <IconButton side="bottom" label="Hide agent" tip="Hide agent (])" onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
+        </DropdownMenu>}
+        <IconButton side="bottom" label="Hide agent" tip="Hide agent (])" className={cn(tab !== 'changes' && 'ml-auto')} onClick={() => togglePanel('changes', true)}><PanelRightClose /></IconButton>
       </div>
-      {/* The comments and edits still to send, and what went back and forth with the agent. */}
-      <Tabs.Root value={tab} onValueChange={(t) => { setTab(t); save('agent-tab', t); }} hidden={!!session && drawer} className="min-h-0 flex-1 flex-col [&:not([hidden])]:flex">
+      {/* What each agent turn did, and the comments and edits staged for the next one. */}
+      <Tabs.Root value={tab} onValueChange={(t) => { setTab(t); save('agent-tab', t); }} className="flex min-h-0 flex-1 flex-col">
         <div className="flex h-9 shrink-0 items-center gap-1 border-b pr-2 pl-4">
           <Tabs.List aria-label="Agent" className="flex h-full gap-4">
-            <Tabs.Trigger value="history" className={TAB}>Chat{!!unread && <Count n={unread} className="bg-agent text-black" />}</Tabs.Trigger>
+            <Tabs.Trigger value="history" className={TAB}>Activity{!!unread && <Count n={unread} className="bg-agent text-black" />}</Tabs.Trigger>
             <Tabs.Trigger value="changes" className={TAB}>Changes<Count n={shown} /></Tabs.Trigger>
           </Tabs.List>
         </div>
         <Tabs.Content value="changes" className="min-h-0 flex-1"><ScrollArea className="h-full">{body}</ScrollArea></Tabs.Content>
-        <Tabs.Content value="history" className="min-h-0 flex-1"><History path={scope === 'file' ? current?.path : undefined} /></Tabs.Content>
+        <Tabs.Content value="history" className="min-h-0 flex-1"><ActivityFeed /></Tabs.Content>
       </Tabs.Root>
-      {session && <AgentTerminal session={session} />}
+      {session && <AgentTerminal session={session} column={column} />}
       <div className="flex min-h-12 shrink-0 items-center gap-2 border-t pr-4 pl-2.5">
         <AgentStatus session={session} />
-        <SendButton />
+        <SendButton handoff={handoff} />
       </div>
     </section>
   );
@@ -188,7 +203,7 @@ function AgentStatus({ session }: { session: Session | null }) {
   };
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs">
-      {/* A toggle: the column shows the terminal or Chat and Changes. What the agent is doing is in its title. */}
+      {/* Toggles the floating terminal. What the agent is doing is in its title. */}
       <button type="button" disabled={!session} onClick={() => set({ drawer: !drawer })} aria-pressed={session ? drawer : undefined}
         title={`${name} ${state}${outside ? ` in ${outside}` : ''}`}
         className={cn('flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:hover:bg-muted aria-pressed:bg-muted', needs && 'text-ring')}>
@@ -211,24 +226,46 @@ function AgentStatus({ session }: { session: Session | null }) {
   );
 }
 
+const MIN = { w: 420, h: 280 };
+
 /**
- * The agent's terminal (desktop), in place of Chat and Changes while the toggle is on (⌘J): as wide as the column,
- * which you drag. It stays mounted, so the session and its screen survive switching back. A permission prompt or
- * question switches to it; answering one there switches back when it was switched for that.
+ * The agent's terminal (desktop): the one place to talk to it, a floating panel just left of the Agent column, with its
+ * own size (drag its top or left edge). Hiding it keeps the session and its screen. A permission prompt or question
+ * opens it; answering one there hides it again when it opened for that.
  */
-function AgentTerminal({ session }: { session: Session }) {
+function AgentTerminal({ session, column }: { session: Session; column: React.RefObject<HTMLElement | null> }) {
   const open = useStore((s) => s.drawer);
   const needs = useNeedsYou();
   const info = useStore((s) => s.source?.agentInfo);
   const { name, state, running, connected, detail } = useAgentState(session);
   const took = useElapsed(state === 'working' ? info?.since : null);
-  const auto = useRef(false); // switched for a prompt: it switches back once answered
+  const [mode, change] = useMode();
+  const [size, setSize] = useState(() => load('terminal-size', { w: 640, h: 420 }));
+  const [room, setRoom] = useState({ right: 8, bottom: 8, w: 640, h: 420 });
+  const panel = useRef<HTMLDivElement>(null);
+  const auto = useRef(false); // opened for a prompt: it hides once answered
   const answered = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const el = column.current;
+    if (!el) return;
+    const place = () => {
+      const r = el.getBoundingClientRect(), edge = r.width ? r.left : window.innerWidth;
+      setRoom({ right: window.innerWidth - edge + 8, bottom: window.innerHeight - r.bottom + 8, w: Math.max(MIN.w, edge - 16), h: Math.max(MIN.h, r.height - 16) });
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    window.addEventListener('resize', place);
+    return () => { ro.disconnect(); window.removeEventListener('resize', place); };
+  }, [column]);
   useEffect(() => {
     if (!needs || !session.running || get().drawer) return;
     auto.current = true;
     set({ drawer: true });
   }, [needs, info?.since, session.running]);
+  useEffect(() => {
+    if (open) requestAnimationFrame(() => panel.current?.querySelector('textarea')?.focus());
+  }, [open]);
   // Enter, or Escape or a digit at a prompt, answers it (after a turn, Enter sends the next one): the agent works again.
   const typed = (d: string) => {
     const w = info?.waiting;
@@ -237,23 +274,47 @@ function AgentTerminal({ session }: { session: Session }) {
     void api('signal', { kind: 'working' }).catch(() => {});
     if (auto.current) { auto.current = false; set({ drawer: false }); }
   };
-  return (
-    <div role="region" aria-label={`${name} terminal`} hidden={!open} className="min-h-0 flex-1 flex-col bg-terminal [&:not([hidden])]:flex">
-      <div className={cn('flex h-9 shrink-0 items-center gap-1.5 border-b pr-2 pl-4 text-xs', needs && 'bg-ring/10')}>
+  const drag = (x: boolean, y: boolean) => (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const from = { x: e.clientX, y: e.clientY, w: Math.min(size.w, room.w), h: Math.min(size.h, room.h) };
+    let next = { w: from.w, h: from.h };
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    const move = (m: PointerEvent) => {
+      next = { w: x ? Math.min(room.w, Math.max(MIN.w, from.w + from.x - m.clientX)) : from.w, h: y ? Math.min(room.h, Math.max(MIN.h, from.h + from.y - m.clientY)) : from.h };
+      setSize(next);
+    };
+    const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); save('terminal-size', next); };
+    el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+  };
+  const hide = () => { auto.current = false; set({ drawer: false }); };
+  const restart = () => void window.trove!.pty.start(session.tool, 100, 30).catch((e: unknown) => toast(e instanceof Error ? e.message : String(e)));
+  return createPortal(
+    <div ref={panel} role="dialog" aria-label={`${name} terminal`} aria-hidden={!open} inert={!open}
+      style={{ right: room.right, bottom: room.bottom, width: Math.min(size.w, room.w), height: Math.min(size.h, room.h) }}
+      className={cn('fixed z-40 flex flex-col overflow-hidden rounded-lg border bg-terminal shadow-2xl transition-[opacity,translate,scale,visibility] duration-150 ease-out motion-reduce:transition-none', !open && 'invisible translate-y-2 scale-[.985] opacity-0')}>
+      <div onPointerDown={drag(false, true)} className="absolute inset-x-2 top-0 z-10 h-1.5 cursor-ns-resize" />
+      <div onPointerDown={drag(true, false)} className="absolute inset-y-2 left-0 z-10 w-1.5 cursor-ew-resize" />
+      <div onPointerDown={drag(true, true)} className="absolute top-0 left-0 z-20 size-3 cursor-nwse-resize" />
+      <div className={cn('flex h-10 shrink-0 items-center gap-1.5 border-b pr-1.5 pl-3 text-xs', needs && 'bg-ring/10')}>
         <Dot needs={needs} live={connected || running} starting={!connected && running} />
         <span className={cn('min-w-0 truncate', needs ? 'font-semibold text-ring' : 'text-foreground')}>{name} <span className={needs ? '' : 'text-muted-foreground'}>{state}</span></span>
         {took && <span className="shrink-0 text-muted-foreground tabular-nums">{took}</span>}
         {detail && <span className="min-w-0 truncate text-muted-foreground">{detail}</span>}
-        {running && (
-          <Button variant="outline" size="xs" className="ml-auto shrink-0 text-destructive hover:text-destructive" onClick={() => void window.trove!.pty.kill()}>
-            <Square className="fill-current" />Stop
-          </Button>
-        )}
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          {mode && <ModeMenu mode={mode} change={change}><Button variant="ghost" size="xs" className="gap-1 text-muted-foreground">{modeLabel(mode)}<ChevronDown /></Button></ModeMenu>}
+          {running
+            ? <Button variant="outline" size="xs" className="text-destructive hover:text-destructive" onClick={() => void window.trove!.pty.kill()}><Square className="fill-current" />Stop</Button>
+            : <Button variant="outline" size="xs" onClick={restart}>Start</Button>}
+          <IconButton side="bottom" label="Hide terminal" tip={`Hide terminal (⌘J): ${name} keeps running`} onClick={hide}><Minus /></IconButton>
+        </span>
       </div>
       <div className="min-h-0 flex-1">
         <Suspense fallback={null}><Terminal header={null} onInput={typed} /></Suspense>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -264,7 +325,7 @@ function Row({ kind, anchor, n, found, tools, children, locked, onClick, rowRef 
 }) {
   const Kind = kind === 'explain' ? MessageCircleQuestion : MessageSquare;
   return (
-    <div ref={rowRef} data-note={locked ? undefined : n ?? undefined} onClick={(e) => { if (!(e.target as Element).closest('button, [data-slot=input-group]')) onClick?.(); }}
+    <div ref={rowRef} data-stack={locked ? undefined : ''} data-note={locked ? undefined : n ?? undefined} onClick={(e) => { if (!(e.target as Element).closest('button, [data-slot=input-group]')) onClick?.(); }}
       className={cn('group/note px-4 py-2', locked ? 'cursor-default text-muted-foreground' : 'cursor-pointer hover:bg-muted')}>
       <div className="flex min-h-6 items-center gap-1.5 text-xs text-muted-foreground">
         {n != null && <span>{n + 1}</span>}
@@ -379,7 +440,7 @@ function FileHead({ f, count }: { f: FileRow; count: number }) {
 }
 
 /** Send all, and a menu that narrows it. A row with nothing to do is refused, not hidden. */
-function SendButton() {
+function SendButton({ handoff }: { handoff: () => Promise<void> }) {
   const files = useStore((s) => s.files);
   const offline = useStore((s) => s.offline);
   const current = useStore((s) => s.current);
@@ -403,7 +464,7 @@ function SendButton() {
   };
   return (
     <ButtonGroup className="ml-auto min-w-0 shrink-0">
-      <Button variant="tier2" size="default" className="min-w-0 truncate" disabled={!comments || offline} onClick={(e) => { if (e.detail <= 1) void send({}); }}>
+      <Button variant="tier2" size="default" className="min-w-0 truncate" disabled={!comments || offline} onClick={(e) => { if (e.detail <= 1) void handoff(); }}>
         <span className="truncate">{comments ? `Send all (${plural(comments, 'comment')}, ${plural(withComments, 'file')})` : 'Send all'}</span>
       </Button>
       <DropdownMenu onOpenChange={(o) => { if (o) void loadAll().catch(() => {}); }}>

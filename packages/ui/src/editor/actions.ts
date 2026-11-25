@@ -515,17 +515,6 @@ export async function loadActivity() {
   const res = await optional<ActivityResponse>('activity').catch(() => undefined);
   if (res !== undefined && JSON.stringify(res?.entries ?? []) !== JSON.stringify(get().activity)) set({ activity: res?.entries ?? [] });
 }
-/** A message to the agent from History, new or a reply; it reaches the agent as one events-log line. False when it failed (a toast says why). */
-export async function sendMessage(body: MessageBody) {
-  try {
-    await api('message', body);
-  } catch (e) {
-    toast(errText(e));
-    return false;
-  }
-  await loadActivity();
-  return true;
-}
 /** The attached agent changes under the page (`trove attach`, `detach`): its colour and name follow. */
 async function loadSource() {
   const source = await optional<SourceInfo>('source').catch(() => null);
