@@ -5,7 +5,7 @@ import type { AnchorHit } from '@trove/core/anchor';
 import type { Anchor, CommentKind, ElementTarget } from '@trove/core/types';
 import { reducedMotion } from '@/lib/text';
 import { get, set } from '../store';
-import { frameEl, headingPath } from './dom';
+import { frameEl, headingPath, showsSource } from './dom';
 
 export type Pt = [number, number];
 export interface Box { left: number; top: number; right: number; bottom: number }
@@ -208,7 +208,7 @@ export interface Mark { els: Element[]; shape?: Pt[] }
 export const dropMark = () => set({ mark: null, markKind: 'change' });
 
 /** Pointer and Circle mark the open HTML file; neither works on a locked file or under an open edit. */
-export const canMark = () => { const s = get(); return s.current?.kind === 'html' && !s.current.locked && !s.editing; };
+export const canMark = () => { const s = get(); return s.current?.kind === 'html' && !s.current.locked && !s.editing && !showsSource(s); };
 
 export function setTool(tool: Tool) {
   if (tool !== 'text' && !canMark()) return;

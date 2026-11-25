@@ -5,10 +5,11 @@
 // the server instead.
 import type { GitProbe, Recent, UpdateState } from '@trove/core/types';
 import { recentName } from '@trove/core/types';
-import { ArrowLeft, ChevronRight, FileCode, FileText, FolderOpen, GitBranch, Pin, X } from 'lucide-react';
-import { useEffect, useState, type ComponentProps, type ReactNode } from 'react';
+import { ArrowLeft, ChevronRight, FileCode, FileText, Folder, FolderOpen, GitBranch, Pin, X } from 'lucide-react';
+import { Fragment, lazy, Suspense, useEffect, useState, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Kbd } from '@/components/ui/kbd';
@@ -19,22 +20,37 @@ import { dirOf, nameOf, tilde } from '@/lib/text';
 import { applyTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 import { IconButton, TAB, TitleStrip } from '@/editor/bits';
-import { Tabs } from 'radix-ui';
-import mark from '../../../../design/icon/mark/favicon.svg';
+import { RadioGroup, Tabs } from 'radix-ui';
 import { toast } from 'sonner';
+
+// The cube's code starts loading with the page, not when Home first renders.
+const cubeChunk = import('./Cube');
+const Cube = lazy(() => cubeChunk);
+
+// The intro plays when Home opens, at most every ten minutes (once per module load, so StrictMode's double render agrees).
+const INTRO = (() => {
+  const play = Date.now() - Number(load<number>('home-intro-at', 0)) > 10 * 60_000;
+  if (play) save('home-intro-at', Date.now());
+  return play;
+})();
+
+let introSeen = !INTRO; // Back from Open returns to a settled Home
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const fail = (e: unknown) => void toast(errText(e));
 
 export function Start() {
-  useEffect(() => applyTheme('system'), []);
+  useEffect(() => applyTheme('dark'), []); // the foundry look is dark; light mode keeps it
   useEffect(() => { document.title = 'Trove'; }, []);
   return (
     <TooltipProvider delayDuration={300}>
       <div className="fixed inset-x-0 top-0 z-10 [&>div]:border-b-0"><TitleStrip /></div>
-      <main className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-6 pt-20 pb-16">
-        {window.trove ? <Screens /> : <NoBridge />}
-      </main>
+      {/* A fixed-size window: the page never scrolls (the table's rows do) and the mark's glow is clipped to it. */}
+      <div className="h-dvh overflow-clip">
+        <main className="mx-auto flex h-full w-full max-w-2xl flex-col gap-8 px-6 pt-20 pb-6">
+          {window.trove ? <Screens /> : <NoBridge />}
+        </main>
+      </div>
       <Toaster position="bottom-right" />
     </TooltipProvider>
   );
@@ -65,10 +81,10 @@ function Screens() {
   const [screen, setScreen] = useState<'home' | 'open' | null>(null);
   const reload = async () => {
     const list = await bridge.recents().catch(() => []);
-    const res = await Promise.all(list.map((r) => bridge.probe(r.path).catch(() => null)));
-    setProbes(new Map(list.map((r, k) => [r.path, res[k]])));
     setRecents(list);
     setScreen((s) => s ?? (list.length ? 'home' : 'open'));
+    // Each recent's branch fills in as git answers; Home doesn't wait for them.
+    list.forEach((r) => void bridge.probe(r.path).catch(() => null).then((p) => setProbes((m) => new Map(m).set(r.path, p))));
   };
   useEffect(() => { void reload(); }, []);
   if (!recents || !screen) return null;
@@ -87,38 +103,66 @@ function UpdateButton() {
 
 type Show = 'all' | 'folders' | 'files';
 
+/** Lands from above with a little bounce once the intro is done; `n` staggers it. */
+const drop = (n: number) => ({
+  className: 'transition-[translate,opacity] duration-[380ms] ease-[cubic-bezier(.2,1.35,.45,1)] group-data-[phase=intro]/home:-translate-y-10 group-data-[phase=intro]/home:opacity-0 motion-reduce:transition-none',
+  style: { transitionDelay: `${n * 60}ms` } as CSSProperties,
+});
+
+/**
+ * The mark (the 3D cube, large while its intro plays, then in the header), the title, and the recents as one table:
+ * the tabs, a count and Open in its header bar, pinned rows first. The T's light catches the table's top edge.
+ */
 function Home({ recents, probes, reload, onOpen }: { recents: Recent[]; probes: Probes; reload: () => Promise<void>; onOpen: () => void }) {
   const [show, setShow] = useState(() => load<Show>('start-show', 'all'));
+  const [intro] = useState(() => !introSeen);
+  useEffect(() => { introSeen = true; }, []);
+  const [phase, setPhase] = useState<'intro' | 'ui'>(intro ? 'intro' : 'ui');
   const shown = recents.filter((r) => show === 'all' || (show === 'files') === !!r.file);
   const pinned = shown.filter((r) => r.pinned);
   const rest = shown.filter((r) => !r.pinned);
-  const list = (label: string, rows: Recent[]) => rows.length > 0 && (
-    <section aria-label={label} className="flex flex-col gap-1">
-      <h2 className="px-3 text-xs font-medium text-muted-foreground">{label}</h2>
-      <ul className="flex flex-col">{rows.map((r) => <Row key={r.path} recent={r} probe={probes.get(r.path)} reload={reload} />)}</ul>
+  let k = 0;
+  const rows = (label: string, list: Recent[]) => list.length > 0 && (
+    <section aria-label={label}>
+      {pinned.length > 0 && <h2 className="flex h-8 items-center border-t bg-secondary/40 px-4 text-xs text-muted-foreground first:border-t-0">{label}</h2>}
+      <ul>{list.map((r) => <Row key={r.path} recent={r} probe={probes.get(r.path)} reload={reload} n={k++} />)}</ul>
     </section>
   );
   return (
-    <>
-      <div className="flex items-center gap-2">
-        <Title><img src={mark} alt="" className="size-8" />Trove</Title>
-        <div className="ml-auto flex items-center gap-2">
-          <UpdateButton />
-          <Button onClick={onOpen}>Open</Button>
+    <div data-phase={phase} className="group/home relative flex min-h-0 flex-1 flex-col">
+      {/* One fixed size, scaled down into the header: resizing the canvas mid-move would blank it. */}
+      <div aria-hidden data-mark className={cn('group/mark absolute z-10 size-[440px] origin-top-left transition-[left,top,scale] duration-700 ease-[cubic-bezier(.7,0,.2,1)] motion-reduce:transition-none',
+        phase === 'intro' ? 'top-16 left-[calc(50%-132px)] scale-[.6]' : 'top-7 left-[calc(100%-124px)] scale-[.24]')}>
+        {/* The T's light on the room: a soft wash that moves with the cube. */}
+        <div className="pointer-events-none absolute -inset-[110%] rounded-full bg-[radial-gradient(closest-side,rgba(246,142,54,.09),rgba(246,142,54,.03)_45%,transparent)]" />
+        <div className="pointer-events-none absolute -inset-[110%] rounded-full bg-[radial-gradient(closest-side,rgba(246,142,54,.16),rgba(246,142,54,.05)_45%,transparent)] opacity-0 transition-opacity duration-300 group-hover/mark:opacity-100" />
+        <Suspense fallback={null}><Cube intro={intro} onIntroDone={() => setPhase('ui')} /></Suspense>
+      </div>
+      <header {...drop(0)} className={cn(drop(0).className, 'flex h-40 shrink-0 flex-col justify-center pr-48 pl-4')}>
+        <h1 className="text-[44px] leading-none font-semibold tracking-tight text-foreground">Trove</h1>
+        <p className="mt-3 text-base text-muted-foreground">Read, mark up and hand off docs to your agent</p>
+      </header>
+      <div {...drop(1)} className={cn(drop(1).className, 'relative mt-6 flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card/60')}>
+        <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent_25%,rgba(255,160,90,.55)_72%,rgba(255,160,90,.55)_82%,transparent)]" />
+        <span aria-hidden className="pointer-events-none absolute top-0 right-0 left-2/5 h-12 bg-[radial-gradient(55%_100%_at_68%_0,rgba(246,142,54,.07),transparent)]" />
+        <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-10 h-px bg-[linear-gradient(90deg,transparent_12%,rgba(255,186,125,.95)_70%,rgba(255,186,125,.95)_84%,transparent)] opacity-0 transition-opacity duration-300 group-has-[[data-mark]:hover]/home:opacity-100 motion-reduce:transition-none" />
+        <span aria-hidden className="pointer-events-none absolute top-0 right-0 left-1/4 z-10 h-12 bg-[radial-gradient(60%_100%_at_72%_0,rgba(246,142,54,.17),transparent)] opacity-0 transition-opacity duration-300 group-has-[[data-mark]:hover]/home:opacity-100 motion-reduce:transition-none" />
+        <Tabs.Root className="shrink-0" value={show} onValueChange={(v) => { setShow(v as Show); save('start-show', v); }}>
+          <div className="relative flex h-12 items-center gap-4 border-b bg-secondary/40 pr-2.5 pl-4">
+            <Tabs.List aria-label="Show" className="flex h-full gap-4">
+              {(['all', 'folders', 'files'] as const).map((v) => <Tabs.Trigger key={v} value={v} className={TAB}>{v[0]!.toUpperCase() + v.slice(1)}</Tabs.Trigger>)}
+            </Tabs.List>
+            <div className="ml-auto flex items-center gap-2">
+              <UpdateButton />
+              <Button size="sm" onClick={onOpen}>Open</Button>
+            </div>
+          </div>
+        </Tabs.Root>
+        <div className="min-h-0 overflow-y-auto">
+          {shown.length ? <>{rows('Pinned', pinned)}{rows('Recent', rest)}</> : <p className="px-4 py-3 text-sm text-muted-foreground">Nothing here yet</p>}
         </div>
       </div>
-      {recents.length > 0 && (
-        <Tabs.Root value={show} onValueChange={(v) => { setShow(v as Show); save('start-show', v); }}>
-          <Tabs.List aria-label="Show" className="flex h-9 gap-4 border-b px-3">
-            <Tabs.Trigger value="all" className={TAB}>All</Tabs.Trigger>
-            <Tabs.Trigger value="folders" className={TAB}>Folders</Tabs.Trigger>
-            <Tabs.Trigger value="files" className={TAB}>Files</Tabs.Trigger>
-          </Tabs.List>
-        </Tabs.Root>
-      )}
-      {list('Pinned', pinned)}
-      {list('Recent', rest)}
-    </>
+    </div>
   );
 }
 
@@ -126,7 +170,7 @@ function Home({ recents, probes, reload, onOpen }: { recents: Recent[]; probes: 
 const openRecent = (r: Recent) =>
   window.trove!.open(r.file ? { path: r.file } : { path: r.path, scope: r.scope, base: r.base, kind: r.kind }).catch(fail);
 
-function Row({ recent: r, probe, reload }: { recent: Recent; probe: { git: GitProbe | null } | null | undefined; reload: () => Promise<void> }) {
+function Row({ recent: r, probe, reload, n }: { recent: Recent; probe: { git: GitProbe | null } | null | undefined; reload: () => Promise<void>; n: number }) {
   const bridge = window.trove!;
   const gone = probe === null;
   const git = r.kind === 'git' && !r.file ? probe?.git : null;
@@ -135,7 +179,9 @@ function Row({ recent: r, probe, reload }: { recent: Recent; probe: { git: GitPr
   const reveal = 'opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 group-has-[:focus-visible]:opacity-100 motion-reduce:transition-none';
   return (
     // The name's button covers the row (its ::after); the badge and the icons sit above it.
-    <li className="group relative flex h-10 items-center gap-2 rounded-md px-3 transition-colors hover:bg-secondary has-[:focus-visible]:bg-secondary">
+    <li style={{ transitionDelay: `${260 + n * 45}ms, ${260 + n * 45}ms, 0ms` }}
+      className="group relative flex h-11 items-center gap-2.5 border-t px-4 transition-[opacity,translate,background-color] duration-300 first:border-t-0 hover:bg-secondary/50 has-[:focus-visible]:bg-secondary/50 group-data-[phase=intro]/home:translate-y-2 group-data-[phase=intro]/home:opacity-0 motion-reduce:transition-none">
+      {(() => { const I = r.file ? (r.file.endsWith('.html') || r.file.endsWith('.htm') ? FileCode : FileText) : r.kind === 'git' ? GitBranch : Folder; return <I aria-hidden className="size-4 shrink-0 text-muted-foreground" />; })()}
       <button disabled={gone} onClick={() => void openRecent(r)} title={shown}
         className="min-w-0 shrink truncate text-left text-sm font-medium text-foreground outline-none after:absolute after:inset-0 disabled:text-muted-foreground">
         {name}
@@ -240,16 +286,70 @@ const CloneArt = () => (
   </svg>
 );
 
+/** A folder's name in the repository dialog, set like code so it reads as the name on disk. */
+const Name = ({ children }: { children: ReactNode }) => <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[0.9em] text-foreground">{children}</code>;
+
+/** One of the repository dialog's two ways to open, picked like a radio. */
+function Choice({ value, icon, title, name, rows }: { value: string; icon: ReactNode; title: string; name: string; rows: [string, string][] }) {
+  return (
+    <RadioGroup.Item value={value}
+      className="group grid grid-cols-[16px_minmax(0,1fr)_16px] gap-x-3 rounded-lg border bg-card/40 px-4 py-3.5 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring data-[state=checked]:border-primary/70 data-[state=checked]:bg-primary/5 [&>svg]:mt-0.5 [&>svg]:size-4 [&>svg]:text-muted-foreground">
+      {icon}
+      <span className="min-w-0">
+        <span className="flex items-center gap-2 text-sm font-medium text-foreground">{title}<Name>{name}</Name></span>
+        <span className="mt-2 grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
+          {rows.map(([k, v]) => <Fragment key={k}><span className="text-muted-foreground">{k}</span><span className="font-mono break-all text-foreground">{v}</span></Fragment>)}
+        </span>
+      </span>
+      <span aria-hidden className="mt-0.5 grid size-4 place-items-center rounded-full border group-data-[state=checked]:border-primary">
+        <span className="size-2 rounded-full bg-primary opacity-0 group-data-[state=checked]:opacity-100" />
+      </span>
+    </RadioGroup.Item>
+  );
+}
+
 function OpenScreen({ onBack }: { onBack: () => void }) {
   const bridge = window.trove!;
   const [cloning, setCloning] = useState(false);
   // A repository's top-level folder opens as the repository; main decides, as it does for ⌘O and a drop.
-  const folder = () => bridge.pickFolder().then((res) => res && bridge.open({ path: res.path })).catch(fail);
+  // Inside a repository (not its top), ask: this folder as its own root, or the whole repository with git.
+  const [inside, setInside] = useState<{ path: string; git: GitProbe } | null>(null);
+  const [asGit, setAsGit] = useState(false);
+  const folder = () => bridge.pickFolder().then((res) => {
+    if (!res) return;
+    // A folder inside a repository asks every time; the repository's own folder opens as the repository.
+    if (res.git && res.git.worktree.path !== res.path) { setAsGit(false); setInside({ path: res.path, git: res.git }); }
+    else return bridge.open({ path: res.path });
+  }).catch(fail);
+  const choose = () => {
+    const pick = inside!;
+    setInside(null);
+    void bridge.open(asGit ? { path: pick.git.worktree.path, kind: 'git' } : { path: pick.path, kind: 'folder' }).catch(fail);
+  };
   const file = () => bridge.pickFile().then((path) => (path ? bridge.open({ path }) : undefined)).catch(fail);
   return (
     <>
       <div className="-mb-4"><Button variant="ghost" size="sm" className="-ml-2.5" onClick={onBack}><ArrowLeft />Back</Button></div>
       <Title>Open</Title>
+      <Dialog open={!!inside} onOpenChange={(o) => { if (!o) setInside(null); }}>
+        {inside && <DialogContent className="gap-5 p-6 sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>This folder is in a git repository</DialogTitle>
+            <DialogDescription className="leading-relaxed text-pretty">
+              <Name>{nameOf(inside.path)}</Name> is inside <Name>{inside.git.repo.name}</Name>. Open the repository to work with its branch, or stay with this folder.
+            </DialogDescription>
+          </DialogHeader>
+          <RadioGroup.Root aria-label="Open" value={asGit ? 'git' : 'folder'} onValueChange={(v) => setAsGit(v === 'git')} className="flex flex-col gap-2.5">
+            <Choice value="folder" icon={<Folder />} title="Stay with folder" name={nameOf(inside.path)} rows={[['Path', tilde(inside.path)]]} />
+            <Choice value="git" icon={<GitBranch />} title="Open repository" name={inside.git.repo.name}
+              rows={[['Path', tilde(inside.git.worktree.path)], ...(inside.git.branch ? [['↳ Branch', inside.git.branch] as [string, string]] : [])]} />
+          </RadioGroup.Root>
+          <DialogFooter className="sm:justify-between">
+            <Button variant="ghost" className="-ml-2.5" onClick={() => { setInside(null); void folder(); }}><ArrowLeft />Choose another folder</Button>
+            <Button autoFocus onClick={choose}>{asGit ? 'Open repository' : 'Stay with folder'}</Button>
+          </DialogFooter>
+        </DialogContent>}
+      </Dialog>
       <div className="grid grid-cols-1 gap-3 min-[560px]:grid-cols-3">
         <Card art={<FolderArt />} icon={<FolderOpen />} title="Folder" end={<Kbd>⌘O</Kbd>} onClick={() => void folder()} />
         <Card art={<FileArt />} icon={<FileText />} title="File" end={<Kbd>⇧⌘O</Kbd>} onClick={() => void file()} />
@@ -293,7 +393,7 @@ function Clone() {
       <Input autoFocus aria-label="Repository URL" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/owner/repo or owner/repo"
         autoComplete="off" spellCheck={false} />
       {(repos === null || repos.length > 0) && (
-        <ul aria-label="Your repositories" className="max-h-56 overflow-auto rounded-md border">
+        <ul aria-label="Your repositories" className="max-h-36 overflow-auto rounded-md border">
           {repos === null ? [0, 1, 2].map((k) => (
             <li key={k} className="flex flex-col gap-2 border-t px-3 py-3 first:border-t-0">
               <span className="h-3 w-1/3 animate-pulse rounded bg-muted" /><span className="h-2.5 w-2/3 animate-pulse rounded bg-muted" />

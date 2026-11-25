@@ -1,12 +1,13 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItemConstructorOptions, type OpenDialogOptions } from 'electron';
 import { execFile } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { AGENT_MODES, attachCommand, call, DEFAULT_DOC_TYPES, inGit, probeGit, recentName, serve, type AgentMode, type AgentTool, type App, type GitScope, type SourceKind, type TerminalApp, type OpenRequest, type Recent, type UpdateState } from '@trove/core';
+import { randomUUID } from 'node:crypto';
 import type { IPty } from 'node-pty';
 import { checkForUpdate, installUpdate, updateState, watchForUpdates } from './update';
 import { osc9, osc9Kind } from './osc';
@@ -19,7 +20,8 @@ const MAX_RECENTS = 20;
 // On the Mac the page draws its own title strip (TitleStrip in the UI) with the traffic lights in it.
 const frame = process.platform === 'darwin' ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 14, y: 10 } } : {};
 
-interface SourceWindow { win: BrowserWindow; core: App; path: string; root: string; port: number; kind: SourceKind; pty: Pty | null }
+// claude: the Claude Code session this window started, so starting again after Stop resumes it.
+interface SourceWindow { win: BrowserWindow; core: App; path: string; root: string; port: number; kind: SourceKind; pty: Pty | null; claude?: string }
 /** The window's agent terminal: running while `exitCode` is null; after exit it stays for its tail. */
 interface Pty { proc: IPty; tool: AgentTool; tail: string; exitCode: number | null }
 const sources = new Set<SourceWindow>();
@@ -62,11 +64,37 @@ function probe(path: string) {
 /** A recent as it was last opened: its file in its folder, else the source with its kind and scope. */
 const openRecent = (r: Recent) => openSource(r.file && existsSync(r.file) ? { path: r.file } : { path: r.path, scope: r.scope, base: r.base, kind: r.kind });
 
-/** Opens with the kind and scope the source was last opened with, else the source's settings. */
-function reopen(path: string): Promise<void> {
+/** A folder inside a repository asks how to open; any other opens with the kind and scope it was last opened with. */
+async function reopen(path: string): Promise<void> {
   const abs = resolve(path);
   const last = readRecents().find((r) => r.path === abs);
+  const git = isTop(abs) ? null : probeGit(abs);
+  // A folder inside a repository asks every time, as Home's Open does; the repository's own folder opens as it.
+  if (git) {
+    const tilde = (p: string) => p.replace(homedir(), '~');
+    const as = await askKind(abs, git, tilde);
+    if (as === null) return void (BrowserWindow.getAllWindows().length || openStart()); // cancelled from Finder: still a window
+    const root = as === 'git' ? git.worktree.path : abs;
+    const was = readRecents().find((r) => r.path === root && r.kind === as);
+    return openSource({ path: root, kind: as, scope: was?.scope, base: was?.base });
+  }
   return openSource({ path: abs, scope: last?.scope, base: last?.base, kind: last?.kind });
+}
+
+/** The native form of Home's question: stay with this folder, or open the repository it is in. */
+async function askKind(abs: string, git: NonNullable<ReturnType<typeof probeGit>>, tilde: (p: string) => string): Promise<SourceKind | null> {
+  const opts = {
+    type: 'question' as const,
+    message: 'This folder is in a git repository',
+    detail: `${basename(abs)} is inside ${git.repo.name}. Open the repository to work with its branch, or stay with this folder.\n\n`
+      + `Folder: ${tilde(abs)}\nRepository: ${tilde(git.worktree.path)}${git.branch ? `\nBranch: ${git.branch}` : ''}`,
+    buttons: ['Stay with folder', 'Open repository', 'Cancel'],
+    defaultId: 0,
+    cancelId: 2,
+  };
+  const parent = BrowserWindow.getFocusedWindow();
+  const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+  return response === 0 ? 'folder' : response === 1 ? 'git' : null;
 }
 
 /** The doc types' extensions: what Finder, File > Open and a drop open as a document. */
@@ -259,8 +287,15 @@ const TAIL = 256 * 1024; // what a reloaded page replays; nothing survives an ap
 /** The agent in the login shell (the PATH `tools()` found it on), in the repository. One per window. */
 function startPty(s: SourceWindow, tool: AgentTool, cols: number, rows: number): void {
   if (s.pty && s.pty.exitCode === null) return;
-  const proc = pty.spawn(process.env.SHELL || '/bin/zsh', ['-ilc', attachCommand(tool, s.root, s.port, true, agentMode())], {
-    cwd: s.root, cols, rows, name: 'xterm-256color', env: { ...process.env, COLORTERM: 'truecolor' },
+  // Claude Code: the first start names its session, a start after Stop resumes it. ponytail: Codex starts fresh each time,
+  // and the id lives with the window (an app restart starts fresh too).
+  let flags = '';
+  if (tool === 'claude') {
+    flags = s.claude && claudeSaved(s.claude) ? `--resume ${s.claude}` : `--session-id ${(s.claude = randomUUID())}`;
+  }
+  const proc = pty.spawn(process.env.SHELL || '/bin/zsh', ['-ilc', attachCommand(tool, s.root, s.port, true, agentMode(), flags)], {
+    // TROVE_PORT: the plugin's hooks reach this window's server, even for a folder inside a repository.
+    cwd: s.root, cols, rows, name: 'xterm-256color', env: { ...process.env, COLORTERM: 'truecolor', TROVE_PORT: String(s.port) },
   });
   const session: Pty = { proc, tool, tail: '', exitCode: null };
   const send = (channel: string, arg: unknown) => { if (s.pty === session && !s.win.isDestroyed()) s.win.webContents.send(channel, arg); };
@@ -279,6 +314,12 @@ function startPty(s: SourceWindow, tool: AgentTool, cols: number, rows: number):
     send('trove:pty:exit', exitCode);
   });
   s.pty = session;
+}
+
+/** Whether Claude Code saved session `id` (its transcript, under any project): only then can it be resumed. */
+function claudeSaved(id: string): boolean {
+  const projects = join(homedir(), '.claude', 'projects');
+  try { return readdirSync(projects).some((d) => existsSync(join(projects, d, `${id}.jsonl`))); } catch { return false; }
 }
 
 function killPty(s: SourceWindow): void {
@@ -446,14 +487,21 @@ function openStart(): void {
     startWin.focus();
     return;
   }
+  // Home is a fixed size; it shows once its first frame is drawn, so it never opens blank.
   const win = new BrowserWindow({
-    width: 1170,
-    height: 792,
+    width: 820,
+    height: 720,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    show: false,
+    backgroundColor: '#111111',
     title: 'Trove',
     ...frame,
     webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   startWin = win;
+  win.once('ready-to-show', () => win.show());
   win.on('closed', () => {
     if (startWin === win) startWin = null;
   });

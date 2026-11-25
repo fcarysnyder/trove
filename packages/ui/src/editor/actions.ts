@@ -104,8 +104,9 @@ export function show(file: FileResponse) {
 export const showInFolder = (path: string) => api('reveal', { path }).catch((e: Error) => toast.error(e.message));
 
 export async function reveal(path: string) {
-  const dir = path.split('/').slice(0, -1).join('/');
-  set((s) => ({ closedDirs: s.closedDirs.filter((d) => d !== dir) }));
+  // Every folder above it opens, the root ('') included.
+  const above = (d: string) => d === '' || path.startsWith(`${d}/`);
+  set((s) => ({ closedDirs: s.closedDirs.filter((d) => !above(d)) }));
   await open(path);
   requestAnimationFrame(() => document.querySelector('[data-tree-row][aria-current]')?.scrollIntoView({ block: 'nearest' }));
 }
@@ -513,17 +514,6 @@ export async function init() {
 export async function loadActivity() {
   const res = await optional<ActivityResponse>('activity').catch(() => undefined);
   if (res !== undefined && JSON.stringify(res?.entries ?? []) !== JSON.stringify(get().activity)) set({ activity: res?.entries ?? [] });
-}
-/** A message to the agent from History, new or a reply; it reaches the agent as one events-log line. False when it failed (a toast says why). */
-export async function sendMessage(body: MessageBody) {
-  try {
-    await api('message', body);
-  } catch (e) {
-    toast(errText(e));
-    return false;
-  }
-  await loadActivity();
-  return true;
 }
 /** The attached agent changes under the page (`trove attach`, `detach`): its colour and name follow. */
 async function loadSource() {

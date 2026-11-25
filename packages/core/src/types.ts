@@ -156,8 +156,9 @@ const MODE_FLAGS: Record<AgentTool, Record<AgentMode, string>> = {
   claude: { ask: '--permission-mode manual', auto: '--permission-mode auto', bypass: '--dangerously-skip-permissions' },
   codex: { ask: '-a untrusted', auto: '-a on-failure -s workspace-write', bypass: '--dangerously-bypass-approvals-and-sandbox' },
 };
-export const attachCommand = (tool: AgentTool, root: string, port: number | string, exec = false, mode: AgentMode = 'bypass') =>
-  `cd '${root.replaceAll("'", "'\\''")}' && ${exec ? 'exec ' : ''}${tool} ${MODE_FLAGS[tool][mode]} "${attachPrompt(port)}"`;
+/** `flags`: more of the tool's own flags, after the mode's (the desktop's `--session-id` / `--resume`). */
+export const attachCommand = (tool: AgentTool, root: string, port: number | string, exec = false, mode: AgentMode = 'bypass', flags = '') =>
+  `cd '${root.replaceAll("'", "'\\''")}' && ${exec ? 'exec ' : ''}${tool} ${MODE_FLAGS[tool][mode]}${flags ? ` ${flags}` : ''} "${attachPrompt(port)}"`;
 
 /** A repository's main working tree: the first entry of `git worktree list`. */
 export interface RepoRef { root: string; name: string }
@@ -204,16 +205,21 @@ export interface SourceInfo {
 export interface Activity {
   id: string;
   at: string;
-  kind: 'batch' | 'release' | 'question' | 'reply' | 'attach' | 'detach' | 'event' | 'message';
+  // prompt, step and end are one agent turn as its hooks report it: what started it, each tool call, and its last message.
+  kind: 'batch' | 'release' | 'question' | 'reply' | 'attach' | 'detach' | 'event' | 'message' | 'prompt' | 'step' | 'end' | 'edit'; // edit: the user saved their own change to `text`, a path
   text: string;
   paths?: string[];
   comments?: number;
+  explains?: number; // batch: how many of its comments ask for an explanation
   from?: 'agent' | 'user'; // who wrote `body` (and question / reply's text)
   body?: string; // markdown
   re?: string; // the id of the entry this one answers
   counts?: Record<string, number>; // batch: comments per path (absent on entries written before 0.8)
+  tool?: string; // step: the tool's name; `text` is what it acted on
+  added?: number; // step: lines an edit added
+  removed?: number; // step: lines an edit removed
 }
-export interface ActivityResponse { entries: Activity[] } // GET /api/activity: newest last, at most 200
+export interface ActivityResponse { entries: Activity[] } // GET /api/activity: newest last, at most 600
 /** POST /api/message -> Activity. from defaults to 'user'; a user's message adds one line to events.log
  * (`message <id>: from the reviewer[, re <id>]. Read it with: grep -F <id> '<activity.jsonl>'`). Each path must be in the review set. */
 export interface MessageBody { text: string; re?: string; paths?: string[]; from?: 'agent' | 'user'; typed?: boolean }
@@ -268,8 +274,11 @@ export interface AgentBody { id: AgentId | null; label?: string } // POST /api/a
 /**
  * POST /api/signal -> AgentInfo: `trove signal` from the plugin's hooks, and the desktop's terminal (OSC 9, typing).
  * The last signal wins; 'working' clears waiting. text: the tool name or the notification's message, up to 200 chars.
+ * end: the agent's turn is over, with reply as its last message; Activity closes the turn with it.
  */
-export interface SignalBody { kind: AgentWaiting | 'working'; text?: string }
+export interface SignalBody { kind: AgentWaiting | 'working'; text?: string; reply?: string; end?: boolean } // end: the turn ended (Stop hook), reply its last message
+/** POST /api/turn -> Activity: Claude Code's hooks, a prompt submitted or a tool call finished. */
+export interface TurnBody { event: 'prompt' | 'step'; text: string; tool?: string; added?: number; removed?: number }
 export type SourceResponse = SourceInfo; // GET /api/source
 export type SettingsResponse = Settings; // GET /api/settings; POST /api/settings takes Partial<Settings>, returns Settings
 

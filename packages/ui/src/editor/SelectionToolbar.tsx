@@ -38,7 +38,7 @@ export function SelectionToolbar() {
   const tools = [
     ['change', `Comment: ask ${n.agent} to change this (C)`, 'Comment', MessageSquarePlus],
     ['explain', `Explain: ask ${n.agent} about this, without changing it (E)`, 'Explain', MessageCircleQuestion],
-    ['chat', `Add to chat: quote this in your next message to ${n.agent} (A)`, 'Add to chat', AtSign],
+    ...(window.trove?.pty ? [['agent', `Add to agent: quote this at ${n.agent}'s prompt (A)`, 'Add to agent', AtSign] as const] : []),
     ['edit', 'Edit this block yourself', 'Edit this block', Pencil],
     ['copy', 'Copy the selected text', 'Copy', Copy],
   ] as const;

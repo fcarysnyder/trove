@@ -9,6 +9,22 @@ summary paragraph and sections are what readers see there.
 
 ## [Unreleased]
 
+### Added
+
+- Activity shows each agent turn: what started it, every tool call with lines changed, how long it took and its result. Sent comments stack into a new turn, and a batch sent while the agent is busy shows as Queued until it starts.
+- Add to agent (A) quotes a selection at the terminal's prompt, unsent.
+
+### Changed
+
+- The terminal is the one place to talk to the agent. It floats beside Activity with its own size (⌘J), and holds the permission mode, Stop and Start. Chat's message box and threads are gone.
+- Home is new. Trove's mark builds itself when Home opens: the orange T drops in block by block and a cube of glass blocks lights up around it, then it settles beside the title. Drag the mark to spin it; it springs back. The recents are one table, with the tabs, a count and Open in its header bar and pinned rows first. Home is always dark. The intro plays at most every ten minutes and never with Reduce Motion on.
+- The Files tree nests folders like `tree`, each one opening and closing on its own.
+- Starting Claude Code again after Stop resumes the same session instead of starting a new one.
+
+### Fixed
+
+- The agent and the plugin's hooks find Trove's server for a folder inside a repository: the desktop starts the agent with `TROVE_PORT`.
+
 ## [0.8.0] - 2026-11-19
 
 Trove is no longer only for git repositories. A plain folder or a single

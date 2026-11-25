@@ -73,7 +73,10 @@
 .tint-mirror mark.mine { background: var(--hl-mine); }
 textarea.quiet { display: block; width: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; resize: none; overflow: hidden;
   background: transparent; color: var(--foreground); font: inherit; }
-textarea.quiet:focus { outline: 1px solid var(--border); outline-offset: 4px; }
+textarea.quiet:focus { outline: none; }
+.tint-wrap:has(> textarea.quiet)::before { content: ''; position: absolute; inset: -8px; border-radius: 6px; pointer-events: none;
+  background: color-mix(in srgb, var(--primary) 6%, transparent); outline: 1.5px solid var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent); }
 
 .flash { animation: flash 1.2s ease-out; }
 @keyframes flash { from { outline: 1px solid var(--foreground); } to { outline: 1px solid transparent; } }

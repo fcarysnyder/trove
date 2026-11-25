@@ -111,7 +111,7 @@ export function InlineEditor({ editing }: { editing: Editing }) {
           if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
         }}
       />
-      <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground" style={{ marginBottom: marginBottom ?? 12 }}>
+      <div className="mt-3 flex items-center gap-1 text-xs text-muted-foreground" style={{ marginBottom: marginBottom ?? 12 }}>
         <Button variant="ghost" size="sm" onClick={() => void save()}>Save<Kbd>{sendKey}</Kbd></Button>
         <Button variant="ghost" size="sm" onClick={cancelEdit}>{discard}<Kbd>Esc</Kbd></Button>
         <IconButton label="Expand" onClick={() => expandEdit(value)}><Maximize2 /></IconButton>

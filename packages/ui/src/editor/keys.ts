@@ -37,7 +37,7 @@ export function onKey(e: KeyboardEvent) {
     return;
   }
   if (s.pick) {
-    const act = ({ c: 'change', e: 'explain', a: 'chat' } as const)[e.key.toLowerCase() as 'c' | 'e' | 'a'];
+    const act = ({ c: 'change', e: 'explain', a: 'agent' } as const)[e.key.toLowerCase() as 'c' | 'e' | 'a'];
     if (act) { e.preventDefault(); return pickAction(act); }
     if (e.key === 'Escape') { s.pick.range.startContainer.ownerDocument?.getSelection()?.removeAllRanges(); return set({ pick: null }); }
   }

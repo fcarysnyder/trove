@@ -52,7 +52,7 @@ repository: pass `--port 0` for a free one. Everything else below is unchanged.
    `Show new` (N), on by default, marks what changed since the staged copy (or since HEAD once
    accepted): a green gutter bar beside each changed line, its new words tinted, a red one where a
    block was removed. On a file you updated, what you changed since the comments were sent shows
-   the same way in your colour (Claude's orange once attached or serving from Claude Code, violet for Codex, teal for any other agent); the
+   the same way in your colour (teal for Codex, Claude's orange for any other agent); the
    user's own saved edits show in white;
    hovering a tint or bar shows that block's word diff. Markdown only.
    Selecting text shows a toolbar: C comments, E asks for an explanation, plus edit-block and
@@ -95,15 +95,14 @@ modal.
    page has already cleared its drafts.
 2. Per file: apply its `change` comments to that file only. A rejected file's comments are
    never sent. Answer `explain` comments in chat,
-   quoting the passage; they edit nothing. Post each answer to History too, so the user reads it
-   beside the batch on the page: `... say - --re <batch id> --file <file> --port <port>` with the
-   answer on stdin (see Talk in History below).
+   quoting the passage; they edit nothing. Put the answers in your last message of the turn: the
+   page's Activity shows that message as the turn's result (see Activity below).
 3. **After each file with change comments**, in the same step as its one-line summary, run the
    `done` command copied from the server's first line:
    `node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" done <file> --note "<what you changed and why>" --port <port>`.
    That releases the file back to the user's queue as "updated by Claude", unstaged, to be read
    again. The note is one or two sentences of markdown, shown under the file's release in the
-   Agent pane's History: what you changed in that file, and anything you chose not to change and
+   turn in the page's Activity: what you changed in that file, and anything you chose not to change and
    why. A note that starts with `-` or runs to several lines goes on stdin: `--note -`. If you
    forget `done`, the page releases the file a few seconds after it stops changing, and the user
    can always Unlock it; a later `done --note` still puts the note on that release.
@@ -118,42 +117,17 @@ modal.
    run `... ask "<the question, one line>" --port <port>` ("Claude has a question"). Both count in
    the tab title. Once they have read or answered it, run `... ask --clear --port <port>`.
 
-## Talk in History
+## Activity
 
-The Agent pane's History tab is the conversation with the user on the page, kept across restarts.
-General messages, yours and theirs, run in order. Everything about one file (the batches that
-commented on it, your release notes, messages tied to it) is one thread for that file, which
-shows in the conversation as a card the user opens. Put what you tell the user about the review
-there, not only in your session: answers to explain comments, a summary of a batch when the
-per-file notes do not cover it, anything conversational.
+The user talks to you in your terminal. The Agent pane's Activity is a read-only record of your
+turns, built by this plugin's hooks: each prompt or batch, each tool call, and your last message,
+which is the turn's result. So end each turn with a short, plain summary whose first sentence says
+what you did; that sentence is what the user sees when the turn is collapsed.
 
-- **About a file: `--file <path>`**, so it lands in that file's thread (an answer to an explain
-  comment, a question about a passage). A general reply (about the review, the batch as a whole,
-  anything not about one file) omits `--file`.
-- **Don't tell the user to look at your terminal.** This plugin's hooks tell the page when you are
-  waiting on a permission prompt or a question, or have finished your turn, and the page shows
-  "Claude needs you" with the terminal. Just ask in your session as usual.
-
-- `node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" say "<markdown>" --port <port>` posts a message.
-  Long text (several lines, quotes, backticks, a leading `-`) goes on stdin with `-`:
-
-  ```
-  node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" say - --re <id> --file <file> --port <port> <<'EOF'
-  **Why pnpm:** the repo has a lockfile, so ...
-  EOF
-  ```
-
-  `--re <id>` names the entry it answers (a batch id, or a message id); `--file <path>`
-  (repeatable) puts it in that file's thread. It prints `message <id> is in History`.
-- **The user writes to you from History.** Each message is one line on the events log:
-  `message <id>: from the reviewer[, re <id>]. Read it with: grep -F <id> '<activity.jsonl>'`.
-  Run that command; its first line is `{id, at, kind: "message", from: "user", body, re?, paths?}`,
-  and `body` is the whole message in markdown. `re` is the entry it answers (grep that id too when
-  you need the context: a batch id is in `batches.jsonl`, any other in `activity.jsonl`); `paths`
-  is the file whose thread it was written in. Treat it as the user talking to you: answer with
-  `say --re <id>`, plus `--file <path>` for each of its `paths`, and act on what it asks the way you
-  would on the same words in chat. As with comments (step 4 above), anything beyond editing the
-  files under review waits for their answer: ask with `say --re <id>` first.
+- **Don't tell the user to look at your terminal.** The hooks tell the page when you are waiting
+  on a permission prompt or a question, and the page opens the terminal. Just ask as usual.
+- `node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" say "<markdown>" --port <port>` still adds a note to
+  the current turn; you rarely need it. Long text goes on stdin with `-`.
 
 ## HTML comments
 
@@ -195,4 +169,4 @@ While the server is down the page shows `Disconnected` beside the progress pill,
 
 `node "${CLAUDE_PLUGIN_ROOT}/dist/trove.mjs" --selftest` covers anchoring, block splicing, the save
 hash check, the Origin/Host checks and every state transition (accept, save, revert, send, done,
-quiet release, unlock), and History (notes, messages, replies, a restart), against a throwaway git repo.
+quiet release, unlock), and Activity (notes, turns, a restart), against a throwaway git repo.

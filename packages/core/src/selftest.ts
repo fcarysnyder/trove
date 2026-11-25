@@ -423,6 +423,11 @@ async function gitCase(temps: string[]) {
   const afterRestart = await restart();
   assert.equal((await get('/api/files', afterRestart.port)).body.files.find((f: any) => f.path === 'b.md')?.state, 'rejected', 'the backup survives a restart');
   await afterRestart.app.close();
+  assert.equal((await post('/api/activity/clear', {})).status, 200);
+  assert.equal((await get('/api/activity')).body.entries.length, 0, 'Clear empties Activity');
+  const cleared = await restart();
+  assert.equal((await get('/api/activity', cleared.port)).body.entries.length, 0, 'and earlier sends stay cleared after a restart');
+  await cleared.app.close();
   assert.equal((await post('/api/restore', { path: 'b.md' })).status, 200);
   assert.equal(readFileSync(join(root, 'b.md'), 'utf8'), bText);
   assert.equal((await get('/api/drafts')).body.drafts['b.md'][0].note, 'keep me', 'and its drafts come back');
@@ -629,6 +634,17 @@ async function agentCase(temps: string[]) {
   await call(port, 'POST', '/api/message', { text: 'Also this.' });
   assert.equal((await source()).agentInfo.waiting, 'question', 'but not a question');
   assert.equal((await signal({ kind: 'working' })).waiting, null);
+  // A turn as the hooks report it: its prompt, a tool call, and the Stop hook's last message.
+  assert.equal((await call(port, 'POST', '/api/signal', { kind: 'idle', reply: 7 })).status, 400);
+  assert.equal((await call(port, 'POST', '/api/turn', { event: 'nap', text: 'x' })).status, 400);
+  assert.equal((await call(port, 'POST', '/api/turn', { event: 'step', text: 'a.md', added: -1 })).status, 400);
+  await call(port, 'POST', '/api/turn', { event: 'prompt', text: ' Shorten it ' });
+  await call(port, 'POST', '/api/turn', { event: 'step', text: 'a.md', tool: 'Edit', added: 2, removed: 5 });
+  await signal({ kind: 'idle', reply: ' Shortened. ', end: true });
+  await signal({ kind: 'idle', reply: 'Not a turn end.' });
+  const turn = (await call(port, 'GET', '/api/activity')).body.entries.filter((e: any) => ['prompt', 'step', 'end'].includes(e.kind));
+  assert.deepEqual(turn.map((e: any) => [e.kind, e.text, e.tool, e.added, e.removed, e.body]),
+    [['prompt', 'Shorten it', undefined, undefined, undefined, undefined], ['step', 'a.md', 'Edit', 2, 5, undefined], ['end', '', undefined, undefined, undefined, 'Shortened.']]);
   await app.close();
   ({ app, port } = await listen({ root, agent: 'claude' }));
   assert.deepEqual([(await source()).agentInfo.label, (await source()).agentInfo.connected], ['Claude', true], 'the serving agent is attached');
