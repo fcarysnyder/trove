@@ -2041,8 +2041,12 @@ function createApp(o) {
   const explains = (items) => items.filter((c) => c.kind === "explain").length;
   const sentEntry = (b) => ({ id: b.id, at: b.sentAt, kind: "batch", text: b.id, comments: b.items.length, explains: explains(b.items), paths: Object.keys(counts(b.items)), counts: counts(b.items) });
   const byId = /* @__PURE__ */ new Map();
-  for (const e of jsonl(files.activity)) if (e?.id) byId.set(e.id, e);
-  for (const b of jsonl(files.batches)) if (b?.id && !byId.has(b.id)) byId.set(b.id, sentEntry(b));
+  let cleared = "";
+  for (const e of jsonl(files.activity)) if (e?.cleared) {
+    byId.clear();
+    cleared = e.cleared;
+  } else if (e?.id) byId.set(e.id, e);
+  for (const b of jsonl(files.batches)) if (b?.id && !byId.has(b.id) && b.sentAt > cleared) byId.set(b.id, sentEntry(b));
   activity.push(...[...byId.values()].sort((a, b) => a.at < b.at ? -1 : a.at > b.at ? 1 : 0).slice(-KEEP));
   function list() {
     const before = seen.size;
@@ -2127,7 +2131,7 @@ function createApp(o) {
     if (hashOf(rel) !== w.hash) {
       updated.set(rel, w.text);
       versions?.notice(rel, w.text);
-      versions?.add(rel, "agent", read(rel));
+      if (existsSync2(join4(top, rel))) versions?.add(rel, "agent", read(rel));
     }
     saveState();
     note("release", rel, { paths: [rel], ...said });
@@ -2560,6 +2564,12 @@ function createApp(o) {
       return v ? [200, v] : [404, { error: "no such version" }];
     },
     "GET /api/activity": () => (follow(), [200, { entries: activity }]),
+    "POST /api/activity/clear": () => {
+      activity.length = 0;
+      writeFileSync3(files.activity, `${JSON.stringify({ cleared: (/* @__PURE__ */ new Date()).toISOString() })}
+`);
+      return [200, { ok: true }];
+    },
     // `trove signal` from the agent's hooks, and the desktop's terminal: what the agent waits on the user for. The last one wins.
     // end: the agent's turn is over (Claude Code's Stop hook), reply its last message.
     "POST /api/signal": (_2, { kind, text, reply, end }) => {
@@ -3194,6 +3204,11 @@ ${lines2[0]}
   const afterRestart = await restart();
   assert.equal((await get("/api/files", afterRestart.port)).body.files.find((f) => f.path === "b.md")?.state, "rejected", "the backup survives a restart");
   await afterRestart.app.close();
+  assert.equal((await post("/api/activity/clear", {})).status, 200);
+  assert.equal((await get("/api/activity")).body.entries.length, 0, "Clear empties Activity");
+  const cleared = await restart();
+  assert.equal((await get("/api/activity", cleared.port)).body.entries.length, 0, "and earlier sends stay cleared after a restart");
+  await cleared.app.close();
   assert.equal((await post("/api/restore", { path: "b.md" })).status, 200);
   assert.equal(readFileSync4(join5(root, "b.md"), "utf8"), bText);
   assert.equal((await get("/api/drafts")).body.drafts["b.md"][0].note, "keep me", "and its drafts come back");

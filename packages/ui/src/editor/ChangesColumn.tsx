@@ -147,6 +147,7 @@ export function ChangesColumn() {
             <Tabs.Trigger value="history" className={TAB}>Activity{!!unread && <Count n={unread} className="bg-agent text-black" />}</Tabs.Trigger>
             <Tabs.Trigger value="changes" className={TAB}>Changes<Count n={shown} /></Tabs.Trigger>
           </Tabs.List>
+          {tab === 'history' && <ClearActivity />}
         </div>
         <Tabs.Content value="changes" className="min-h-0 flex-1"><ScrollArea className="h-full">{body}</ScrollArea></Tabs.Content>
         <Tabs.Content value="history" className="min-h-0 flex-1"><ActivityFeed /></Tabs.Content>
@@ -160,6 +161,16 @@ export function ChangesColumn() {
   );
 }
 
+
+/** Clear empties Activity for good, so it asks once more in place. */
+function ClearActivity() {
+  const any = useStore((s) => s.activity.length > 0);
+  const [sure, setSure] = useState(false);
+  useEffect(() => { if (!sure) return; const t = setTimeout(() => setSure(false), 3000); return () => clearTimeout(t); }, [sure]);
+  if (!any) return null;
+  const clear = () => sure ? void api('activity/clear', {}).then(() => { setSure(false); set({ activity: [] }); }, (e: Error) => toast(e.message)) : setSure(true);
+  return <Button variant="ghost" size="sm" className={cn('ml-auto', sure ? 'text-destructive' : 'text-muted-foreground')} onClick={clear}>{sure ? 'Clear all activity?' : 'Clear'}</Button>;
+}
 
 const TOOLS: [AgentTool, string][] = [['claude', 'Claude Code'], ['codex', 'Codex']];
 

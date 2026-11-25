@@ -182,9 +182,11 @@ export function createApp(o: AppOptions): App {
   // ponytail: both logs are read whole at start; trim activity.jsonl if it ever gets slow.
   // A later line with an entry's id replaces it (a re-written entry keeps its time, so its place); then the
   // batches log's sends that activity.jsonl lacks, which is all of them in an older state dir.
+  // A `{cleared}` line (Clear in Activity) drops everything before it, and the sends from before it.
   const byId = new Map<string, Activity>();
-  for (const e of jsonl(files.activity)) if (e?.id) byId.set(e.id, e);
-  for (const b of jsonl(files.batches)) if (b?.id && !byId.has(b.id)) byId.set(b.id, sentEntry(b));
+  let cleared = '';
+  for (const e of jsonl(files.activity)) if (e?.cleared) { byId.clear(); cleared = e.cleared; } else if (e?.id) byId.set(e.id, e);
+  for (const b of jsonl(files.batches)) if (b?.id && !byId.has(b.id) && b.sentAt > cleared) byId.set(b.id, sentEntry(b));
   activity.push(...[...byId.values()].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).slice(-KEEP));
 
   function list(): FileEntry[] {
@@ -247,7 +249,7 @@ export function createApp(o: AppOptions): App {
     if (hashOf(rel) !== w.hash) {
       updated.set(rel, w.text);
       versions?.notice(rel, w.text); // what it was at the send, if Trove had no copy yet
-      versions?.add(rel, 'agent', read(rel));
+      if (existsSync(join(top, rel))) versions?.add(rel, 'agent', read(rel)); // a file deleted while held has no new version
     }
     saveState();
     note('release', rel, { paths: [rel], ...said });
@@ -624,6 +626,11 @@ export function createApp(o: AppOptions): App {
       return v ? [200, v] : [404, { error: 'no such version' }];
     },
         'GET /api/activity': () => (follow(), [200, { entries: activity }]),
+    'POST /api/activity/clear': () => {
+      activity.length = 0;
+      writeFileSync(files.activity, `${JSON.stringify({ cleared: new Date().toISOString() })}\n`);
+      return [200, { ok: true }];
+    },
     // `trove signal` from the agent's hooks, and the desktop's terminal: what the agent waits on the user for. The last one wins.
     // end: the agent's turn is over (Claude Code's Stop hook), reply its last message.
     'POST /api/signal': (_, { kind, text, reply, end }) => {

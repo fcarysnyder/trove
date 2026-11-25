@@ -423,6 +423,11 @@ async function gitCase(temps: string[]) {
   const afterRestart = await restart();
   assert.equal((await get('/api/files', afterRestart.port)).body.files.find((f: any) => f.path === 'b.md')?.state, 'rejected', 'the backup survives a restart');
   await afterRestart.app.close();
+  assert.equal((await post('/api/activity/clear', {})).status, 200);
+  assert.equal((await get('/api/activity')).body.entries.length, 0, 'Clear empties Activity');
+  const cleared = await restart();
+  assert.equal((await get('/api/activity', cleared.port)).body.entries.length, 0, 'and earlier sends stay cleared after a restart');
+  await cleared.app.close();
   assert.equal((await post('/api/restore', { path: 'b.md' })).status, 200);
   assert.equal(readFileSync(join(root, 'b.md'), 'utf8'), bText);
   assert.equal((await get('/api/drafts')).body.drafts['b.md'][0].note, 'keep me', 'and its drafts come back');
